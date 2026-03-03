@@ -2,9 +2,9 @@
 # Tuning file for OmniVision OV02E10 on Intel IPU7 (Lunar Lake)
 # Used by libcamera's Simple pipeline handler / Software ISP
 #
-# Symmetric strong saturation boost (tune-ccm.sh preset #5).
-# Green tint under harsh lighting is exposure-related, not a CCM issue.
-# Use tune-ccm.sh to interactively find the best color preset.
+# Multi-temperature CCM tuning by @david-bartlett.
+# Provides stable color correction across different lighting conditions
+# (warm indoor 3200K through daylight 6500K).
 #
 # NOTE: libcamera 0.5.x uses Lut; 0.6+ uses Adjust (replaces Lut).
 # The installer handles this automatically, but if editing manually:
@@ -18,10 +18,18 @@ algorithms:
   - Awb:
   - Ccm:
       ccms:
-        - ct: 5000
-          ccm: [ 1.4, -0.2, -0.2,
-                -0.2,  1.4, -0.2,
-                -0.2, -0.2,  1.4 ]
+        - ct: 3200
+          ccm: [  1.44, -0.12, -0.08,
+                 -0.10,  1.62, -0.25,
+                 -0.05, -0.28,  1.6 ]
+        - ct: 4000
+          ccm: [  1.38, -0.10, -0.05,
+                 -0.15,  1.6, -0.10,
+                 -0.15, -0.15,  1.56 ]
+        - ct: 6500
+          ccm: [  1.4, -0.04, -0.06,
+                  0,     0.66,  0.1,
+                 -0.02, -0.2,   1.2 ]
   - Lut:
   - Adjust:
   - Agc:
