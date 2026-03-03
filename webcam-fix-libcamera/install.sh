@@ -967,7 +967,11 @@ if command -v cheese >/dev/null 2>&1; then
         if [[ -f /usr/local/lib/cheese-camerabin-fix.so ]]; then
             sudo tee /usr/local/bin/cheese > /dev/null << 'CHEESE_WRAPPER'
 #!/bin/sh
-exec env LD_PRELOAD=/usr/local/lib/cheese-camerabin-fix.so /usr/bin/cheese "$@"
+# Pre-start camera relay so v4l2loopback has frames, then launch Cheese
+# with LD_PRELOAD fix (swaps pipewiresrc→v4l2src + videoconvert buffer fix)
+camera-relay start 2>/dev/null &
+sleep 3
+LD_PRELOAD=/usr/local/lib/cheese-camerabin-fix.so /usr/bin/cheese "$@"
 CHEESE_WRAPPER
             sudo chmod 755 /usr/local/bin/cheese
             echo "  ✓ Installed /usr/local/bin/cheese (wrapper)"
