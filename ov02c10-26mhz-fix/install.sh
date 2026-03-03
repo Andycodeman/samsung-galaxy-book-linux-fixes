@@ -62,12 +62,35 @@ dkms add "${DKMS_NAME}/${DKMS_VERSION}"
 dkms build "${DKMS_NAME}/${DKMS_VERSION}"
 dkms install "${DKMS_NAME}/${DKMS_VERSION}"
 
+# Rebuild initramfs so the DKMS module replaces the stock one in early boot
+echo "Rebuilding initramfs..."
+if command -v update-initramfs &>/dev/null; then
+    update-initramfs -u
+elif command -v dracut &>/dev/null; then
+    dracut --force
+elif command -v mkinitcpio &>/dev/null; then
+    mkinitcpio -P
+else
+    echo "Warning: could not rebuild initramfs. Reboot may still load the stock driver."
+fi
+
 # Reload the module
 echo "Reloading ov02c10 module..."
 if lsmod | grep -q "^ov02c10"; then
     rmmod ov02c10 2>/dev/null || echo "Warning: could not unload ov02c10 (may be in use). Reboot to apply."
 fi
 modprobe ov02c10
+
+# Verify the right module loaded
+LOADED_PATH=$(modinfo ov02c10 2>/dev/null | grep "^filename:" | awk '{print $2}')
+if echo "$LOADED_PATH" | grep -q "/updates/"; then
+    echo "  ✓ DKMS module loaded: ${LOADED_PATH}"
+else
+    echo "  ⚠ Stock module loaded: ${LOADED_PATH}"
+    echo "    The DKMS module may not be taking priority."
+    echo "    Check: mokutil --sb-state"
+    echo "    If Secure Boot is enabled, you may need to enroll the MOK key or disable Secure Boot."
+fi
 
 echo ""
 echo "Done! The patched ov02c10 driver is now installed."
