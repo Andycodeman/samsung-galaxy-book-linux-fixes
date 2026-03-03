@@ -976,7 +976,8 @@ CHEESE_WRAPPER
             CHEESE_DESKTOP=$(find /usr/share/applications -name "*heese*.desktop" -o -name "*cheese*.desktop" 2>/dev/null | head -1)
             if [[ -n "$CHEESE_DESKTOP" ]]; then
                 sudo mkdir -p /usr/local/share/applications
-                sed 's|^Exec=.*|Exec=/usr/local/bin/cheese|' "$CHEESE_DESKTOP" | \
+                sed -e 's|^Exec=.*|Exec=/usr/local/bin/cheese|' \
+                    -e 's|^DBusActivatable=true|DBusActivatable=false|' "$CHEESE_DESKTOP" | \
                     sudo tee /usr/local/share/applications/$(basename "$CHEESE_DESKTOP") > /dev/null
                 echo "  ✓ Installed .desktop override (/usr/local/share/applications/$(basename "$CHEESE_DESKTOP"))"
             else
