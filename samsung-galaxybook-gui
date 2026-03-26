@@ -1,0 +1,184 @@
+#!/bin/bash
+# =============================================================================
+# Samsung Galaxy Book — Linux Fixes GUI Launcher
+# =============================================================================
+# Checks for python3-gobject (GTK), installs it if missing, then launches
+# the GUI via pkexec so the whole session runs with root privileges —
+# eliminating repeated authentication prompts for each fix.
+#
+# Usage: ./samsung-galaxybook-gui
+# =============================================================================
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GUI_SCRIPT="${SCRIPT_DIR}/lib/samsung-galaxybook-gui.py"
+SETUP_DEPS="${SCRIPT_DIR}/lib/samsung-galaxybook-setup-deps.sh"
+
+# ── Check a display is available ─────────────────────────────────────────────
+if [[ -z "$DISPLAY" && -z "$WAYLAND_DISPLAY" ]]; then
+    echo "Error: no graphical display detected."
+    echo "Run this script from a graphical desktop session."
+    exit 1
+fi
+
+# ── Check hardware is a supported Samsung Galaxy Book model ──────────────────
+_vendor=$(cat /sys/class/dmi/id/sys_vendor 2>/dev/null || echo "unknown")
+_product=$(cat /sys/class/dmi/id/product_name 2>/dev/null || echo "unknown")
+_model=$(echo "$_product" | tr '[:lower:]' '[:upper:]' | sed 's/^NP//')
+
+# Read supported prefixes from galaxybook.json — single source of truth
+_galaxybook_json="${SCRIPT_DIR}/lib/galaxybook.json"
+_supported=false
+if echo "$_vendor" | grep -qi "samsung" && [[ -f "$_galaxybook_json" ]]; then
+    # Extract all series prefixes (excluding blocked series like book6)
+    _prefixes=$(python3 -c "
+import json, sys
+try:
+    data = json.load(open('${SCRIPT_DIR}/lib/galaxybook.json'))
+    prefixes = []
+    for s in data.get('series', {}).values():
+        if not s.get('blocked'):
+            prefixes.extend(s.get('prefixes', []))
+    print(' '.join(prefixes))
+except Exception as e:
+    sys.exit(0)
+" 2>/dev/null)
+    for _m in $_prefixes; do
+        if echo "$_model" | grep -q "^${_m}"; then
+            _supported=true
+            break
+        fi
+    done
+fi
+
+if ! $_supported; then
+    # Allow --model override to bypass hardware check for testing
+    if [[ " $* " == *" --model "* ]]; then
+        echo "⚠ TEST MODE — hardware check bypassed via --model flag"
+    else
+        echo "Error: Your hardware is not supported."
+        echo "       Detected: $_vendor $_product"
+        echo "       Only Samsung Book 4 and Book 5 series models are currently supported."
+        # Send desktop notification if possible (runs as the regular user, no root needed)
+        notify-send --icon="dialog-error" \
+            "Samsung Galaxy Book — Not Supported" \
+            "Your hardware is not supported. Only Samsung Book 4 and Book 5 series models are currently supported." \
+            2>/dev/null || true
+        exit 1
+    fi
+fi
+
+# ── Check python3 is available ────────────────────────────────────────────────
+if ! command -v python3 &>/dev/null; then
+    echo "Error: python3 is not installed."
+    exit 1
+fi
+
+# ── Check pkexec is available (needed for privilege escalation) ───────────────
+if ! command -v pkexec &>/dev/null; then
+    echo "Error: pkexec (polkit) is not installed."
+    echo "Install polkit and try again:"
+    echo "  Fedora:  sudo dnf install polkit"
+    echo "  Ubuntu:  sudo apt install policykit-1"
+    echo "  Arch:    sudo pacman -S polkit"
+    exit 1
+fi
+
+# ── Detect distro once ────────────────────────────────────────────────────────
+ID_LOWER=""
+ID_LIKE_LOWER=""
+if [[ -f /etc/os-release ]]; then
+    source /etc/os-release
+    ID_LOWER="${ID,,}"
+    ID_LIKE_LOWER="${ID_LIKE:-}"
+    ID_LIKE_LOWER="${ID_LIKE_LOWER,,}"
+fi
+
+# ── Determine what setup is needed (no privileges required) ───────────────────
+POLICY_SRC="${SCRIPT_DIR}/lib/org.samsung-galaxybook.gui.policy"
+POLICY_DST="/usr/share/polkit-1/actions/org.samsung-galaxybook.gui.policy"
+
+NEED_GTK=false
+NEED_INTER=false
+NEED_POLICY=false
+
+# ── Check network connectivity once (used by GTK and Inter checks) ───────────
+HAVE_NETWORK=false
+if ping -c 1 -W 2 8.8.8.8 &>/dev/null || ping -c 1 -W 2 1.1.1.1 &>/dev/null; then
+    HAVE_NETWORK=true
+fi
+
+if ! python3 -c "import gi; gi.require_version('Gtk', '3.0'); from gi.repository import Gtk" \
+   &>/dev/null 2>&1 || ! python3 -c "import cairo" &>/dev/null 2>&1 \
+   || ! python3 -c "import gi.repository.cairo" &>/dev/null 2>&1; then
+    # GTK bindings are required — if offline we can't install them so fail clearly.
+    if ! $HAVE_NETWORK; then
+        echo "Error: GTK Python bindings (python3-gobject) are not installed"
+        echo "       and no network connection is available to install them."
+        echo "       Connect to the internet and try again, or install manually:"
+        echo "  Fedora:  sudo dnf install python3-gobject python3-cairo"
+        echo "  Ubuntu:  sudo apt install python3-gi python3-gi-cairo python3-cairo gir1.2-gtk-3.0"
+        echo "  Arch:    sudo pacman -S python-gobject python-cairo"
+        exit 1
+    fi
+    NEED_GTK=true
+fi
+
+if ! fc-list | grep -qi "Inter"; then
+    # Only attempt Inter install if we have a network connection — avoids a
+    # pkexec prompt on every launch when offline and the font isn't installed.
+    if $HAVE_NETWORK; then
+        NEED_INTER=true
+    fi
+fi
+
+if [[ ! -f "$POLICY_DST" ]]; then
+    NEED_POLICY=true
+fi
+
+# ── Single pkexec prompt for all setup (only if anything is needed) ───────────
+if [[ "$NEED_GTK" == true || "$NEED_INTER" == true || "$NEED_POLICY" == true ]]; then
+
+    if [[ "$NEED_GTK" == true ]]; then
+        if [[ "$ID_LOWER" != "fedora" \
+           && "$ID_LOWER" != "ubuntu" && "$ID_LIKE_LOWER" != *"ubuntu"* \
+           && "$ID_LOWER" != "debian" && "$ID_LIKE_LOWER" != *"debian"* \
+           && "$ID_LOWER" != "arch"   && "$ID_LIKE_LOWER" != *"arch"* ]]; then
+            echo "Error: unsupported distro — please install python3-gobject manually."
+            exit 1
+        fi
+    fi
+
+    echo "First-time setup: one authentication prompt required."
+
+    pkexec "$SETUP_DEPS" \
+        "$ID_LOWER" "$ID_LIKE_LOWER" \
+        "$NEED_GTK" "$NEED_INTER" "$NEED_POLICY" \
+        "$POLICY_SRC" "$POLICY_DST" \
+        || { echo "Error: setup failed."; exit 1; }
+
+fi
+
+# ── Launch the GUI (elevated via pkexec — one auth prompt for the session) ────
+# Parse --model flag and pass it as an env var since pkexec handles env vars
+# more reliably than extra command line arguments.
+MODEL_ENV=""
+if [[ " $* " == *" --model "* ]]; then
+    for i in "$@"; do
+        if [[ "$_next" == "1" ]]; then
+            MODEL_ENV="SAMSUNG_GALAXYBOOK_MODEL=$i"
+            _next=0
+        fi
+        [[ "$i" == "--model" ]] && _next=1
+    done
+fi
+
+pkexec env \
+    SAMSUNG_GALAXYBOOK_GUI=1 \
+    DISPLAY="$DISPLAY" \
+    WAYLAND_DISPLAY="$WAYLAND_DISPLAY" \
+    XAUTHORITY="$XAUTHORITY" \
+    DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" \
+    ${MODEL_ENV} \
+    python3 "$GUI_SCRIPT"

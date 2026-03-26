@@ -1,0 +1,844 @@
+{
+  "notes": "Combined fix registry and hardware compatibility data for Samsung Galaxy Book Linux Fixes.",
+  "series": {
+    "book3": {
+      "label": "Galaxy Book 3",
+      "cpu_gen": "Raptor Lake (13th Gen)",
+      "ipu": "IPU6",
+      "prefixes": [
+        "940XFG",
+        "960XFG",
+        "965XFG",
+        "960QFG",
+        "965QFG",
+        "960XFH",
+        "950XFG",
+        "930XED",
+        "950XED",
+        "960XED",
+        "930QED",
+        "950QED",
+        "930MBE",
+        "950XDB"
+      ]
+    },
+    "book4": {
+      "label": "Galaxy Book 4",
+      "cpu_gen": "Meteor Lake (14th Gen)",
+      "ipu": "IPU6",
+      "prefixes": [
+        "940XGK",
+        "944XGK",
+        "960XGK",
+        "964XGK",
+        "960QGK",
+        "750QGK",
+        "940QGK",
+        "960XMB",
+        "960XMA",
+        "960XGL"
+      ]
+    },
+    "book5": {
+      "label": "Galaxy Book 5",
+      "cpu_gen": "Lunar Lake (Core Ultra 2xx)",
+      "ipu": "IPU7",
+      "prefixes": [
+        "940XHA",
+        "960XHA",
+        "960QHA",
+        "750XHD",
+        "754XHD",
+        "750QHA",
+        "754QHA"
+      ]
+    },
+    "book6": {
+      "label": "Galaxy Book 6",
+      "cpu_gen": "Arrow Lake (15th Gen)",
+      "ipu": "IPU8",
+      "blocked": true,
+      "blocked_reason": "Not yet supported",
+      "prefixes": [
+        "760VJG",
+        "940XJG",
+        "960XJG",
+        "964XJG",
+        "960UJH"
+      ]
+    }
+  },
+  "models": {
+    "940XFG": {
+      "name": "Galaxy Book 3 Pro 14\"",
+      "series": "book3",
+      "cpu": "Core i7-1360P (Raptor Lake)",
+      "ipu": "IPU6",
+      "camera_sensor": "OV02C10",
+      "speaker_amp": "ALC298",
+      "subsystem_id": "0x144d:0xc882",
+      "subsystem_in_kernel_quirk": false,
+      "notes": "Subsystem ID missing from ALC298 kernel quirk table \u2014 modprobe speaker workaround needed. webcam-fix-libcamera confirmed working."
+    },
+    "960XFG": {
+      "name": "Galaxy Book 3 Pro 16\"",
+      "series": "book3",
+      "cpu": "Core i7-1360P (Raptor Lake)",
+      "ipu": "IPU6",
+      "camera_sensor": "OV02C10",
+      "speaker_amp": "ALC298",
+      "subsystem_id": "0x144d:0xc886",
+      "subsystem_in_kernel_quirk": true,
+      "notes": "webcam-fix-libcamera confirmed working."
+    },
+    "965XFG": {
+      "name": "Galaxy Book 3 Pro 16\"",
+      "series": "book3",
+      "cpu": "Core i9-13900H (Raptor Lake)",
+      "ipu": "IPU6",
+      "camera_sensor": "OV02C10",
+      "speaker_amp": "ALC298",
+      "subsystem_id": null,
+      "subsystem_in_kernel_quirk": null,
+      "notes": "Subsystem ID not yet confirmed."
+    },
+    "960QFG": {
+      "name": "Galaxy Book 3 Pro 360 14\"",
+      "series": "book3",
+      "cpu": "Core i7-1360P (Raptor Lake)",
+      "ipu": "IPU6",
+      "camera_sensor": "OV02C10",
+      "speaker_amp": "ALC298",
+      "subsystem_id": "0x144d:0xc1ca",
+      "subsystem_in_kernel_quirk": true,
+      "notes": "webcam-fix-libcamera confirmed working. Camera rotation confirmed fixed."
+    },
+    "965QFG": {
+      "name": "Galaxy Book 3 Pro 360 16\"",
+      "series": "book3",
+      "cpu": "Core i9-13900H (Raptor Lake)",
+      "ipu": "IPU6",
+      "camera_sensor": "OV02C10",
+      "speaker_amp": "ALC298",
+      "subsystem_id": "0x144d:0xc1cb",
+      "subsystem_in_kernel_quirk": true,
+      "notes": ""
+    },
+    "960XFH": {
+      "name": "Galaxy Book 3 Ultra",
+      "series": "book3",
+      "cpu": "Core i9-13900H (Raptor Lake)",
+      "ipu": "IPU6",
+      "camera_sensor": "OV02C10",
+      "speaker_amp": "ALC298",
+      "subsystem_id": "0x144d:0xc1cc",
+      "subsystem_in_kernel_quirk": true,
+      "notes": ""
+    },
+    "950XFG": {
+      "name": "Galaxy Book 3 Pro",
+      "series": "book3",
+      "cpu": "Raptor Lake",
+      "ipu": "IPU6",
+      "camera_sensor": "OV02C10",
+      "speaker_amp": "ALC298",
+      "subsystem_id": null,
+      "subsystem_in_kernel_quirk": null,
+      "notes": "Model details not fully confirmed."
+    },
+    "930XED": {
+      "name": "Galaxy Book 3 360",
+      "series": "book3",
+      "cpu": "Raptor Lake",
+      "ipu": "IPU6",
+      "camera_sensor": "OV02C10",
+      "speaker_amp": "ALC298",
+      "subsystem_id": null,
+      "subsystem_in_kernel_quirk": null,
+      "notes": "Model details not fully confirmed."
+    },
+    "950XED": {
+      "name": "Galaxy Book 3 360",
+      "series": "book3",
+      "cpu": "Raptor Lake",
+      "ipu": "IPU6",
+      "camera_sensor": "OV02C10",
+      "speaker_amp": "ALC298",
+      "subsystem_id": null,
+      "subsystem_in_kernel_quirk": null,
+      "notes": "Model details not fully confirmed."
+    },
+    "960XED": {
+      "name": "Galaxy Book 3 360",
+      "series": "book3",
+      "cpu": "Raptor Lake",
+      "ipu": "IPU6",
+      "camera_sensor": "OV02C10",
+      "speaker_amp": "ALC298",
+      "subsystem_id": null,
+      "subsystem_in_kernel_quirk": null,
+      "notes": "Model details not fully confirmed."
+    },
+    "930QED": {
+      "name": "Galaxy Book 3 360",
+      "series": "book3",
+      "cpu": "Raptor Lake",
+      "ipu": "IPU6",
+      "camera_sensor": "OV02C10",
+      "speaker_amp": "ALC298",
+      "subsystem_id": null,
+      "subsystem_in_kernel_quirk": null,
+      "notes": "Model details not fully confirmed."
+    },
+    "950QED": {
+      "name": "Galaxy Book 3 360",
+      "series": "book3",
+      "cpu": "Raptor Lake",
+      "ipu": "IPU6",
+      "camera_sensor": "OV02C10",
+      "speaker_amp": "ALC298",
+      "subsystem_id": null,
+      "subsystem_in_kernel_quirk": null,
+      "notes": "Model details not fully confirmed."
+    },
+    "930MBE": {
+      "name": "Galaxy Book 3",
+      "series": "book3",
+      "cpu": "Raptor Lake",
+      "ipu": "IPU6",
+      "camera_sensor": "OV02C10",
+      "speaker_amp": "ALC298",
+      "subsystem_id": null,
+      "subsystem_in_kernel_quirk": null,
+      "notes": "Model details not fully confirmed."
+    },
+    "950XDB": {
+      "name": "Galaxy Book 3",
+      "series": "book3",
+      "cpu": "Raptor Lake",
+      "ipu": "IPU6",
+      "camera_sensor": "OV02C10",
+      "speaker_amp": "ALC298",
+      "subsystem_id": null,
+      "subsystem_in_kernel_quirk": null,
+      "notes": "Model details not fully confirmed."
+    },
+    "940XGK": {
+      "name": "Galaxy Book 4 Pro 14\"",
+      "series": "book4",
+      "cpu": "Core Ultra 5/7 (Meteor Lake)",
+      "ipu": "IPU6",
+      "camera_sensor": "OV02C10",
+      "speaker_amp": "MAX98390",
+      "subsystem_id": null,
+      "subsystem_in_kernel_quirk": null,
+      "notes": "",
+      "fingerprint_sensor": "1c7a:05a1"
+    },
+    "944XGK": {
+      "name": "Galaxy Book 4 Pro 14\"",
+      "series": "book4",
+      "cpu": "Core Ultra 9 (Meteor Lake)",
+      "ipu": "IPU6",
+      "camera_sensor": "OV02C10",
+      "speaker_amp": "MAX98390",
+      "subsystem_id": null,
+      "subsystem_in_kernel_quirk": null,
+      "notes": "",
+      "fingerprint_sensor": "1c7a:05a1"
+    },
+    "960XGK": {
+      "name": "Galaxy Book 4 Pro 16\"",
+      "series": "book4",
+      "cpu": "Core Ultra 5/7 (Meteor Lake)",
+      "ipu": "IPU6",
+      "camera_sensor": "OV02C10",
+      "speaker_amp": "MAX98390",
+      "subsystem_id": null,
+      "subsystem_in_kernel_quirk": null,
+      "notes": "",
+      "fingerprint_sensor": "1c7a:05a1"
+    },
+    "964XGK": {
+      "name": "Galaxy Book 4 Pro 16\"",
+      "series": "book4",
+      "cpu": "Core Ultra 9 (Meteor Lake)",
+      "ipu": "IPU6",
+      "camera_sensor": "OV02C10",
+      "speaker_amp": "MAX98390",
+      "subsystem_id": null,
+      "subsystem_in_kernel_quirk": null,
+      "notes": "",
+      "fingerprint_sensor": "1c7a:05a1"
+    },
+    "960QGK": {
+      "name": "Galaxy Book 4 Pro 360",
+      "series": "book4",
+      "cpu": "Core Ultra 5/7 (Meteor Lake)",
+      "ipu": "IPU6",
+      "camera_sensor": "OV02C10",
+      "speaker_amp": "MAX98390",
+      "subsystem_id": null,
+      "subsystem_in_kernel_quirk": null,
+      "notes": "webcam-fix-libcamera confirmed working (community-confirmed, issue #18). Camera mounted upside-down \u2014 ipu-bridge DMI fix applied (OVTI02C1). Ubuntu 24.04.2, kernel 6.17.0-19-generic.",
+      "fingerprint_sensor": "1c7a:05a1"
+    },
+    "750QGK": {
+      "name": "Galaxy Book 4 360 15\"",
+      "series": "book4",
+      "cpu": "Core Ultra 5/7 (Meteor Lake)",
+      "ipu": "IPU6",
+      "camera_sensor": "OV02C10",
+      "speaker_amp": "MAX98390",
+      "subsystem_id": null,
+      "subsystem_in_kernel_quirk": null,
+      "notes": "Non-Pro base model \u2014 fingerprint sensor may be Egis (1c7a:05a1) or Elan (04f3:xxxx) depending on region/SKU. Runtime lsusb check will determine compatibility.",
+      "fingerprint_sensor": "unknown \u2014 possibly 1c7a:05a1 or 04f3:xxxx (Elan)"
+    },
+    "940QGK": {
+      "name": "Galaxy Book 4 360 14\"",
+      "series": "book4",
+      "cpu": "Core Ultra 5/7 (Meteor Lake)",
+      "ipu": "IPU6",
+      "camera_sensor": "OV02C10",
+      "speaker_amp": "MAX98390",
+      "subsystem_id": null,
+      "subsystem_in_kernel_quirk": null,
+      "notes": "Non-Pro base model \u2014 fingerprint sensor may be Egis (1c7a:05a1) or Elan (04f3:xxxx) depending on region/SKU. Runtime lsusb check will determine compatibility.",
+      "fingerprint_sensor": "unknown \u2014 possibly 1c7a:05a1 or 04f3:xxxx (Elan)"
+    },
+    "960XMB": {
+      "name": "Galaxy Book 4 Ultra",
+      "series": "book4",
+      "cpu": "Core Ultra 9 (Meteor Lake)",
+      "ipu": "IPU6",
+      "camera_sensor": "OV02C10",
+      "speaker_amp": "MAX98390",
+      "subsystem_id": null,
+      "subsystem_in_kernel_quirk": null,
+      "notes": "Fingerprint sensor may be 1c7a:05a1 or 1c7a:05a5 depending on revision \u2014 both supported by egismoc patch.",
+      "fingerprint_sensor": "1c7a:05a1 or 1c7a:05a5"
+    },
+    "960XMA": {
+      "name": "Galaxy Book 4 Ultra",
+      "series": "book4",
+      "cpu": "Core Ultra 7 (Meteor Lake)",
+      "ipu": "IPU6",
+      "camera_sensor": "OV02C10",
+      "speaker_amp": "MAX98390",
+      "subsystem_id": null,
+      "subsystem_in_kernel_quirk": null,
+      "notes": "Fingerprint sensor may be 1c7a:05a1 or 1c7a:05a5 depending on revision \u2014 both supported by egismoc patch.",
+      "fingerprint_sensor": "1c7a:05a1 or 1c7a:05a5"
+    },
+    "960XGL": {
+      "name": "Galaxy Book 4 Ultra",
+      "series": "book4",
+      "cpu": "Core Ultra 7/9 (Meteor Lake)",
+      "ipu": "IPU6",
+      "camera_sensor": "OV02C10",
+      "speaker_amp": "MAX98390",
+      "subsystem_id": null,
+      "subsystem_in_kernel_quirk": null,
+      "notes": "ov02c10-26mhz-fix confirmed needed. Camera mounted upside-down \u2014 ipu-bridge DMI fix applied. Fingerprint sensor may be 1c7a:05a1 or 1c7a:05a5 depending on revision \u2014 both supported by egismoc patch.",
+      "fingerprint_sensor": "1c7a:05a1 or 1c7a:05a5"
+    },
+    "940XHA": {
+      "name": "Galaxy Book 5 Pro 14\"",
+      "series": "book5",
+      "cpu": "Core Ultra 7 (Lunar Lake)",
+      "ipu": "IPU7",
+      "camera_sensor": "OV02E10",
+      "speaker_amp": "MAX98390",
+      "subsystem_id": null,
+      "subsystem_in_kernel_quirk": null,
+      "notes": "Mic confirmed working after speaker fix \u2014 mic-fix hidden. Camera mounted upside-down \u2014 ipu-bridge DMI fix applied.",
+      "fingerprint_sensor": "1c7a:05a5"
+    },
+    "960XHA": {
+      "name": "Galaxy Book 5 Pro 16\"",
+      "series": "book5",
+      "cpu": "Core Ultra 7 (Lunar Lake)",
+      "ipu": "IPU7",
+      "camera_sensor": "OV02E10",
+      "speaker_amp": "MAX98390",
+      "subsystem_id": null,
+      "subsystem_in_kernel_quirk": null,
+      "notes": "Mic confirmed working after speaker fix \u2014 mic-fix hidden. Camera mounted upside-down \u2014 ipu-bridge DMI fix applied.",
+      "fingerprint_sensor": "1c7a:05a5"
+    },
+    "960QHA": {
+      "name": "Galaxy Book 5 Pro 360",
+      "series": "book5",
+      "cpu": "Core Ultra 7 (Lunar Lake)",
+      "ipu": "IPU7",
+      "camera_sensor": "unknown",
+      "speaker_amp": "MAX98390",
+      "subsystem_id": null,
+      "subsystem_in_kernel_quirk": null,
+      "notes": "Camera sensor not yet confirmed \u2014 may be OV02C10 or OV02E10.",
+      "fingerprint_sensor": "1c7a:05a5"
+    },
+    "750XHD": {
+      "name": "Galaxy Book 5 15\"",
+      "series": "book5",
+      "cpu": "Core Ultra 5 (Lunar Lake)",
+      "ipu": "IPU7",
+      "camera_sensor": "unknown",
+      "speaker_amp": "MAX98390",
+      "subsystem_id": null,
+      "subsystem_in_kernel_quirk": null,
+      "notes": "Camera sensor not yet confirmed \u2014 may be OV02C10 or OV02E10.",
+      "fingerprint_sensor": "1c7a:05a5 or 1c7a:05a1 (unconfirmed \u2014 Egis MoC, same family as rest of Book 5 lineup)"
+    },
+    "754XHD": {
+      "name": "Galaxy Book 5 15\"",
+      "series": "book5",
+      "cpu": "Core Ultra 7 (Lunar Lake)",
+      "ipu": "IPU7",
+      "camera_sensor": "unknown",
+      "speaker_amp": "MAX98390",
+      "subsystem_id": null,
+      "subsystem_in_kernel_quirk": null,
+      "notes": "Camera sensor not yet confirmed \u2014 may be OV02C10 or OV02E10.",
+      "fingerprint_sensor": "1c7a:05a5 or 1c7a:05a1 (unconfirmed \u2014 Egis MoC, same family as rest of Book 5 lineup)"
+    },
+    "750QHA": {
+      "name": "Galaxy Book 5 360 15\"",
+      "series": "book5",
+      "cpu": "Core Ultra 5 (Lunar Lake)",
+      "ipu": "IPU7",
+      "camera_sensor": "unknown",
+      "speaker_amp": "MAX98390",
+      "subsystem_id": null,
+      "subsystem_in_kernel_quirk": null,
+      "notes": "Camera sensor not yet confirmed \u2014 may be OV02C10 or OV02E10.",
+      "fingerprint_sensor": "1c7a:05a5 or 1c7a:05a1 (unconfirmed \u2014 Egis MoC, same family as rest of Book 5 lineup)"
+    },
+    "754QHA": {
+      "name": "Galaxy Book 5 360 15\"",
+      "series": "book5",
+      "cpu": "Core Ultra 7 (Lunar Lake)",
+      "ipu": "IPU7",
+      "camera_sensor": "unknown",
+      "speaker_amp": "MAX98390",
+      "subsystem_id": null,
+      "subsystem_in_kernel_quirk": null,
+      "notes": "Camera sensor not yet confirmed \u2014 may be OV02C10 or OV02E10.",
+      "fingerprint_sensor": "1c7a:05a5 or 1c7a:05a1 (unconfirmed \u2014 Egis MoC, same family as rest of Book 5 lineup)"
+    }
+  },
+  "fixes": {
+    "fanspeed": {
+      "label": "Fan Speed Fix",
+      "description": "ACPI DSDT override to fix _FST fan RPM reporting",
+      "install_script": "lib/fanspeed-fix/install.sh",
+      "uninstall_script": "lib/fanspeed-fix/uninstall.sh",
+      "reboot_marker": "/tmp/fanspeed-need-reboot",
+      "secure_boot_behaviour": "block",
+      "requires_initramfs": true,
+      "script_identifier": [
+        "/var/lib/samsung-galaxybook/dsdt-firmware.sha256"
+      ],
+      "applicable_models": {
+        "940XGK": "confirmed",
+        "944XGK": "confirmed",
+        "960XGK": "confirmed",
+        "964XGK": "confirmed",
+        "960QGK": "confirmed",
+        "750QGK": "untested",
+        "940QGK": "untested",
+        "960XMB": "confirmed",
+        "960XMA": "confirmed",
+        "960XGL": "confirmed",
+        "940XHA": "confirmed",
+        "960XHA": "likely",
+        "960QHA": "untested",
+        "750XHD": "untested",
+        "754XHD": "untested",
+        "750QHA": "untested",
+        "754QHA": "untested"
+      },
+      "notes": "Book 4 and Book 5 confirmed. Book 3 compatibility unknown \u2014 excluded until confirmed.",
+      "requires_de": ""
+    },
+    "fingerprint": {
+      "label": "Fingerprint Fix",
+      "description": "Builds libfprint feature/sdcp-v2 for egismoc SDCP handshake",
+      "install_script": "lib/fingerprint-fix/install.sh",
+      "uninstall_script": "lib/fingerprint-fix/uninstall.sh",
+      "reboot_marker": null,
+      "secure_boot_behaviour": "none",
+      "requires_initramfs": false,
+      "script_identifier": [
+        "/etc/samsung-galaxybook-libfprint-sdcp-v2.installed"
+      ],
+      "applicable_models": {
+        "940XFG": "confirmed",
+        "960XFG": "confirmed",
+        "965XFG": "untested",
+        "960QFG": "confirmed",
+        "965QFG": "untested",
+        "960XFH": "untested",
+        "950XFG": "untested",
+        "930XED": "untested",
+        "950XED": "untested",
+        "960XED": "untested",
+        "930QED": "untested",
+        "950QED": "untested",
+        "930MBE": "untested",
+        "950XDB": "untested",
+        "940XGK": "confirmed",
+        "944XGK": "untested",
+        "960XGK": "confirmed",
+        "964XGK": "untested",
+        "960QGK": "confirmed",
+        "750QGK": "untested",
+        "940QGK": "untested",
+        "960XMB": "untested",
+        "960XMA": "untested",
+        "960XGL": "untested",
+        "940XHA": "confirmed",
+        "960XHA": "confirmed",
+        "960QHA": "untested",
+        "750XHD": "untested",
+        "754XHD": "untested",
+        "750QHA": "untested",
+        "754QHA": "untested"
+      },
+      "notes": "All series. Two possible USB IDs: 1c7a:05a5 (newer SDCP sensor, Book 4/5) and 1c7a:05a1 (older sensor, Book 3/4). Both require libfprint sdcp-v2. Detected at runtime via lsusb \u2014 check for both IDs."
+    },
+    "fnkeys": {
+      "label": "Function Key Fix",
+      "description": "Galaxy Book 5 only \u2014 enables F1, F4, F9, F10, F11, Copilot Key via patched DKMS kernel module",
+      "install_script": "lib/fnkeys-fix/install.sh",
+      "uninstall_script": "lib/fnkeys-fix/uninstall.sh",
+      "reboot_marker": "/tmp/fnkeyfix-need-reboot",
+      "secure_boot_behaviour": "none",
+      "requires_initramfs": false,
+      "script_identifier": [
+        "/var/lib/samsung-galaxybook/fkeys-kernel.ver"
+      ],
+      "applicable_models": {
+        "940XHA": "confirmed",
+        "960XHA": "confirmed",
+        "960QHA": "untested",
+        "750XHD": "untested",
+        "754XHD": "untested",
+        "750QHA": "untested",
+        "754QHA": "untested"
+      },
+      "notes": "Book 5 only. Book 4 handled by mainline kernel driver (6.14+). Book 3 unknown."
+    },
+    "speaker": {
+      "label": "Speaker Fix",
+      "description": "MAX98390 HDA DKMS driver for Galaxy Book 4/5 speaker amplifiers",
+      "install_script": "speaker-fix/install.sh",
+      "uninstall_script": "speaker-fix/uninstall.sh",
+      "reboot_marker": "/tmp/speakerfix-need-reboot",
+      "secure_boot_behaviour": "none",
+      "requires_initramfs": false,
+      "script_identifier": [
+        "/var/lib/samsung-galaxybook/speaker-fix.installed"
+      ],
+      "applicable_models": {
+        "940XGK": "confirmed",
+        "944XGK": "untested",
+        "960XGK": "confirmed",
+        "964XGK": "untested",
+        "960QGK": "confirmed",
+        "750QGK": "untested",
+        "940QGK": "untested",
+        "960XMB": "confirmed",
+        "960XMA": "confirmed",
+        "960XGL": "confirmed",
+        "940XHA": "confirmed",
+        "960XHA": "confirmed",
+        "960QHA": "untested",
+        "750XHD": "untested",
+        "754XHD": "untested",
+        "750QHA": "untested",
+        "754QHA": "untested"
+      },
+      "notes": "MAX98390 I2C DKMS driver. Book 4 and Book 5 only. Book 3 uses ALC298 HDA \u2014 kernel quirk handles most models. Hardware presence verified at runtime via ACPI."
+    },
+    "mic": {
+      "label": "Mic Fix",
+      "description": "Fixes mic breakage after speaker fix \u2014 Book 4 and some Book 5 models",
+      "install_script": "mic-fix/install.sh",
+      "uninstall_script": "mic-fix/uninstall.sh",
+      "reboot_marker": "/tmp/mic-need-reboot",
+      "secure_boot_behaviour": "none",
+      "requires_initramfs": false,
+      "script_identifier": [
+        "/etc/modprobe.d/sof-dsp-driver.conf"
+      ],
+      "applicable_models": {
+        "940XGK": "confirmed",
+        "944XGK": "untested",
+        "960XGK": "confirmed",
+        "964XGK": "untested",
+        "960QGK": "confirmed",
+        "750QGK": "untested",
+        "940QGK": "untested",
+        "960XMB": "confirmed",
+        "960XMA": "confirmed",
+        "960XGL": "confirmed",
+        "940XHA": "hidden",
+        "960XHA": "hidden",
+        "960QHA": "untested",
+        "750XHD": "untested",
+        "754XHD": "untested",
+        "750QHA": "untested",
+        "754QHA": "untested"
+      },
+      "notes": "Book 4 confirmed. Book 5 base/360 shown as optional \u2014 status uncertain. 940XHA and 960XHA hidden as mic confirmed working after speaker fix. Book 3 unknown.",
+      "requires_de": ""
+    },
+    "kdeosd": {
+      "label": "KDE Power OSD",
+      "description": "Shows OSD notification when power profile changes on AC plug/unplug (KDE only)",
+      "install_script": "lib/kdeosd-fix/install.sh",
+      "uninstall_script": "lib/kdeosd-fix/uninstall.sh",
+      "reboot_marker": null,
+      "secure_boot_behaviour": "none",
+      "requires_initramfs": false,
+      "script_identifier": [
+        "/var/lib/samsung-galaxybook/kde-power-osd.installed",
+        "/etc/systemd/system/kde-power-osd.service"
+      ],
+      "applicable_models": "*",
+      "notes": "",
+      "requires_de": "kde"
+    },
+    "ov02c10": {
+      "label": "OV02C10 Clock Fix",
+      "description": "Fixes OV02C10 webcam sensor failing to probe due to 26 MHz clock mismatch",
+      "install_script": "ov02c10-26mhz-fix/install.sh",
+      "uninstall_script": "ov02c10-26mhz-fix/uninstall.sh",
+      "reboot_marker": "/tmp/ov02c10fix-need-reboot",
+      "secure_boot_behaviour": "none",
+      "requires_initramfs": false,
+      "script_identifier": [
+        "/var/lib/samsung-galaxybook/ov02c10-fix.installed"
+      ],
+      "applicable_models": {
+        "940XFG": "untested",
+        "960XFG": "untested",
+        "965XFG": "untested",
+        "960QFG": "untested",
+        "965QFG": "untested",
+        "960XFH": "untested",
+        "950XFG": "untested",
+        "930XED": "untested",
+        "950XED": "untested",
+        "960XED": "untested",
+        "930QED": "untested",
+        "950QED": "untested",
+        "930MBE": "untested",
+        "950XDB": "untested",
+        "940XGK": "untested",
+        "944XGK": "untested",
+        "960XGK": "untested",
+        "964XGK": "untested",
+        "960QGK": "untested",
+        "750QGK": "untested",
+        "940QGK": "untested",
+        "960XMB": "untested",
+        "960XMA": "untested",
+        "960XGL": "confirmed"
+      },
+      "notes": "IPU6 only \u2014 Raptor Lake (Book 3) and Meteor Lake (Book 4). Not applicable to Book 5 (IPU7). 960XGL confirmed. All Book 3 models included as all use IPU6 with OV02C10."
+    },
+    "webcamtoggle": {
+      "label": "Webcam Toggle",
+      "description": "Galaxy Book 5 only \u2014 Book 4 has built-in F10 camera block via mainline driver",
+      "install_script": "lib/webcam-toggle/install.sh",
+      "uninstall_script": "lib/webcam-toggle/uninstall.sh",
+      "reboot_marker": null,
+      "secure_boot_behaviour": "none",
+      "requires_initramfs": false,
+      "script_identifier": [
+        "/usr/local/bin/webcam-toggle.sh",
+        "/etc/udev/rules.d/70-galaxybook-camera.rules"
+      ],
+      "applicable_models": {
+        "940XHA": "confirmed",
+        "960XHA": "confirmed",
+        "960QHA": "untested",
+        "750XHD": "untested",
+        "754XHD": "untested",
+        "750QHA": "untested",
+        "754QHA": "untested"
+      },
+      "notes": "Book 5 only. Book 4 uses mainline F10 block. Book 3 unknown.",
+      "status_arg": "webcam",
+      "requires_de": ""
+    },
+    "webcamfix_book5": {
+      "label": "Webcam Fix (Book 5)",
+      "description": "Intel IPU7 Lunar Lake \u2014 installs vision drivers, ACPI rotation fix, libcamera pipeline",
+      "install_script": "webcam-fix-book5/install.sh",
+      "uninstall_script": "webcam-fix-book5/uninstall.sh",
+      "reboot_marker": "/tmp/webcamfix_book5-need-reboot",
+      "secure_boot_behaviour": "warn",
+      "requires_initramfs": true,
+      "script_identifier": [
+        "/etc/modules-load.d/intel-ipu7-camera.conf",
+        "/etc/environment.d/libcamera-ipa.conf"
+      ],
+      "applicable_models": {
+        "940XHA": "confirmed",
+        "960XHA": "confirmed",
+        "960QHA": "likely",
+        "750XHD": "untested",
+        "754XHD": "untested",
+        "750QHA": "untested",
+        "754QHA": "untested"
+      },
+      "notes": "Book 5 / IPU7 only. Uses intel_cvs DKMS driver and libcamera pipeline.",
+      "requires_de": ""
+    },
+    "webcamfix_libcamera": {
+      "label": "Webcam Fix (Book 3/4)",
+      "description": "libcamera IPU6 pipeline \u2014 installs IVSC modules and libcamera stack",
+      "install_script": "webcam-fix-libcamera/install.sh",
+      "uninstall_script": "webcam-fix-libcamera/uninstall.sh",
+      "reboot_marker": "/tmp/webcamfix-need-reboot",
+      "secure_boot_behaviour": "none",
+      "requires_initramfs": true,
+      "script_identifier": [
+        "/etc/modprobe.d/ivsc-camera.conf",
+        "/etc/modules-load.d/ivsc.conf"
+      ],
+      "applicable_models": {
+        "940XFG": "confirmed",
+        "960XFG": "confirmed",
+        "965XFG": "untested",
+        "960QFG": "confirmed",
+        "965QFG": "untested",
+        "960XFH": "untested",
+        "950XFG": "untested",
+        "930XED": "untested",
+        "950XED": "untested",
+        "960XED": "untested",
+        "930QED": "untested",
+        "950QED": "untested",
+        "930MBE": "untested",
+        "950XDB": "untested",
+        "940XGK": "confirmed",
+        "944XGK": "untested",
+        "960XGK": "confirmed",
+        "964XGK": "untested",
+        "960QGK": "confirmed",
+        "750QGK": "untested",
+        "940QGK": "untested",
+        "960XMB": "untested",
+        "960XMA": "untested",
+        "960XGL": "confirmed"
+      },
+      "notes": "Book 3 and Book 4 / IPU6. Uses IVSC modules and libcamera SimplePipeline."
+    }
+  },
+  "fix_order": [
+    "fanspeed",
+    "fingerprint",
+    "fnkeys",
+    "kdeosd",
+    "mic",
+    "ov02c10",
+    "speaker",
+    "webcamfix_book5",
+    "webcamfix_libcamera",
+    "webcamtoggle"
+  ],
+  "hardware_ids": {
+    "ipu": [
+      {
+        "pci_id": "8086:7d19",
+        "gen": "IPU6",
+        "platform": "Meteor Lake",
+        "series": "book4"
+      },
+      {
+        "pci_id": "8086:a75d",
+        "gen": "IPU6",
+        "platform": "Raptor Lake",
+        "series": "book3"
+      },
+      {
+        "pci_id": "8086:645d",
+        "gen": "IPU7",
+        "platform": "Lunar Lake",
+        "series": "book5"
+      },
+      {
+        "pci_id": "8086:6457",
+        "gen": "IPU7",
+        "platform": "Lunar Lake",
+        "series": "book5"
+      }
+    ],
+    "fingerprint_usb": [
+      {
+        "id": "1c7a:05a5",
+        "chip": "Egis ETU905A80-E (MoC)",
+        "series": [
+          "book5"
+        ],
+        "notes": "Confirmed Book 5 Pro. Expected on other Book 5 models. Also seen on some Book 4 Ultra variants."
+      },
+      {
+        "id": "1c7a:05a1",
+        "chip": "Egis ETU905A80-E (MoC)",
+        "series": [
+          "book4"
+        ],
+        "notes": "Confirmed Book 4 Pro, Pro 360. Also seen on some Book 4 Ultra variants. Budget Book 4 models may have Elan sensor instead."
+      }
+    ],
+    "camera_i2c": [
+      {
+        "sensor": "OV02C10",
+        "driver": "ov02c10",
+        "acpi_hid": "OVTI02C1",
+        "ipu": "IPU6",
+        "series": [
+          "book3",
+          "book4"
+        ]
+      },
+      {
+        "sensor": "OV02E10",
+        "driver": "ov02e10",
+        "acpi_hid": "OVTI02E1",
+        "ipu": "IPU7",
+        "confirmed_models": [
+          "940XHA",
+          "960XHA"
+        ],
+        "notes": "Book 5 base model sensor not yet confirmed"
+      }
+    ],
+    "speaker_amps": [
+      {
+        "chip": "MAX98390",
+        "interface": "I2C",
+        "acpi_id": "MAX98390:*",
+        "series": [
+          "book4",
+          "book5"
+        ]
+      },
+      {
+        "chip": "ALC298",
+        "interface": "HDA",
+        "acpi_id": null,
+        "series": [
+          "book3"
+        ],
+        "kernel_quirk": "ALC298_FIXUP_SAMSUNG_AMP_V2_4_AMPS"
+      }
+    ]
+  }
+}

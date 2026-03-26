@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import threading
+import select
 
 # Require a display server
 if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
@@ -43,7 +44,8 @@ except (ValueError, ImportError):
         pass
 
 RELAY_CMD = "/usr/local/bin/camera-relay"
-POLL_INTERVAL = 5  # seconds
+POLL_INTERVAL = 30  # seconds — fallback poll (inotify handles fast updates)
+STATE_CACHE = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "camera-relay-state")
 
 
 class CameraRelaySystray:
@@ -76,9 +78,88 @@ class CameraRelaySystray:
             self.status_icon.connect("popup-menu", self._on_status_icon_popup)
             self.status_icon.set_visible(True)
 
-        # Initial status check, then poll
+        # Initial status check, then poll as fallback
         self._poll_status()
         GLib.timeout_add_seconds(POLL_INTERVAL, self._poll_status)
+
+        # Watch state cache file for instant updates via inotify
+        self._start_state_watcher()
+
+    def _start_state_watcher(self):
+        """Watch the state cache file with inotify for instant icon updates.
+        Uses a debounce flag to prevent multiple rapid polls being queued."""
+        self._poll_pending = False
+
+        def _schedule_poll():
+            """Queue a poll on the GTK main thread, ignoring duplicates."""
+            if not self._poll_pending:
+                self._poll_pending = True
+                GLib.idle_add(self._poll_and_clear_pending)
+            return False  # for GLib.idle_add
+
+        def _watch():
+            try:
+                import ctypes
+                import struct
+
+                libc = ctypes.CDLL("libc.so.6", use_errno=True)
+                IN_CLOSE_WRITE = 0x00000008
+                IN_MOVED_TO    = 0x00000080
+                IN_DELETE      = 0x00000200
+
+                inotify_fd = libc.inotify_init()
+                if inotify_fd < 0:
+                    return
+
+                # Watch the directory but only act on our specific file
+                watch_dir = os.path.dirname(STATE_CACHE)
+                watch_name = os.path.basename(STATE_CACHE).encode()
+
+                wd = libc.inotify_add_watch(
+                    inotify_fd,
+                    watch_dir.encode(),
+                    IN_CLOSE_WRITE | IN_MOVED_TO | IN_DELETE
+                )
+                if wd < 0:
+                    os.close(inotify_fd)
+                    return
+
+                BUF_SIZE = 4096
+
+                while True:
+                    # Block until an event or 60s timeout
+                    r, _, _ = select.select([inotify_fd], [], [], 60)
+                    if not r:
+                        continue
+                    raw = os.read(inotify_fd, BUF_SIZE)
+                    offset = 0
+                    matched = False
+                    while offset < len(raw):
+                        if offset + 16 > len(raw):
+                            break
+                        wd_ev, mask, cookie, name_len = struct.unpack_from("iIII", raw, offset)
+                        offset += 16
+                        if name_len > 0:
+                            name = raw[offset:offset + name_len].rstrip(b"\x00")
+                            offset += name_len
+                            if name == watch_name:
+                                matched = True
+                        else:
+                            break
+                    # Only schedule one poll per batch of events
+                    if matched:
+                        GLib.idle_add(_schedule_poll)
+
+            except Exception:
+                pass  # Fall back to polling silently
+
+        threading.Thread(target=_watch, daemon=True).start()
+
+    def _poll_and_clear_pending(self):
+        """Poll status and clear the pending flag so future events can queue again."""
+        self._poll_pending = False
+        self._poll_status()
+        return False  # do not repeat
 
     def _build_menu(self):
         menu = Gtk.Menu()

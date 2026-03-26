@@ -5,22 +5,36 @@
 
 set -e
 
-echo "=============================================="
-echo "  Webcam Fix (libcamera) Uninstaller"
-echo "=============================================="
-echo ""
-
-if [[ $EUID -eq 0 ]]; then
-    echo "ERROR: Don't run this as root. The script will use sudo where needed."
+if [ "$(id -u)" -ne 0 ]; then
+    echo "ERROR: Run with sudo: sudo bash uninstall.sh" >&2
     exit 1
 fi
 
+# Flag to track whether initramfs needs rebuilding at the end
+NEED_INITRAMFS_REBUILD=false
+
+echo "=============================================="
+echo "  Samsung Galaxy Book 4 Webcam Fix Uninstaller"
+echo "=============================================="
+echo ""
+
+
 # [1/8] Stop and remove camera relay
 echo "[1/8] Removing camera relay..."
-# Disable persistent mode (stops user service, removes unit file)
-if command -v camera-relay >/dev/null 2>&1; then
-    camera-relay disable-persistent 2>/dev/null || true
-    camera-relay stop 2>/dev/null || true
+# Identify the real desktop user for session-bus operations
+_relay_user=$(loginctl list-sessions --no-legend 2>/dev/null \
+    | awk '$4 == "seat0" {print $3}' | head -1)
+_relay_uid=$(id -u "$_relay_user" 2>/dev/null)
+# Disable persistent mode and stop relay as the real user
+if [[ -n "$_relay_user" ]] && command -v camera-relay >/dev/null 2>&1; then
+    sudo -u "$_relay_user" \
+        XDG_RUNTIME_DIR="/run/user/${_relay_uid}" \
+        DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${_relay_uid}/bus" \
+        /usr/local/bin/camera-relay disable-persistent 2>/dev/null || true
+    sudo -u "$_relay_user" \
+        XDG_RUNTIME_DIR="/run/user/${_relay_uid}" \
+        DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${_relay_uid}/bus" \
+        /usr/local/bin/camera-relay stop 2>/dev/null || true
 fi
 # Stop any running relay processes
 pkill -f "camera-relay-monitor" 2>/dev/null || true
@@ -32,19 +46,28 @@ sudo rm -f /etc/modprobe.d/99-camera-relay-loopback.conf
 sudo rm -f /etc/modules-load.d/v4l2loopback.conf
 sudo rm -rf /usr/local/share/camera-relay
 sudo rm -f /usr/share/applications/camera-relay-systray.desktop
-# Remove user service file if still present
-rm -f "${HOME}/.config/systemd/user/camera-relay.service" 2>/dev/null || true
-systemctl --user daemon-reload 2>/dev/null || true
+# Remove user service file for all users who have it
+for user_home in /home/*; do
+    service_file="$user_home/.config/systemd/user/camera-relay.service"
+    if [[ -f "$service_file" ]]; then
+        user=$(basename "$user_home")
+        uid=$(id -u "$user" 2>/dev/null)
+        sudo -u "$user" \
+            XDG_RUNTIME_DIR="/run/user/${uid}" \
+            DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${uid}/bus" \
+            systemctl --user daemon-reload 2>/dev/null || true
+        rm -f "$service_file"
+    fi
+done
 # Unload v4l2loopback if it was only used by the relay
 if lsmod 2>/dev/null | grep -q v4l2loopback; then
     if ! grep -rqs "v4l2loopback" /etc/modprobe.d/ 2>/dev/null; then
         sudo modprobe -r v4l2loopback 2>/dev/null || true
     fi
 fi
-# Fedora: rebuild initramfs so dracut doesn't load v4l2loopback with stale config
-if command -v dracut &>/dev/null; then
-    echo "  Rebuilding initramfs to remove v4l2loopback config..."
-    sudo dracut --regenerate-all -f 2>/dev/null || true
+# Fedora needs initramfs rebuild to pick up v4l2loopback config removal
+if command -v dracut >/dev/null 2>&1; then
+    NEED_INITRAMFS_REBUILD=true
 fi
 echo "  ✓ Camera relay removed"
 
@@ -65,17 +88,12 @@ if [[ -f /etc/initramfs-tools/modules ]]; then
         fi
     done
     if $INITRAMFS_CHANGED; then
-        echo "  Rebuilding initramfs..."
-        sudo update-initramfs -u
+        NEED_INITRAMFS_REBUILD=true
     fi
 fi
 sudo rm -f /etc/dracut.conf.d/ivsc-camera.conf
 sudo rm -f /etc/mkinitcpio.conf.d/ivsc-camera.conf
-if $INITRAMFS_CHANGED; then
-    echo "  ✓ Initramfs configuration removed (rebuilt)"
-else
-    echo "  ✓ Initramfs configuration removed"
-fi
+echo "  ✓ Initramfs configuration removed"
 
 # [4/8] Remove udev rules
 echo "[4/8] Removing udev rules..."
@@ -111,10 +129,21 @@ sudo rm -f /etc/profile.d/libcamera-ipa.sh
 sudo rm -f /etc/environment.d/libcamera-ipa.conf
 echo "  ✓ Environment configuration removed"
 
-# [8/8] Restart PipeWire
-echo "[8/8] Restarting PipeWire..."
-systemctl --user restart pipewire wireplumber 2>/dev/null || true
-echo "  ✓ PipeWire restarted"
+# [7b/8] Single initramfs rebuild
+echo "[7b/8] Rebuilding initramfs..."
+if [[ "${SKIP_INITRAMFS:-0}" == "1" ]]; then
+    echo "  ✓ Skipping initramfs rebuild (will be done at end of Uninstall All)."
+elif $NEED_INITRAMFS_REBUILD; then
+    if command -v dracut >/dev/null 2>&1; then
+        sudo dracut --force 2>/dev/null && echo "  ✓ initramfs rebuilt" ||             echo "  ⚠ initramfs rebuild failed — reboot may not apply all changes"
+    elif command -v update-initramfs >/dev/null 2>&1; then
+        sudo update-initramfs -u -k "$(uname -r)" 2>/dev/null &&             echo "  ✓ initramfs rebuilt" ||             echo "  ⚠ initramfs rebuild failed — reboot may not apply all changes"
+    elif command -v mkinitcpio >/dev/null 2>&1; then
+        sudo mkinitcpio -P 2>/dev/null && echo "  ✓ initramfs rebuilt" ||             echo "  ⚠ initramfs rebuild failed — reboot may not apply all changes"
+    fi
+else
+    echo "  ✓ No initramfs rebuild needed"
+fi
 
 echo ""
 echo "=============================================="

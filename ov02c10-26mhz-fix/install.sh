@@ -63,15 +63,19 @@ dkms build "${DKMS_NAME}/${DKMS_VERSION}"
 dkms install "${DKMS_NAME}/${DKMS_VERSION}"
 
 # Rebuild initramfs so the DKMS module replaces the stock one in early boot
-echo "Rebuilding initramfs..."
-if command -v update-initramfs &>/dev/null; then
-    update-initramfs -u
-elif command -v dracut &>/dev/null; then
-    dracut --force
-elif command -v mkinitcpio &>/dev/null; then
-    mkinitcpio -P
+if [ "${SKIP_INITRAMFS:-0}" = "1" ]; then
+    echo "Skipping initramfs rebuild (will be done at end of Install All)."
 else
-    echo "Warning: could not rebuild initramfs. Reboot may still load the stock driver."
+    echo "Rebuilding initramfs..."
+    if command -v update-initramfs &>/dev/null; then
+        update-initramfs -u
+    elif command -v dracut &>/dev/null; then
+        dracut --force
+    elif command -v mkinitcpio &>/dev/null; then
+        mkinitcpio -P
+    else
+        echo "Warning: could not rebuild initramfs. Reboot may still load the stock driver."
+    fi
 fi
 
 # Reload the module
@@ -98,3 +102,7 @@ echo "If the camera still doesn't work, try rebooting."
 echo ""
 echo "To verify the fix, run: dmesg | grep -i ov02c10"
 echo "You should no longer see 'external clock 26000000 is not supported'"
+
+# Write installation marker
+mkdir -p /var/lib/samsung-galaxybook
+touch /var/lib/samsung-galaxybook/ov02c10-fix.installed

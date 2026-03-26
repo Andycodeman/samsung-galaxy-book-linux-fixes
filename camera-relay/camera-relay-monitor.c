@@ -584,7 +584,7 @@ int main(int argc, char *argv[])
 				 * - Never saw any clients after 10
 				 *   seconds (false start from scan)
 				 */
-				if ((had_clients && idle_ticks >= 3) ||
+				if ((had_clients && idle_ticks >= 2) ||
 				    (!had_clients && idle_ticks >= 10))
 					need_stop = 1;
 			}

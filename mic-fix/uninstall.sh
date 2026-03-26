@@ -58,17 +58,20 @@ fi
 # ─── Rebuild initramfs ──────────────────────────────────────────────────────
 
 echo ""
-echo "Rebuilding initramfs with restored firmware..."
-
-if command -v update-initramfs >/dev/null 2>&1; then
-    update-initramfs -u -k all 2>&1 | tail -2
-elif command -v dracut >/dev/null 2>&1; then
-    dracut --force --regenerate-all 2>&1 | tail -2
-elif command -v mkinitcpio >/dev/null 2>&1; then
-    mkinitcpio -P 2>&1 | tail -2
+if [ "${SKIP_INITRAMFS:-0}" = "1" ]; then
+    echo "Skipping initramfs rebuild (will be done at end of Uninstall All)."
 else
-    echo "WARNING: Could not detect initramfs tool."
-    echo "         You may need to rebuild your initramfs manually."
+    echo "Rebuilding initramfs with restored firmware..."
+    if command -v update-initramfs >/dev/null 2>&1; then
+        update-initramfs -u -k all 2>&1 | tail -2
+    elif command -v dracut >/dev/null 2>&1; then
+        dracut --force --regenerate-all 2>&1 | tail -2
+    elif command -v mkinitcpio >/dev/null 2>&1; then
+        mkinitcpio -P 2>&1 | tail -2
+    else
+        echo "WARNING: Could not detect initramfs tool."
+        echo "         You may need to rebuild your initramfs manually."
+    fi
 fi
 
 # ─── Done ────────────────────────────────────────────────────────────────────

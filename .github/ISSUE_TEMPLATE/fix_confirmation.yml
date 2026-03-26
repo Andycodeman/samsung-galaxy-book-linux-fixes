@@ -1,0 +1,134 @@
+name: Fix Confirmation
+description: Report that a fix works (or doesn't work) on your hardware — helps us update the compatibility list
+title: "[CONFIRMED] "
+labels: ["confirmation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing! Your report helps us update the hardware compatibility list so other users know what to expect on their model.
+
+  - type: dropdown
+    id: laptop_model
+    attributes:
+      label: Laptop Model
+      description: Select your Samsung Galaxy Book model
+      options:
+        - Galaxy Book 5 Pro 14" (940XHA)
+        - Galaxy Book 5 Pro 16" (960XHA)
+        - Galaxy Book 5 Pro 360 (960QHA)
+        - Galaxy Book 5 15" (750XHD)
+        - Galaxy Book 5 15" (754XHD)
+        - Galaxy Book 5 360 15" (750QHA / 754QHA)
+        - Galaxy Book 4 Pro 14" (940XGK / 944XGK)
+        - Galaxy Book 4 Pro 16" (960XGK / 964XGK)
+        - Galaxy Book 4 Pro 360 (960QGK)
+        - Galaxy Book 4 360 14" (940QGK)
+        - Galaxy Book 4 360 15" (750QGK)
+        - Galaxy Book 4 Ultra (960XMB / 960XMA / 960XGL)
+        - Galaxy Book 3 Pro 14" (940XFG / 950XFG)
+        - Galaxy Book 3 Pro 16" (960XFG / 965XFG)
+        - Galaxy Book 3 Pro 360 14" (960QFG / 965QFG)
+        - Galaxy Book 3 Ultra (960XFH)
+        - Galaxy Book 3 360 (930XED / 950XED / 960XED / 930QED / 950QED)
+        - Galaxy Book 3 (930MBE / 950XDB)
+        - Other (specify in additional info)
+    validations:
+      required: true
+
+  - type: input
+    id: model_number
+    attributes:
+      label: DMI Product Name
+      description: Run `cat /sys/class/dmi/id/product_name` and paste the result
+      placeholder: e.g. 960QGK
+    validations:
+      required: true
+
+  - type: input
+    id: distro
+    attributes:
+      label: Linux Distribution
+      placeholder: e.g. Fedora 43, Ubuntu 24.04.2 LTS, Arch Linux
+    validations:
+      required: true
+
+  - type: input
+    id: kernel
+    attributes:
+      label: Kernel Version
+      description: Run `uname -r` and paste the result
+      placeholder: e.g. 6.19.9-200.fc43.x86_64
+    validations:
+      required: true
+
+  - type: dropdown
+    id: secure_boot
+    attributes:
+      label: Secure Boot
+      options:
+        - Disabled
+        - Enabled
+        - Unknown
+    validations:
+      required: true
+
+  - type: dropdown
+    id: desktop
+    attributes:
+      label: Desktop Environment
+      options:
+        - KDE Plasma
+        - GNOME
+        - Cinnamon
+        - Mate
+        - Xfce
+        - Other
+        - None (terminal only)
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: fixes_tested
+    attributes:
+      label: Fixes tested — please tick each one and mark the result below
+      options:
+        - label: Webcam Fix
+        - label: Webcam Toggle (F11 key)
+        - label: Fan Speed Fix
+        - label: Speaker Fix
+        - label: Mic Fix
+        - label: Fingerprint Fix
+        - label: Function Key Fix
+        - label: KDE Power Profile OSD
+        - label: OV02C10 Clock Fix
+        - label: Camera Relay
+
+  - type: textarea
+    id: results
+    attributes:
+      label: Results for each fix tested
+      description: For each fix you ticked above, state whether it worked, partially worked, or didn't work
+      placeholder: |
+        - Webcam Fix: Working — correct colours and orientation
+        - Speaker Fix: Working
+        - Fingerprint Fix: Not working — sensor not detected
+        - Fan Speed Fix: Partially working — RPM reported but values seem low
+    validations:
+      required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Any issues or workarounds needed?
+      description: If anything needed extra steps to get working, please describe them here
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional information
+      description: Anything else that might be useful — e.g. libcamera version, DKMS build output, dmesg snippets
+    validations:
+      required: false

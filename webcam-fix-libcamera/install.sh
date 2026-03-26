@@ -1,7 +1,7 @@
 #!/bin/bash
-# install.sh
-# Samsung Galaxy Book webcam fix using libcamera (open-source stack)
-# Supports: Galaxy Book3 (Raptor Lake / IPU6), Galaxy Book4 (Meteor Lake / IPU6)
+# install.sh — Samsung Galaxy Book 4 Webcam Fix
+# For Samsung Galaxy Book 4 series (Meteor Lake / IPU6)
+# Using libcamera open-source stack on Arch, Fedora, and Ubuntu
 # Distros:  Ubuntu, Fedora, Arch (and derivatives)
 #
 # This is the recommended webcam fix for Book3/Book4. It uses the open-source
@@ -27,7 +27,100 @@
 
 set -e
 
+if [ "$(id -u)" -ne 0 ]; then
+    echo "ERROR: Run with sudo: sudo bash install.sh" >&2
+    exit 1
+fi
+
+# Flag to track whether initramfs needs rebuilding at the end
+NEED_INITRAMFS_REBUILD=false
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+warn()  { echo -e "\033[1;33m[WARN]\033[0m $*"; }
+info()  { echo -e "\033[0;32m[INFO]\033[0m $*"; }
+error() { echo -e "\033[0;31m[ERROR]\033[0m $*"; exit 1; }
+
+# ── find_libcamera ────────────────────────────────────────────────────────────
+# Locates libcamera on the system and sets the following globals:
+#   LIBCAMERA_SO       — full path to the highest-versioned .so file found
+#   LIBCAMERA_MAJOR    — major version number
+#   LIBCAMERA_MINOR    — minor version number
+#   LIBCAMERA_PATCH    — patch version number
+#   LIBCAMERA_IPA_PATH — path to the libcamera IPA modules directory
+#   LIBCAMERA_TUNE_DIR — path to the libcamera simple ISP tuning directory
+#
+# IPA_PATH and TUNE_DIR are found independently via find — NOT derived from
+# the .so location — so this works correctly on all distros regardless of
+# whether libcamera was installed to /usr, /usr/local, /usr/lib64, etc.
+#
+# Returns 0 if libcamera .so is found, 1 if not.
+# Missing IPA/tune dirs are reported as warnings but do NOT cause failure.
+# Supports LIBCAMERA_OVERRIDE_PATH env var for non-standard install locations.
+find_libcamera() {
+    # ── Allow manual override ─────────────────────────────────────────────────
+    if [[ -n "${LIBCAMERA_OVERRIDE_PATH:-}" ]]; then
+        if [[ ! -f "$LIBCAMERA_OVERRIDE_PATH" ]]; then
+            echo "Error: LIBCAMERA_OVERRIDE_PATH set but file not found: $LIBCAMERA_OVERRIDE_PATH" >&2
+            return 1
+        fi
+        LIBCAMERA_SO="$LIBCAMERA_OVERRIDE_PATH"
+    else
+        # ── Find highest versioned .so across all standard locations ──────────
+        # Matches files like libcamera.so.0.7.0 — three numeric components.
+        # Excludes soname symlinks (libcamera.so.0) and non-library files.
+        LIBCAMERA_SO=$(
+            find /usr /opt \
+                -name "libcamera.so.*" 2>/dev/null \
+            | grep -P 'libcamera\.so\.\d+\.\d+\.\d+' \
+            | sed 's|.*libcamera\.so\.\(.*\)|\1 &|' \
+            | sort -V \
+            | tail -1 \
+            | cut -d' ' -f2-
+        )
+    fi
+
+    if [[ -z "$LIBCAMERA_SO" ]]; then
+        return 1
+    fi
+
+    # ── Extract version numbers from filename ─────────────────────────────────
+    local _version
+    _version=$(basename "$LIBCAMERA_SO" | grep -oP '\d+\.\d+\.\d+')
+    LIBCAMERA_MAJOR="${_version%%.*}"
+    LIBCAMERA_MINOR=$(echo "$_version" | cut -d. -f2)
+    LIBCAMERA_PATCH="${_version##*.}"
+
+    # ── Find IPA path independently via find ─────────────────────────────────
+    # Search broadly — do NOT derive from .so location as layout varies by distro.
+    # Exclude /usr/include — that contains header files, not loadable IPA modules.
+    LIBCAMERA_IPA_PATH=$(
+        find /usr /opt \
+            -not -path "*/include/*" \
+            -type d -name "ipa" \
+            -path "*/libcamera/ipa" 2>/dev/null \
+        | head -1
+    )
+    if [[ -z "$LIBCAMERA_IPA_PATH" ]]; then
+        warn "libcamera IPA directory not found — LIBCAMERA_IPA_MODULE_PATH will not be set"
+    fi
+
+    # ── Find tuning directory independently via find ──────────────────────────
+    LIBCAMERA_TUNE_DIR=$(
+        find /usr /opt \
+            -not -path "*/include/*" \
+            -type d -name "simple" \
+            -path "*/libcamera/ipa/simple" 2>/dev/null \
+        | head -1
+    )
+    if [[ -z "$LIBCAMERA_TUNE_DIR" ]]; then
+        warn "libcamera tuning directory not found — sensor tuning file will not be installed"
+    fi
+
+    return 0
+}
+
 LIBCAMERA_MIN_VER="0.7.0"
 LIBCAMERA_BUILD_VER="v0.7.0"
 LIBCAMERA_BUILD_DIR="/tmp/libcamera-ipu6-build"
@@ -41,10 +134,6 @@ echo ""
 # ──────────────────────────────────────────────
 # [1/14] Root check
 # ──────────────────────────────────────────────
-if [[ $EUID -eq 0 ]]; then
-    echo "ERROR: Don't run this as root. The script will use sudo where needed."
-    exit 1
-fi
 
 # ──────────────────────────────────────────────
 # [2/14] Distro detection
@@ -230,7 +319,7 @@ if ! $DKMS_26MHZ_INSTALLED; then
         echo "    Your hardware has a 26 MHz clock but the kernel driver only supports 19.2 MHz."
         echo "    A DKMS-patched ov02c10 driver is available to fix this."
         echo ""
-        read -rp "  Install the patched driver now? [Y/n] " REPLY_26MHZ
+        read -rp "  Install the patched driver now? [Y/n] " REPLY_26MHZ </dev/tty 2>/dev/null || REPLY_26MHZ="Y"
         REPLY_26MHZ=${REPLY_26MHZ:-Y}
         if [[ "$REPLY_26MHZ" =~ ^[Yy] ]]; then
             DKMS_FIX_DIR="${SCRIPT_DIR}/../ov02c10-26mhz-fix"
@@ -327,9 +416,8 @@ case "$DISTRO" in
             fi
         done
         if $INITRAMFS_CHANGED; then
-            echo "  Rebuilding initramfs (this may take a moment)..."
-            sudo update-initramfs -u
-            echo "  ✓ IVSC modules added to initramfs"
+            NEED_INITRAMFS_REBUILD=true
+            echo "  ✓ IVSC modules added to initramfs (will rebuild at end)"
         else
             echo "  ✓ IVSC modules already in initramfs"
         fi
@@ -345,9 +433,8 @@ DRACUT_EOF
             INITRAMFS_CHANGED=true
         fi
         if $INITRAMFS_CHANGED; then
-            echo "  Rebuilding initramfs with dracut (this may take a moment)..."
-            sudo dracut --force
-            echo "  ✓ IVSC modules added to initramfs (dracut)"
+            NEED_INITRAMFS_REBUILD=true
+            echo "  ✓ IVSC modules added to initramfs (will rebuild at end)"
         else
             echo "  ✓ IVSC modules already in initramfs (dracut)"
         fi
@@ -364,9 +451,8 @@ MKINIT_EOF
             INITRAMFS_CHANGED=true
         fi
         if $INITRAMFS_CHANGED; then
-            echo "  Rebuilding initramfs with mkinitcpio (this may take a moment)..."
-            sudo mkinitcpio -P
-            echo "  ✓ IVSC modules added to initramfs (mkinitcpio)"
+            NEED_INITRAMFS_REBUILD=true
+            echo "  ✓ IVSC modules added to initramfs (will rebuild at end)"
         else
             echo "  ✓ IVSC modules already in initramfs (mkinitcpio)"
         fi
@@ -477,26 +563,8 @@ SIGNEOF
 
                 # Update initramfs so the DKMS module is loaded at next boot
                 # instead of the stock kernel module (which has rotation=0).
-                case "$DISTRO" in
-                    ubuntu|debian)
-                        if command -v update-initramfs >/dev/null 2>&1; then
-                            sudo update-initramfs -u -k "$(uname -r)" 2>/dev/null && \
-                                echo "  ✓ initramfs updated" || true
-                        fi
-                        ;;
-                    fedora)
-                        if command -v dracut >/dev/null 2>&1; then
-                            sudo dracut --force 2>/dev/null && \
-                                echo "  ✓ initramfs updated" || true
-                        fi
-                        ;;
-                    arch)
-                        if command -v mkinitcpio >/dev/null 2>&1; then
-                            sudo mkinitcpio -P 2>/dev/null && \
-                                echo "  ✓ initramfs updated" || true
-                        fi
-                        ;;
-                esac
+                NEED_INITRAMFS_REBUILD=true
+                echo "  ✓ ipu-bridge DKMS installed (initramfs will rebuild at end)"
             fi
         fi
 
@@ -529,31 +597,23 @@ echo "[9/14] Installing libcamera..."
 
 # Check if a sufficient version is already installed
 check_libcamera_version() {
-    local ver=""
-
-    # Check /usr/local first (source builds), then system paths
-    ver=$(ls -l /usr/local/lib/*/libcamera.so.* /usr/local/lib/libcamera.so.* \
-          /usr/lib64/libcamera.so.* /usr/lib/*/libcamera.so.* /usr/lib/libcamera.so.* 2>/dev/null \
-        | grep -oP 'libcamera\.so\.\K[0-9]+\.[0-9]+' | sort -V | tail -1 || true)
-
-    if [[ -z "$ver" ]]; then
+    # Use find_libcamera — searches /usr and /opt broadly,
+    # works on all distros regardless of lib path layout.
+    if ! find_libcamera 2>/dev/null; then
         echo ""
         return 1
     fi
 
-    local major minor
-    major=$(echo "$ver" | cut -d. -f1)
-    minor=$(echo "$ver" | cut -d. -f2)
-
     # Need >= 0.7 (0.5.x detects OV02C10 but fails to stream; 0.7.0 has
     # proper IPASoft sensor support, Ccm/Awb/Adjust algorithms, and handles
     # missing selection API gracefully)
-    if [[ "$major" -gt 0 ]] || { [[ "$major" -eq 0 ]] && [[ "$minor" -ge 7 ]]; }; then
-        echo "$ver"
+    if [[ "$LIBCAMERA_MAJOR" -gt 0 ]] || \
+       { [[ "$LIBCAMERA_MAJOR" -eq 0 ]] && [[ "$LIBCAMERA_MINOR" -ge 7 ]]; }; then
+        echo "${LIBCAMERA_MAJOR}.${LIBCAMERA_MINOR}.${LIBCAMERA_PATCH}"
         return 0
     fi
 
-    echo "$ver"
+    echo "${LIBCAMERA_MAJOR}.${LIBCAMERA_MINOR}.${LIBCAMERA_PATCH}"
     return 1
 }
 
@@ -707,14 +767,17 @@ fi
 # A previous install (before v0.3.6) may have built v0.7.0 without the helper patch.
 # If so, force a rebuild so the sensor helper gets patched in.
 check_sensor_helper() {
-    local lib
-    lib=$(find /usr/local/lib /usr/local/lib64 -name "libcamera.so.0.7.*" -not -type l 2>/dev/null | head -1)
-    [[ -n "$lib" ]] && strings "$lib" | grep -q "CameraSensorHelperOv02c10"
+    # LIBCAMERA_SO is set by find_libcamera / check_libcamera_version
+    # Only check source builds under /usr/local — system packages manage themselves
+    if [[ -n "${LIBCAMERA_SO:-}" ]] && echo "$LIBCAMERA_SO" | grep -q "^/usr/local/"; then
+        strings "$LIBCAMERA_SO" | grep -q "CameraSensorHelperOv02c10"
+    else
+        return 0  # system package — assume sensor helper present
+    fi
 }
 
 if $LIBCAMERA_OK; then
-    local_lib=$(find /usr/local/lib /usr/local/lib64 -name "libcamera.so.0.*" -not -type l 2>/dev/null | head -1)
-    if [[ -n "$local_lib" ]] && ! check_sensor_helper 2>/dev/null; then
+    if echo "${LIBCAMERA_SO:-}" | grep -q "^/usr/local/" && ! check_sensor_helper 2>/dev/null; then
         echo "  ⚠ libcamera $LIBCAMERA_VER found but missing OV02C10 sensor helper — rebuild needed"
         LIBCAMERA_OK=false
     fi
@@ -726,18 +789,19 @@ fi
 # to a sufficient version. The stale /usr/local files would shadow the system
 # libraries and GStreamer plugins, causing "Algorithm 'Ccm' not found" failures.
 cleanup_stale_local_libcamera() {
-    local stale_ver
-    stale_ver=$(ls /usr/local/lib/x86_64-linux-gnu/libcamera.so.0.* \
-                   /usr/local/lib/aarch64-linux-gnu/libcamera.so.0.* \
-                   /usr/local/lib64/libcamera.so.0.* \
-                   /usr/local/lib/libcamera.so.0.* 2>/dev/null \
-              | grep -oP 'libcamera\.so\.0\.\K[0-9]+' | sort -n | tail -1)
-    local min_minor
+    local stale_so stale_minor min_minor
     min_minor=$(echo "$LIBCAMERA_MIN_VER" | cut -d. -f2)
+
+    # Only care about stale builds in /usr/local
+    stale_so=$(find /usr/local -name "libcamera.so.*" 2>/dev/null \
+        | grep -P 'libcamera\.so\.\d+\.\d+\.\d+' \
+        | sed 's|.*libcamera\.so\.\(.*\)|\1 &|' \
+        | sort -V | tail -1 | cut -d' ' -f2-)
+    stale_minor=$(basename "${stale_so:-}" | grep -oP '\d+\.\d+\.\d+' | cut -d. -f2)
 
     # Also check for orphaned binaries from a previous partial cleanup
     # (e.g. .so files already removed but /usr/local/bin/cam still exists)
-    if [[ -z "$stale_ver" ]]; then
+    if [[ -z "$stale_so" ]]; then
         for bin in cam qcam lc-compliance; do
             if [[ -x "/usr/local/bin/$bin" ]] && \
                ! "/usr/local/bin/$bin" --version &>/dev/null 2>&1; then
@@ -748,8 +812,8 @@ cleanup_stale_local_libcamera() {
         return
     fi
 
-    if [[ "$stale_ver" -lt "$min_minor" ]]; then
-        echo "  ⚠ Removing stale libcamera build (0.$stale_ver) from /usr/local..."
+    if [[ -n "$stale_minor" ]] && [[ "$stale_minor" -lt "$min_minor" ]]; then
+        echo "  ⚠ Removing stale libcamera build (0.$stale_minor) from /usr/local..."
         # Remove stale binaries from the old source build. They link against
         # the libcamera.so.0.X we're about to remove and would fail with
         # "cannot open shared object file" if left behind.
@@ -839,7 +903,7 @@ case "$DISTRO" in
             echo "  libcamera $LIBCAMERA_BUILD_VER will be built from source and installed to /usr/local."
             echo "  This requires ~200MB of disk space and takes a few minutes."
             echo ""
-            read -rp "  Proceed with source build? [Y/n] " REPLY
+            read -rp "  Proceed with source build? [Y/n] " REPLY </dev/tty 2>/dev/null || REPLY="Y"
             REPLY=${REPLY:-Y}
             if [[ "$REPLY" =~ ^[Yy] ]]; then
                 build_libcamera_from_source
@@ -896,9 +960,9 @@ rebuild_spa_plugin() {
 
     ninja -C build spa/plugins/libcamera/libspa-libcamera.so
 
-    # Find the system SPA plugin path and replace it
+    # Find the system SPA plugin path and replace it — search broadly
     local SPA_DIR
-    SPA_DIR=$(find /usr/lib -name "libspa-libcamera.so" -path "*/spa-0.2/libcamera/*" 2>/dev/null | head -1)
+    SPA_DIR=$(find /usr /opt -name "libspa-libcamera.so" -path "*/spa-0.2/libcamera/*" 2>/dev/null | head -1)
     if [[ -n "$SPA_DIR" ]]; then
         sudo cp "$SPA_DIR" "${SPA_DIR}.bak"
         sudo cp build/spa/plugins/libcamera/libspa-libcamera.so "$SPA_DIR"
@@ -927,9 +991,12 @@ case "$DISTRO" in
         fi
 
         # Check if the installed SPA plugin links against our source-built libcamera
-        SPA_SO=$(find /usr/lib -name "libspa-libcamera.so" -path "*/spa-0.2/libcamera/*" 2>/dev/null | head -1)
-        LOCAL_LIBCAMERA=$(ls /usr/local/lib/x86_64-linux-gnu/libcamera.so.0.* \
-                             /usr/local/lib/x86_64-linux-gnu/libcamera.so 2>/dev/null | head -1)
+        SPA_SO=$(find /usr /opt -name "libspa-libcamera.so" -path "*/spa-0.2/libcamera/*" 2>/dev/null | head -1)
+        # LOCAL_LIBCAMERA only relevant if libcamera was installed to /usr/local
+        LOCAL_LIBCAMERA=""
+        if echo "${LIBCAMERA_SO:-}" | grep -q "^/usr/local/"; then
+            LOCAL_LIBCAMERA="$LIBCAMERA_SO"
+        fi
         if [[ -n "$SPA_SO" ]]; then
             SPA_LIBCAMERA_VER=$(ldd "$SPA_SO" 2>/dev/null | grep -oP 'libcamera\.so\.\K[0-9]+\.[0-9]+' | head -1 || true)
             SPA_LIBCAMERA_MINOR=$(echo "$SPA_LIBCAMERA_VER" | cut -d. -f2)
@@ -965,23 +1032,29 @@ esac
 echo ""
 echo "[11/14] Installing sensor tuning and environment config..."
 
-# Install OV02C10 tuning file for libcamera Simple ISP
-for dir in /usr/local/share/libcamera/ipa/simple /usr/share/libcamera/ipa/simple; do
-    if [[ -d "$(dirname "$dir")" ]]; then
-        sudo mkdir -p "$dir"
-        sudo cp "$SCRIPT_DIR/ov02c10.yaml" "$dir/ov02c10.yaml"
-        echo "  ✓ Installed tuning file: $dir/ov02c10.yaml"
-    fi
-done
+# Use find_libcamera results for tuning dir and IPA path.
+# find_libcamera may have already been called — re-run if paths not yet set.
+if [[ -z "${LIBCAMERA_IPA_PATH:-}" ]]; then
+    find_libcamera 2>/dev/null || true
+fi
 
-# Set IPA module search path for source-built libcamera
-if [[ -d /usr/local/lib/x86_64-linux-gnu/libcamera ]]; then
-    sudo tee /etc/profile.d/libcamera-ipa.sh > /dev/null << 'EOF'
-# libcamera IPA module path for source-built libcamera
-export LIBCAMERA_IPA_MODULE_PATH=/usr/local/lib/x86_64-linux-gnu/libcamera
+# Install OV02C10 tuning file for libcamera Simple ISP
+if [[ -n "${LIBCAMERA_TUNE_DIR:-}" ]]; then
+    sudo mkdir -p "$LIBCAMERA_TUNE_DIR"
+    sudo cp "$SCRIPT_DIR/ov02c10.yaml" "$LIBCAMERA_TUNE_DIR/ov02c10.yaml"
+    echo "  ✓ Installed tuning file: $LIBCAMERA_TUNE_DIR/ov02c10.yaml"
+else
+    echo "  ⚠ Could not determine tuning directory — tuning file not installed"
+fi
+
+# Set IPA module search path using find_libcamera result
+if [[ -n "${LIBCAMERA_IPA_PATH:-}" ]]; then
+    sudo tee /etc/profile.d/libcamera-ipa.sh > /dev/null << EOF
+# libcamera IPA module path
+export LIBCAMERA_IPA_MODULE_PATH=${LIBCAMERA_IPA_PATH}
 EOF
     sudo mkdir -p /etc/environment.d
-    echo "LIBCAMERA_IPA_MODULE_PATH=/usr/local/lib/x86_64-linux-gnu/libcamera" | \
+    echo "LIBCAMERA_IPA_MODULE_PATH=${LIBCAMERA_IPA_PATH}" | \
         sudo tee /etc/environment.d/libcamera-ipa.conf > /dev/null
     # Set GST_PLUGIN_PATH so gst-launch/gst-inspect find libcamerasrc from any terminal
     if [[ -d /usr/local/lib/x86_64-linux-gnu/gstreamer-1.0 ]]; then
@@ -991,15 +1064,20 @@ EOF
 # GStreamer plugin path for source-built libcamera
 export GST_PLUGIN_PATH=/usr/local/lib/x86_64-linux-gnu/gstreamer-1.0
 GSTEOF
-        echo "  ✓ IPA module path and GStreamer plugin path configured"
+        echo "  ✓ IPA module path configured: ${LIBCAMERA_IPA_PATH}  and GStreamer plugin path configured"
     else
-        echo "  ✓ IPA module path configured"
+        echo "  ✓ IPA module path configured: ${LIBCAMERA_IPA_PATH}"
     fi
-    export LIBCAMERA_IPA_MODULE_PATH=/usr/local/lib/x86_64-linux-gnu/libcamera
+    export LIBCAMERA_IPA_MODULE_PATH="${LIBCAMERA_IPA_PATH}"
+else
+    echo "  ⚠ Could not determine IPA module path — LIBCAMERA_IPA_MODULE_PATH will not be set"
 fi
 
 # Ensure user is in video group (needed for non-root camera access)
-CURRENT_USER="${SUDO_USER:-$USER}"
+# Use loginctl to reliably find the real desktop user when running as root via pkexec
+CURRENT_USER=$(loginctl list-sessions --no-legend 2>/dev/null \
+    | awk '$4 == "seat0" {print $3}' | head -1)
+[[ -z "$CURRENT_USER" ]] && CURRENT_USER="${SUDO_USER:-$USER}"
 if ! groups "$CURRENT_USER" 2>/dev/null | grep -q '\bvideo\b'; then
     sudo usermod -aG video "$CURRENT_USER"
     echo "  ✓ Added $CURRENT_USER to video group (takes effect on next login)"
@@ -1135,9 +1213,7 @@ if [[ -d "$RELAY_DIR" ]]; then
     # Without this, v4l2loopback-akmods loads the module from initramfs with stale
     # defaults (e.g. "OBS Virtual Camera") before /etc/modprobe.d/ is read.
     if [[ "$DISTRO" == "fedora" ]]; then
-        echo "  Rebuilding initramfs for v4l2loopback config (this may take a moment)..."
-        sudo dracut --regenerate-all -f 2>/dev/null || true
-        echo "  ✓ Initramfs rebuilt with Camera Relay config"
+        NEED_INITRAMFS_REBUILD=true
     fi
 
     # Check for stale v4l2loopback with wrong label (e.g. OBS Virtual Camera)
@@ -1163,7 +1239,15 @@ if [[ -d "$RELAY_DIR" ]]; then
         if gcc -O2 -Wall -o /tmp/camera-relay-monitor "$RELAY_DIR/camera-relay-monitor.c"; then
             # Stop running monitor before replacing binary (avoids "Text file busy")
             if pgrep -x camera-relay-monitor >/dev/null 2>&1; then
-                systemctl --user stop camera-relay.service 2>/dev/null || true
+                _ru=$(loginctl list-sessions --no-legend 2>/dev/null \
+                    | awk '$4 == "seat0" {print $3}' | head -1)
+                _ruid=$(id -u "$_ru" 2>/dev/null)
+                if [[ -n "$_ru" ]]; then
+                    sudo -u "$_ru" \
+                        XDG_RUNTIME_DIR="/run/user/${_ruid}" \
+                        DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${_ruid}/bus" \
+                        systemctl --user stop camera-relay.service 2>/dev/null || true
+                fi
                 pkill -x camera-relay-monitor 2>/dev/null || true
                 sleep 1
             fi
@@ -1193,11 +1277,50 @@ if [[ -d "$RELAY_DIR" ]]; then
 
     # Auto-enable persistent on-demand relay
     echo "  Enabling on-demand relay (auto-starts on login)..."
-    /usr/local/bin/camera-relay enable-persistent --yes 2>/dev/null && \
-        echo "  ✓ On-demand relay enabled (near-zero idle CPU)" || \
-        echo "  ⚠ Could not enable persistent relay — run 'camera-relay enable-persistent' after reboot"
+    _relay_user=$(loginctl list-sessions --no-legend 2>/dev/null \
+        | awk '$4 == "seat0" {print $3}' | head -1)
+    _relay_uid=$(id -u "$_relay_user" 2>/dev/null)
+    if [[ -n "$_relay_user" && -n "$_relay_uid" ]]; then
+        sudo -u "$_relay_user" \
+            XDG_RUNTIME_DIR="/run/user/${_relay_uid}" \
+            DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${_relay_uid}/bus" \
+            /usr/local/bin/camera-relay enable-persistent --yes 2>/dev/null && \
+            echo "  ✓ On-demand relay enabled for ${_relay_user} (near-zero idle CPU)" || \
+            echo "  ⚠ Could not enable persistent relay — run 'camera-relay enable-persistent' after reboot"
+    else
+        echo "  ⚠ Could not detect logged-in user — run 'camera-relay enable-persistent' after reboot"
+    fi
 else
     echo "  ⚠ camera-relay directory not found — skipping"
+fi
+
+# ──────────────────────────────────────────────
+# [13b/14] Single initramfs rebuild (covers all changes above)
+# ──────────────────────────────────────────────
+echo ""
+echo "[13b/14] Rebuilding initramfs..."
+if [[ "${SKIP_INITRAMFS:-0}" == "1" ]]; then
+    echo "  ✓ Skipping initramfs rebuild (will be done at end of Install All)."
+elif $NEED_INITRAMFS_REBUILD; then
+    case "$DISTRO" in
+        fedora)
+            if command -v dracut >/dev/null 2>&1; then
+                sudo dracut --force 2>/dev/null && echo "  ✓ initramfs rebuilt" ||                     echo "  ⚠ initramfs rebuild failed — reboot may not apply all changes"
+            fi
+            ;;
+        ubuntu|debian)
+            if command -v update-initramfs >/dev/null 2>&1; then
+                sudo update-initramfs -u -k "$(uname -r)" 2>/dev/null &&                     echo "  ✓ initramfs rebuilt" ||                     echo "  ⚠ initramfs rebuild failed — reboot may not apply all changes"
+            fi
+            ;;
+        arch)
+            if command -v mkinitcpio >/dev/null 2>&1; then
+                sudo mkinitcpio -P 2>/dev/null && echo "  ✓ initramfs rebuilt" ||                     echo "  ⚠ initramfs rebuild failed — reboot may not apply all changes"
+            fi
+            ;;
+    esac
+else
+    echo "  ✓ No initramfs rebuild needed"
 fi
 
 # ──────────────────────────────────────────────
@@ -1207,7 +1330,15 @@ echo ""
 echo "[14/14] Restarting PipeWire and verifying camera..."
 
 # Restart PipeWire so it picks up the libcamera SPA plugin
-systemctl --user restart pipewire wireplumber 2>/dev/null || true
+_pw_user=$(loginctl list-sessions --no-legend 2>/dev/null \
+    | awk '$4 == "seat0" {print $3}' | head -1)
+_pw_uid=$(id -u "$_pw_user" 2>/dev/null)
+if [[ -n "$_pw_user" ]]; then
+    sudo -u "$_pw_user" \
+        XDG_RUNTIME_DIR="/run/user/${_pw_uid}" \
+        DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${_pw_uid}/bus" \
+        systemctl --user restart pipewire wireplumber 2>/dev/null || true
+fi
 sleep 3
 
 # Check if PipeWire sees the camera via libcamera

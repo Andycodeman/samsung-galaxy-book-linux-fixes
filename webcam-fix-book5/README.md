@@ -127,9 +127,15 @@ This cycles through 10 CCM presets (from no correction to strong green boost) wi
 
 ### Vertically flipped image
 
-Some Samsung Galaxy Book5 models (940XHA, 960XHA) have the OV02E10 sensor mounted upside-down, but Samsung's BIOS incorrectly reports `camera_sensor_rotation=0`. The installer now includes a **DKMS patched `ipu-bridge.ko`** that adds Samsung DMI quirk entries to the kernel's upside-down sensor table, so libcamera sets the correct flip controls automatically.
+Some Samsung Galaxy Book5 models (940XHA, 960XHA) have the OV02E10 sensor mounted upside-down, but Samsung's BIOS incorrectly reports `camera_sensor_rotation=0`. The installer automatically applies a rotation fix on affected models; non-Samsung systems skip this step.
 
-**This fix is installed automatically** on affected Samsung models (940XHA, 960XHA). It will **auto-remove itself** when a future kernel includes the Samsung entries upstream. On non-Samsung systems, this step is skipped.
+**Two rotation fix methods are used, in priority order:**
+
+1. **ACPI SSDT override (preferred)** — The installer patches `SSDT3` from the live firmware to set `camera_sensor_rotation=1` (inverted) directly in the ACPI table, then embeds the patched table in the initramfs via `/etc/acpi_override/cam-rot.aml`. This method requires no additional kernel module. It is used whenever `iasl` (acpica-tools) is available and Secure Boot / kernel lockdown is **not** active.
+
+2. **ipu-bridge DKMS fallback** — If the ACPI method is unavailable (Secure Boot / kernel lockdown active, `iasl` missing, or any SSDT patch step fails), the installer builds and installs a patched `ipu-bridge.ko` DKMS module that adds Samsung DMI quirk entries to the kernel's upside-down sensor table, so libcamera sets the correct flip controls automatically. This module will **auto-remove itself** when a future kernel includes the Samsung rotation entries upstream.
+
+> **Secure Boot users:** The ACPI SSDT override is blocked by kernel lockdown. The installer automatically falls back to the ipu-bridge DKMS module (which can be signed for Secure Boot via MOK). To switch to the preferred ACPI method later, disable Secure Boot, uninstall, and reinstall the webcam fix.
 
 If you still see a flipped image on a different model, the rotation metadata for that platform may be incorrect or missing.
 
@@ -282,9 +288,12 @@ The install script creates these files:
 | `/etc/environment.d/libcamera-ipa.conf` | Set LIBCAMERA_IPA_MODULE_PATH + SPA_PLUGIN_DIR (systemd sessions) |
 | `/etc/profile.d/libcamera-ipa.sh` | Set LIBCAMERA_IPA_MODULE_PATH + SPA_PLUGIN_DIR (login shells) |
 | `/usr/src/vision-driver-1.0.0/` | DKMS source for intel_cvs module |
-| `/usr/src/ipu-bridge-fix-1.0/` | DKMS source for patched ipu-bridge (Samsung 940XHA/960XHA only) |
+| `/usr/src/ipu-bridge-fix-1.0/` | DKMS source for patched ipu-bridge (fallback rotation fix, used when ACPI override is blocked) |
+| `/etc/acpi_override/cam-rot.aml` | Patched SSDT3 table with corrected camera rotation (preferred rotation fix, initramfs-embedded) |
+| `/usr/local/sbin/cam-rot-check-upstream.sh` | Auto-removes cam-rot.aml ACPI override when upstream kernel has the Samsung rotation fix |
+| `/etc/systemd/system/cam-rot-check-upstream.service` | Runs cam-rot upstream check on every boot |
 | `/usr/local/sbin/ipu-bridge-check-upstream.sh` | Auto-removes ipu-bridge DKMS when upstream kernel has the fix |
-| `/etc/systemd/system/ipu-bridge-check-upstream.service` | Runs upstream check on boot |
+| `/etc/systemd/system/ipu-bridge-check-upstream.service` | Runs ipu-bridge upstream check on every boot |
 | `/var/lib/libcamera-bayer-fix-backup/` | Backup of original libcamera files (OV02E10 bayer fix only) |
 | `/usr/local/bin/camera-relay` | On-demand camera relay CLI tool |
 | `/usr/local/bin/camera-relay-monitor` | V4L2 event monitor for on-demand activation |
@@ -292,7 +301,7 @@ The install script creates these files:
 | `/etc/modprobe.d/99-camera-relay-loopback.conf` | v4l2loopback config for camera relay |
 | `/usr/local/share/camera-relay/camera-relay-systray.py` | System tray GUI for camera relay |
 
-The ipu-bridge-fix and bayer-fix files are only installed on Samsung 940XHA/960XHA models with OV02E10 sensor. The ipu-bridge fix auto-removes when the kernel includes the Samsung rotation entries. All files are removed by `uninstall.sh`.
+The rotation fix files installed depend on the method used: the ACPI SSDT override (`cam-rot.aml`) is used when `iasl` is available and Secure Boot is off; otherwise the ipu-bridge DKMS fallback is used. Both rotation methods install an upstream monitor service that checks on every boot whether the native kernel's `ipu-bridge` module has gained the Samsung DMI rotation entries — when detected, the relevant fix auto-removes itself and the initramfs is rebuilt. The bayer-fix files are only installed on OV02E10 systems with an active rotation fix. All files are removed by `uninstall.sh`.
 
 ---
 

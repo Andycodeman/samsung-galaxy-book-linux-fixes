@@ -1,4 +1,6 @@
 #!/bin/bash
+
+
 set -e
 
 DKMS_NAME="max98390-hda"
@@ -18,6 +20,34 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
+# Check if already installed — marker file or DKMS entry
+MARKER_FILE="/var/lib/samsung-galaxybook/speaker-fix.installed"
+DKMS_PRESENT=false
+dkms status "${DKMS_NAME}/${DKMS_VER}" 2>/dev/null | grep -q "${DKMS_NAME}" && DKMS_PRESENT=true
+
+if { [ -f "$MARKER_FILE" ] || $DKMS_PRESENT; } && ! $FORCE; then
+    echo "ERROR: Speaker fix is already installed." >&2
+    echo "  To reinstall, uninstall first:" >&2
+    echo "    sudo bash $(cd "$(dirname "$0")" && pwd)/uninstall.sh" >&2
+    echo "  Or use --force to override this check." >&2
+    exit 1
+fi
+
+# Hardware compatibility is determined by hardware-compat.json (via samsung-galaxybook-setup.sh).
+# When called from the setup script, applicability is already confirmed before this script runs.
+# The MAX98390 ACPI presence check below is the authoritative runtime hardware guard.
+if $FORCE; then
+    echo "NOTE: --force specified — skipping vendor check"
+else
+    _vendor=$(cat /sys/class/dmi/id/sys_vendor 2>/dev/null || echo "unknown")
+    if [[ "${_vendor,,}" != *"samsung"* ]]; then
+        echo "ERROR: System vendor is '${_vendor}', not Samsung." >&2
+        echo "This driver is for Samsung Galaxy Book laptops with MAX98390 amplifiers." >&2
+        echo "Use --force to override this check." >&2
+        exit 1
+    fi
+fi
+
 # Detect package manager
 if command -v dnf >/dev/null 2>&1; then
     PKG_MGR="dnf"
@@ -33,16 +63,33 @@ else
     PKG_INSTALL=""
 fi
 
-# Check prerequisites
+# Check prerequisites — install dkms and kernel headers if missing
 if ! command -v dkms >/dev/null 2>&1; then
+    echo "Installing dkms and kernel headers..."
     if [ "$PKG_MGR" = "dnf" ]; then
-        echo "ERROR: dkms not installed. Run: sudo dnf install dkms kernel-devel" >&2
+        dnf install -y dkms kernel-devel-$(uname -r) kernel-headers || {
+            echo "ERROR: Failed to install dkms. Run: sudo dnf install dkms kernel-devel" >&2
+            exit 1
+        }
     elif [ "$PKG_MGR" = "pacman" ]; then
-        echo "ERROR: dkms not installed. Run: sudo pacman -S dkms linux-headers i2c-tools" >&2
+        ARCH_KERNEL_PKG="linux-headers"
+        uname -r | grep -q "\-lts"      && ARCH_KERNEL_PKG="linux-lts-headers"
+        uname -r | grep -q "\-zen"      && ARCH_KERNEL_PKG="linux-zen-headers"
+        uname -r | grep -q "\-hardened" && ARCH_KERNEL_PKG="linux-hardened-headers"
+        pacman -S --noconfirm --needed dkms "$ARCH_KERNEL_PKG" || {
+            echo "ERROR: Failed to install dkms. Run: sudo pacman -S dkms linux-headers" >&2
+            exit 1
+        }
+    elif [ -n "$PKG_INSTALL" ]; then
+        apt-get update -q
+        apt-get install -y dkms linux-headers-$(uname -r) || {
+            echo "ERROR: Failed to install dkms. Run: sudo apt install dkms linux-headers-$(uname -r)" >&2
+            exit 1
+        }
     else
-        echo "ERROR: dkms not installed. Run: sudo apt install dkms" >&2
+        echo "ERROR: dkms not installed and package manager unknown. Install dkms manually." >&2
+        exit 1
     fi
-    exit 1
 fi
 
 # i2c-tools is needed for dynamic amp detection on boot
@@ -185,3 +232,6 @@ echo "To test now (without reboot):"
 echo "  sudo systemctl start max98390-hda-i2c-setup.service"
 echo "To uninstall:"
 echo "  sudo bash $(cd "$(dirname "$0")" && pwd)/uninstall.sh"
+# Write installed marker
+mkdir -p /var/lib/samsung-galaxybook
+touch "$MARKER_FILE"

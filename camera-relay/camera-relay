@@ -307,27 +307,83 @@ setup_environment() {
     fi
 }
 
-# Start the GStreamer pipeline, return its PID.
-# Pipeline: libcamerasrc → queue → videoconvert (ABGR→YUY2) → v4l2sink
-# videoconvert handles both format conversion AND the implicit CPU-side buffer
-# copy needed for libcamera 0.7.0+ DMA-BUF frames (which read as zeros via
-# v4l2loopback mmap without a copy). No videoflip needed — it strips rotation
-# metadata on older libcamera versions, causing flipped/discolored output.
-# In fast mode (for on-demand), skip the 3s verification sleep.
-start_pipeline() {
+# ── Pipeline optimisation ─────────────────────────────────────────────────────
+
+# Framerate for the relay pipeline.
+# 25fps is imperceptible vs 30fps for webcam use (cinema standard is 24fps)
+# and saves ~17% CPU versus 30fps. Override with RELAY_FPS env var if needed.
+RELAY_FPS="${RELAY_FPS:-25}"
+
+# Converter cache — persists for the session
+CONVERTER_CACHE="${CACHE_DIR}/camera-relay-converter"
+
+# Detect the best available format converter for ABGR→YUY2 conversion.
+# Preference order:
+#   1. vapostproc  — Intel VA-API hardware conversion (lowest CPU overhead)
+#   2. videoconvert — GStreamer software conversion (safe fallback)
+#
+# vapostproc requires gstreamer1-vaapi (Fedora) / gstreamer1.0-vaapi (Ubuntu)
+# / gst-vaapi (Arch) and a working Intel VA-API driver (iHD).
+#
+# Note: both converters also provide the CPU-side buffer copy required for
+# libcamera 0.7.0+ DMA-BUF frames — without this step, frames read as zeros
+# via v4l2loopback mmap.
+detect_converter() {
+    if [[ -f "$CONVERTER_CACHE" ]]; then
+        local cached
+        cached=$(cat "$CONVERTER_CACHE" 2>/dev/null)
+        if [[ "$cached" == "vapostproc" ]] || [[ "$cached" == "videoconvert" ]]; then
+            echo "$cached"
+            return 0
+        fi
+    fi
+
+    local choice="videoconvert"
+
+    if gst-inspect-1.0 vapostproc &>/dev/null 2>&1; then
+        if vainfo &>/dev/null 2>&1 || \
+           vainfo --display drm --device /dev/dri/renderD128 &>/dev/null 2>&1; then
+            choice="vapostproc"
+            info "Converter: vapostproc (Intel VA-API hardware acceleration)"
+        else
+            info "Converter: videoconvert (vapostproc available but VA-API not responding)"
+        fi
+    else
+        info "Converter: videoconvert (vapostproc not installed)"
+    fi
+
+    echo "$choice" > "$CONVERTER_CACHE"
+    echo "$choice"
+}
+
+# Build a GStreamer pipeline args array into GST_CMD.
+#
+# Pipeline: libcamerasrc → queue → <converter> → video/x-raw,format=YUY2 → sink
+#
+# The converter (vapostproc or videoconvert) serves two purposes:
+#   1. Format conversion: ABGR8888 → YUY2 (required for app compatibility)
+#   2. Buffer copy: required for libcamera 0.7.0+ DMA-BUF frames which read
+#      as zeros via v4l2loopback mmap without an explicit CPU-side copy
+#
+# No videoflip — strips rotation metadata on older libcamera, causing
+# flipped/discolored output. Rotation handled by ACPI SSDT or ipu-bridge DKMS.
+#
+# Args:
+#   $1 camera_name  — libcamera camera name (unescaped — escaped internally)
+#   $2 sink_element — full sink element string, e.g.:
+#                     "v4l2sink device=/dev/video0 io-mode=mmap sync=false"
+#                     "fdsink fd=3 sync=false"
+#   $3 extra_caps   — optional extra caps appended to output caps, e.g.
+#                     ",width=1920,height=1080"
+build_gst_pipeline() {
     local camera_name="$1"
-    local loopback_dev="$2"
-    local fast="${3:-false}"
-    local gst_log="${XDG_RUNTIME_DIR:-/tmp}/camera-relay-gst.log"
+    local sink_element="$2"
+    local extra_caps="${3:-}"
 
     # gst-launch-1.0 interprets backslashes as escape characters.
     # Camera names like "\_SB_.LNK0" need double-escaping.
     local gst_camera_name="${camera_name//\\/\\\\}"
 
-    # Use io-mode=mmap for v4l2sink — kernel-managed buffers are the most
-    # compatible across v4l2loopback versions. io-mode=rw (1) breaks on
-    # some Fedora systems; io-mode=auto (0) may fall through to rw.
-    # GStreamer enum: 0=auto, 1=rw, 2=mmap, 3=userptr, 4=dmabuf
     # RELAY_COLOR_FILTER: optional GStreamer element(s) for color correction.
     # Set in service environment to apply per-sensor tuning, e.g.:
     #   RELAY_COLOR_FILTER="videobalance saturation=0.85"
@@ -336,23 +392,63 @@ start_pipeline() {
         color_filter=(! $RELAY_COLOR_FILTER)
     fi
 
-    local -a gst_cmd=(
+    local converter
+    converter=$(detect_converter)
+
+    # vapostproc needs explicit input caps to avoid negotiation failures
+    # with libcamerasrc's ABGR output.
+    local -a converter_elements=()
+    if [[ "$converter" == "vapostproc" ]]; then
+        converter_elements=(
+            ! "video/x-raw,format=ABGR,framerate=${RELAY_FPS}/1"
+            ! vapostproc
+        )
+    else
+        converter_elements=(! videoconvert)
+    fi
+
+    GST_CMD=(
         gst-launch-1.0 -e
         libcamerasrc camera-name="$gst_camera_name"
         ! queue max-size-buffers=3 leaky=downstream
-        ! videoconvert
+        "${converter_elements[@]}"
         "${color_filter[@]}"
-        ! "video/x-raw,format=YUY2"
-        ! v4l2sink device="$loopback_dev" io-mode=mmap sync=false
+        ! "video/x-raw,format=YUY2,framerate=${RELAY_FPS}/1${extra_caps}"
+        ! ${sink_element}
     )
+}
 
-    "${gst_cmd[@]}" >"$gst_log" 2>&1 &
+# Start the GStreamer pipeline, return its PID.
+# Pipeline: libcamerasrc → queue → <converter> (ABGR→YUY2) → v4l2sink
+# The converter (vapostproc or videoconvert) handles both format conversion
+# AND the implicit CPU-side buffer copy needed for libcamera 0.7.0+ DMA-BUF
+# frames (which read as zeros via v4l2loopback mmap without a copy).
+# No videoflip needed — it strips rotation metadata on older libcamera
+# versions, causing flipped/discolored output.
+# In fast mode (for on-demand), skip the verification sleep.
+start_pipeline() {
+    local camera_name="$1"
+    local loopback_dev="$2"
+    local fast="${3:-false}"
+    local gst_log="${XDG_RUNTIME_DIR:-/tmp}/camera-relay-gst.log"
+
+    # Use io-mode=mmap for v4l2sink — kernel-managed buffers are the most
+    # compatible across v4l2loopback versions. io-mode=rw (1) breaks on
+    # some Fedora systems; io-mode=auto (0) may fall through to rw.
+    # GStreamer enum: 0=auto, 1=rw, 2=mmap, 3=userptr, 4=dmabuf
+    local -a GST_CMD=()
+    build_gst_pipeline "$camera_name" \
+        "v4l2sink device=${loopback_dev} io-mode=mmap sync=false"
+
+    "${GST_CMD[@]}" >"$gst_log" 2>&1 &
     local pid=$!
 
     if $fast; then
         sleep 0.5
     else
-        sleep 3
+        # 1.5s is sufficient — pipeline starts within ~0.5s or fails immediately.
+        # Reduced from 3s to improve "Start Relay" responsiveness in the systray.
+        sleep 1.5
     fi
 
     if ! kill -0 "$pid" 2>/dev/null; then
@@ -424,13 +520,10 @@ cmd_start() {
         info "Starting relay (foreground)..."
         echo "streaming" > "$STATE_CACHE"
         echo $$ > "$PID_FILE"
-        local gst_camera_name="${camera_name//\\/\\\\}"
-        exec gst-launch-1.0 -e \
-            libcamerasrc camera-name="$gst_camera_name" \
-            ! queue max-size-buffers=3 leaky=downstream \
-            ! videoconvert \
-            ! "video/x-raw,format=YUY2" \
-            ! v4l2sink device="$loopback_dev" io-mode=mmap sync=false
+        local -a GST_CMD=()
+        build_gst_pipeline "$camera_name" \
+            "v4l2sink device=${loopback_dev} io-mode=mmap sync=false"
+        exec "${GST_CMD[@]}"
     else
         info "Starting relay..."
         local pid
@@ -500,26 +593,16 @@ Run the installer to build it, or use 'camera-relay start' for always-on mode."
     # YUY2 frames from its stdout, and relays them to the device.
     # This avoids the writer fd handoff gap — the monitor always holds
     # the device open, so ready_for_capture never drops.
-    local gst_camera_name="${camera_name//\\/\\\\}"
-    local -a color_filter=()
-    if [[ -n "${RELAY_COLOR_FILTER:-}" ]]; then
-        color_filter=(! $RELAY_COLOR_FILTER)
-    fi
-
-    local -a gst_cmd=(
-        gst-launch-1.0 -e
-        libcamerasrc camera-name="$gst_camera_name"
-        ! queue max-size-buffers=3 leaky=downstream
-        ! videoconvert
-        "${color_filter[@]}"
-        ! "video/x-raw,format=YUY2,width=1920,height=1080"
-        ! fdsink fd=3 sync=false
-    )
+    local -a GST_CMD=()
+    build_gst_pipeline "$camera_name" \
+        "fdsink fd=3 sync=false" \
+        ",width=1920,height=1080"
+    local -a gst_cmd=("${GST_CMD[@]}")
 
     # Clean up all children on exit
     cleanup_on_demand() {
         pkill -P $$ 2>/dev/null
-        rm -f "$PID_FILE" "$STATE_CACHE"
+        rm -f "$PID_FILE" "$STATE_CACHE" "$CONVERTER_CACHE"
     }
     trap cleanup_on_demand EXIT
 
@@ -569,7 +652,7 @@ cmd_stop() {
     # Also kill any child gst-launch processes
     pkill -P "$pid" 2>/dev/null || true
 
-    rm -f "$PID_FILE" "$STATE_CACHE"
+    rm -f "$PID_FILE" "$STATE_CACHE" "$CONVERTER_CACHE"
     info "Relay stopped"
 }
 
@@ -689,6 +772,8 @@ ${ipa_path:+Environment=LIBCAMERA_IPA_MODULE_PATH=$ipa_path}
 ${gst_path:+Environment=GST_PLUGIN_PATH=$gst_path}
 ${lib_path:+Environment=LD_LIBRARY_PATH=$lib_path}
 ${softisp_mode:+Environment=LIBCAMERA_SOFTISP_MODE=$softisp_mode}
+# The Magic Fix: Force kill if it takes longer than 5 seconds to stop
+TimeoutStopSec=5
 
 [Install]
 WantedBy=default.target

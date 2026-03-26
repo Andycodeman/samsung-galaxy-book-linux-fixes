@@ -142,6 +142,20 @@ if [ -n "$CURRENT_FW_VER" ]; then
     echo "Current SOF firmware version: ${CURRENT_FW_VER}"
 fi
 
+# Compare version — skip install if already >= 2025.12.1
+REQUIRED_VER="2025.12.1"
+version_gte() {
+    # Returns 0 (true) if $1 >= $2, using sort -V
+    [ "$(printf '%s\n%s' "$1" "$2" | sort -V | head -1)" = "$2" ]
+}
+if [ -n "$CURRENT_FW_VER" ] && version_gte "$CURRENT_FW_VER" "$REQUIRED_VER" && ! $FORCE; then
+    echo ""
+    echo "SOF firmware ${CURRENT_FW_VER} is already at or above the required version (${REQUIRED_VER})."
+    echo "Mic fix is not needed — internal mic should work with your current firmware."
+    echo "Use --force to install anyway."
+    exit 0
+fi
+
 if [ "$CURRENT_DSP" = "3" ]; then
     echo "Current dsp_driver: 3 (SOF) — already set"
 else
@@ -159,8 +173,8 @@ fi
 
 # ─── Download Firmware ───────────────────────────────────────────────────────
 
-TMPDIR=$(mktemp -d)
-trap "rm -rf '$TMPDIR'" EXIT
+MIC_TMPDIR=$(mktemp -d)
+trap "rm -rf '$MIC_TMPDIR'" EXIT
 
 # SOF firmware comes from Intel's sof-bin releases on GitHub.
 # This is a 13 MB download containing all SOF firmware + topology files.
@@ -172,7 +186,7 @@ echo ""
 echo "Downloading SOF firmware ${SOF_BIN_VER} from GitHub..."
 echo "  URL: ${SOF_BIN_URL}"
 
-cd "$TMPDIR"
+cd "$MIC_TMPDIR"
 
 # Download to file first (not piped — avoids silent truncation on flaky connections)
 if ! curl -fSL --retry 3 --retry-delay 2 -o "$SOF_BIN_TARBALL" "$SOF_BIN_URL" 2>&1; then
@@ -220,7 +234,7 @@ elif [ -d "linux-firmware/intel/sof-ipc4-tplg" ]; then
 fi
 
 rm -rf "$SOF_BIN_DIR"
-cd "$TMPDIR/linux-firmware"
+cd "$MIC_TMPDIR/linux-firmware"
 echo "  ✓ SOF firmware ${SOF_BIN_VER} downloaded ($(du -sh intel/ | cut -f1))"
 
 # ─── Backup Existing Firmware ────────────────────────────────────────────────
@@ -305,20 +319,20 @@ echo "  Created: ${MODPROBE_CONF}"
 # ─── Rebuild initramfs ──────────────────────────────────────────────────────
 
 echo ""
-echo "Rebuilding initramfs to include updated firmware..."
-
-if command -v update-initramfs >/dev/null 2>&1; then
-    # Ubuntu/Debian
-    update-initramfs -u -k all 2>&1 | tail -2
-elif command -v dracut >/dev/null 2>&1; then
-    # Fedora/RHEL
-    dracut --force --regenerate-all 2>&1 | tail -2
-elif command -v mkinitcpio >/dev/null 2>&1; then
-    # Arch
-    mkinitcpio -P 2>&1 | tail -2
+if [ "${SKIP_INITRAMFS:-0}" = "1" ]; then
+    echo "Skipping initramfs rebuild (will be done at end of Install All)."
 else
-    echo "WARNING: Could not detect initramfs tool."
-    echo "         You may need to rebuild your initramfs manually."
+    echo "Rebuilding initramfs to include updated firmware..."
+    if command -v update-initramfs >/dev/null 2>&1; then
+        update-initramfs -u -k all 2>&1 | tail -2
+    elif command -v dracut >/dev/null 2>&1; then
+        dracut --force --regenerate-all 2>&1 | tail -2
+    elif command -v mkinitcpio >/dev/null 2>&1; then
+        mkinitcpio -P 2>&1 | tail -2
+    else
+        echo "WARNING: Could not detect initramfs tool."
+        echo "         You may need to rebuild your initramfs manually."
+    fi
 fi
 
 # ─── Done ────────────────────────────────────────────────────────────────────

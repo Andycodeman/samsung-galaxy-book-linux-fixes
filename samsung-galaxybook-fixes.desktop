@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Samsung Galaxy Book Fixes
+Comment=Configure Samsung Galaxy Book hardware fixes
+Exec=bash -c 'nohup "$(dirname "%k")/samsung-galaxybook-gui" > /dev/null 2>&1 &'
+Icon=computer
+Terminal=false
+Categories=System;Settings;
+Keywords=samsung;galaxybook;hardware;fixes;

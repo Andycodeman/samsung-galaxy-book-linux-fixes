@@ -27,3 +27,9 @@ fi
 modprobe ov02c10 2>/dev/null || true
 
 echo "Done! Stock ov02c10 driver restored. Reboot if needed."
+
+# Remove installation marker
+rm -f /var/lib/samsung-galaxybook/ov02c10-fix.installed
+if [ -d /var/lib/samsung-galaxybook ] && [ -z "$(ls -A /var/lib/samsung-galaxybook 2>/dev/null)" ]; then
+    rmdir /var/lib/samsung-galaxybook
+fi

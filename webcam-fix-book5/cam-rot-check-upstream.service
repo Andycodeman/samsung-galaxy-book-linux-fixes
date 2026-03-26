@@ -1,0 +1,14 @@
+[Unit]
+Description=Samsung Galaxy Book — camera rotation ACPI override upstream monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/cam-rot-check-upstream.sh
+RemainAfterExit=no
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

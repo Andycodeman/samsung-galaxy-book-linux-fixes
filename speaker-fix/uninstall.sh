@@ -13,6 +13,16 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
+# Check if installed — marker file or DKMS entry
+MARKER_FILE="/var/lib/samsung-galaxybook/speaker-fix.installed"
+DKMS_PRESENT=false
+dkms status "${DKMS_NAME}/${DKMS_VER}" 2>/dev/null | grep -q "${DKMS_NAME}" && DKMS_PRESENT=true
+
+if [ ! -f "$MARKER_FILE" ] && ! $DKMS_PRESENT; then
+    echo "WARNING: Speaker fix does not appear to be installed (no marker file or DKMS entry found)."
+    echo "         Proceeding to clean up any partial installation..."
+fi
+
 # Stop and disable systemd services
 echo "Stopping services..."
 systemctl stop max98390-hda-i2c-setup.service 2>/dev/null || true
@@ -41,6 +51,9 @@ rm -f /usr/local/sbin/max98390-hda-check-upstream.sh
 rm -rf "${SRC_DIR}"
 
 systemctl daemon-reload
+
+# Remove installed marker
+rm -f "$MARKER_FILE"
 
 echo ""
 echo "=== Uninstall complete ==="
