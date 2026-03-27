@@ -78,52 +78,50 @@ echo "  Done"
 
 # Remove IVSC modules from initramfs and rebuild
 echo "[6/9] Removing IVSC modules from initramfs..."
-case "$DISTRO" in
-    debian)
-        if [[ -f /etc/initramfs-tools/modules ]]; then
-            INITRAMFS_CHANGED=false
-            for mod in mei-vsc mei-vsc-hw ivsc-ace ivsc-csi; do
-                if grep -qxF "$mod" /etc/initramfs-tools/modules 2>/dev/null; then
-                    sudo sed -i "/^${mod}$/d" /etc/initramfs-tools/modules
-                    INITRAMFS_CHANGED=true
-                fi
-            done
-            if $INITRAMFS_CHANGED; then
-                echo "  Rebuilding initramfs..."
-                sudo update-initramfs -u
-                echo "  Done"
-            else
-                echo "  IVSC modules not in initramfs (nothing to remove)"
-            fi
-        else
-            echo "  No initramfs modules file found"
+# Remove initramfs config for all tools (clean up whichever was used)
+INITRAMFS_REBUILT=false
+
+# Check for initramfs-tools config (Debian/Ubuntu)
+if [[ -f /etc/initramfs-tools/modules ]]; then
+    INITRAMFS_CHANGED=false
+    for mod in mei-vsc mei-vsc-hw ivsc-ace ivsc-csi; do
+        if grep -qxF "$mod" /etc/initramfs-tools/modules 2>/dev/null; then
+            sudo sed -i "/^${mod}$/d" /etc/initramfs-tools/modules
+            INITRAMFS_CHANGED=true
         fi
-        ;;
-    fedora)
-        if [[ -f /etc/dracut.conf.d/ivsc-camera.conf ]]; then
-            sudo rm -f /etc/dracut.conf.d/ivsc-camera.conf
-            echo "  Rebuilding initramfs with dracut..."
-            sudo dracut --force
-            echo "  Done"
-        else
-            echo "  No dracut config to remove"
-        fi
-        ;;
-    arch)
-        if [[ -f /etc/mkinitcpio.conf.d/ivsc-camera.conf ]]; then
-            sudo rm -f /etc/mkinitcpio.conf.d/ivsc-camera.conf
-            echo "  Rebuilding initramfs with mkinitcpio..."
-            sudo mkinitcpio -P
-            echo "  Done"
-        else
-            echo "  No mkinitcpio config to remove"
-        fi
-        ;;
-    *)
-        echo "  Unknown initramfs system. You may need to manually remove IVSC modules"
-        echo "  from your initramfs configuration."
-        ;;
-esac
+    done
+    if $INITRAMFS_CHANGED && command -v update-initramfs &>/dev/null; then
+        echo "  Rebuilding initramfs..."
+        sudo update-initramfs -u
+        INITRAMFS_REBUILT=true
+    fi
+fi
+
+# Check for dracut config
+if [[ -f /etc/dracut.conf.d/ivsc-camera.conf ]]; then
+    sudo rm -f /etc/dracut.conf.d/ivsc-camera.conf
+    if command -v dracut &>/dev/null; then
+        echo "  Rebuilding initramfs with dracut..."
+        sudo dracut --force
+        INITRAMFS_REBUILT=true
+    fi
+fi
+
+# Check for mkinitcpio config
+if [[ -f /etc/mkinitcpio.conf.d/ivsc-camera.conf ]]; then
+    sudo rm -f /etc/mkinitcpio.conf.d/ivsc-camera.conf
+    if command -v mkinitcpio &>/dev/null; then
+        echo "  Rebuilding initramfs with mkinitcpio..."
+        sudo mkinitcpio -P
+        INITRAMFS_REBUILT=true
+    fi
+fi
+
+if $INITRAMFS_REBUILT; then
+    echo "  Done"
+else
+    echo "  No initramfs config to remove (or no supported tool found)"
+fi
 
 # Reload udev rules
 sudo udevadm control --reload-rules 2>/dev/null || true

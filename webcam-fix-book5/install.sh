@@ -454,26 +454,16 @@ SIGNEOF
 
             # Update initramfs so the DKMS module is loaded at next boot
             # instead of the stock kernel module (which has rotation=0).
-            case "$DISTRO" in
-                ubuntu|debian)
-                    if command -v update-initramfs >/dev/null 2>&1; then
-                        sudo update-initramfs -u -k "$(uname -r)" 2>/dev/null && \
-                            echo "  ✓ initramfs updated" || true
-                    fi
-                    ;;
-                fedora)
-                    if command -v dracut >/dev/null 2>&1; then
-                        sudo dracut --force 2>/dev/null && \
-                            echo "  ✓ initramfs updated" || true
-                    fi
-                    ;;
-                arch)
-                    if command -v mkinitcpio >/dev/null 2>&1; then
-                        sudo mkinitcpio -P 2>/dev/null && \
-                            echo "  ✓ initramfs updated" || true
-                    fi
-                    ;;
-            esac
+            if command -v update-initramfs >/dev/null 2>&1; then
+                sudo update-initramfs -u -k "$(uname -r)" 2>/dev/null && \
+                    echo "  ✓ initramfs updated" || true
+            elif command -v dracut >/dev/null 2>&1; then
+                sudo dracut --force 2>/dev/null && \
+                    echo "  ✓ initramfs updated" || true
+            elif command -v mkinitcpio >/dev/null 2>&1; then
+                sudo mkinitcpio -P 2>/dev/null && \
+                    echo "  ✓ initramfs updated" || true
+            fi
         fi
     fi
 
@@ -772,10 +762,10 @@ if [[ -d "$RELAY_DIR" ]]; then
     echo "v4l2loopback" | sudo tee /etc/modules-load.d/v4l2loopback.conf > /dev/null
     echo "  ✓ Installed v4l2loopback autoload (/etc/modules-load.d/v4l2loopback.conf)"
 
-    # Fedora: rebuild initramfs so dracut picks up the new v4l2loopback config.
-    # Without this, v4l2loopback-akmods loads the module from initramfs with stale
+    # Rebuild initramfs so it picks up the new v4l2loopback config.
+    # Without this, v4l2loopback may load from initramfs with stale
     # defaults (e.g. "OBS Virtual Camera") before /etc/modprobe.d/ is read.
-    if [[ "$DISTRO" == "fedora" ]]; then
+    if command -v dracut &>/dev/null; then
         echo "  Rebuilding initramfs for v4l2loopback config (this may take a moment)..."
         sudo dracut --regenerate-all -f 2>/dev/null || true
         echo "  ✓ Initramfs rebuilt with Camera Relay config"

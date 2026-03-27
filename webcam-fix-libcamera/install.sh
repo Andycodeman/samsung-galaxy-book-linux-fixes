@@ -318,64 +318,65 @@ echo "  ✓ IVSC modules will load automatically at boot"
 echo "  Adding IVSC modules to initramfs..."
 INITRAMFS_CHANGED=false
 
-case "$DISTRO" in
-    ubuntu|debian)
-        for mod in mei-vsc mei-vsc-hw ivsc-ace ivsc-csi; do
-            if ! grep -qxF "$mod" /etc/initramfs-tools/modules 2>/dev/null; then
-                echo "$mod" | sudo tee -a /etc/initramfs-tools/modules > /dev/null
-                INITRAMFS_CHANGED=true
-            fi
-        done
-        if $INITRAMFS_CHANGED; then
-            echo "  Rebuilding initramfs (this may take a moment)..."
-            sudo update-initramfs -u
-            echo "  ✓ IVSC modules added to initramfs"
-        else
-            echo "  ✓ IVSC modules already in initramfs"
+# Detect initramfs tool by what's actually installed (not distro name).
+# Arch users may use dracut instead of mkinitcpio, etc.
+if command -v update-initramfs &>/dev/null; then
+    # Debian/Ubuntu: append modules to /etc/initramfs-tools/modules
+    for mod in mei-vsc mei-vsc-hw ivsc-ace ivsc-csi; do
+        if ! grep -qxF "$mod" /etc/initramfs-tools/modules 2>/dev/null; then
+            echo "$mod" | sudo tee -a /etc/initramfs-tools/modules > /dev/null
+            INITRAMFS_CHANGED=true
         fi
-        ;;
-    fedora)
-        DRACUT_CONF="/etc/dracut.conf.d/ivsc-camera.conf"
-        if [[ ! -f "$DRACUT_CONF" ]]; then
-            sudo tee "$DRACUT_CONF" > /dev/null << 'DRACUT_EOF'
+    done
+    if $INITRAMFS_CHANGED; then
+        echo "  Rebuilding initramfs (this may take a moment)..."
+        sudo update-initramfs -u
+        echo "  ✓ IVSC modules added to initramfs"
+    else
+        echo "  ✓ IVSC modules already in initramfs"
+    fi
+elif command -v dracut &>/dev/null; then
+    # Fedora/RHEL/Arch-with-dracut: drop-in config
+    DRACUT_CONF="/etc/dracut.conf.d/ivsc-camera.conf"
+    if [[ ! -f "$DRACUT_CONF" ]]; then
+        sudo tee "$DRACUT_CONF" > /dev/null << 'DRACUT_EOF'
 # Force-load IVSC modules in initramfs so they're ready before udev
 # probes the OV02C10 sensor via ACPI.
 force_drivers+=" mei-vsc mei-vsc-hw ivsc-ace ivsc-csi "
 DRACUT_EOF
-            INITRAMFS_CHANGED=true
-        fi
-        if $INITRAMFS_CHANGED; then
-            echo "  Rebuilding initramfs with dracut (this may take a moment)..."
-            sudo dracut --force
-            echo "  ✓ IVSC modules added to initramfs (dracut)"
-        else
-            echo "  ✓ IVSC modules already in initramfs (dracut)"
-        fi
-        ;;
-    arch)
-        MKINITCPIO_CONF="/etc/mkinitcpio.conf.d/ivsc-camera.conf"
-        sudo mkdir -p /etc/mkinitcpio.conf.d
-        if [[ ! -f "$MKINITCPIO_CONF" ]]; then
-            sudo tee "$MKINITCPIO_CONF" > /dev/null << 'MKINIT_EOF'
+        INITRAMFS_CHANGED=true
+    fi
+    if $INITRAMFS_CHANGED; then
+        echo "  Rebuilding initramfs with dracut (this may take a moment)..."
+        sudo dracut --force
+        echo "  ✓ IVSC modules added to initramfs (dracut)"
+    else
+        echo "  ✓ IVSC modules already in initramfs (dracut)"
+    fi
+elif command -v mkinitcpio &>/dev/null; then
+    # Arch/Arch-based with mkinitcpio
+    MKINITCPIO_CONF="/etc/mkinitcpio.conf.d/ivsc-camera.conf"
+    sudo mkdir -p /etc/mkinitcpio.conf.d
+    if [[ ! -f "$MKINITCPIO_CONF" ]]; then
+        sudo tee "$MKINITCPIO_CONF" > /dev/null << 'MKINIT_EOF'
 # Force-load IVSC modules in initramfs so they're ready before udev
 # probes the OV02C10 sensor via ACPI.
 MODULES=(mei-vsc mei-vsc-hw ivsc-ace ivsc-csi)
 MKINIT_EOF
-            INITRAMFS_CHANGED=true
-        fi
-        if $INITRAMFS_CHANGED; then
-            echo "  Rebuilding initramfs with mkinitcpio (this may take a moment)..."
-            sudo mkinitcpio -P
-            echo "  ✓ IVSC modules added to initramfs (mkinitcpio)"
-        else
-            echo "  ✓ IVSC modules already in initramfs (mkinitcpio)"
-        fi
-        ;;
-    *)
-        echo "  ⚠ Unknown initramfs system. Manually add these modules"
-        echo "    to your initramfs: mei-vsc mei-vsc-hw ivsc-ace ivsc-csi"
-        ;;
-esac
+        INITRAMFS_CHANGED=true
+    fi
+    if $INITRAMFS_CHANGED; then
+        echo "  Rebuilding initramfs with mkinitcpio (this may take a moment)..."
+        sudo mkinitcpio -P
+        echo "  ✓ IVSC modules added to initramfs (mkinitcpio)"
+    else
+        echo "  ✓ IVSC modules already in initramfs (mkinitcpio)"
+    fi
+else
+    echo "  ⚠ No supported initramfs tool found (update-initramfs, dracut, mkinitcpio)."
+    echo "    Manually add these modules to your initramfs:"
+    echo "    mei-vsc mei-vsc-hw ivsc-ace ivsc-csi"
+fi
 
 # ──────────────────────────────────────────────
 # [8/14] Samsung camera rotation fix (ipu-bridge DKMS)
@@ -477,26 +478,16 @@ SIGNEOF
 
                 # Update initramfs so the DKMS module is loaded at next boot
                 # instead of the stock kernel module (which has rotation=0).
-                case "$DISTRO" in
-                    ubuntu|debian)
-                        if command -v update-initramfs >/dev/null 2>&1; then
-                            sudo update-initramfs -u -k "$(uname -r)" 2>/dev/null && \
-                                echo "  ✓ initramfs updated" || true
-                        fi
-                        ;;
-                    fedora)
-                        if command -v dracut >/dev/null 2>&1; then
-                            sudo dracut --force 2>/dev/null && \
-                                echo "  ✓ initramfs updated" || true
-                        fi
-                        ;;
-                    arch)
-                        if command -v mkinitcpio >/dev/null 2>&1; then
-                            sudo mkinitcpio -P 2>/dev/null && \
-                                echo "  ✓ initramfs updated" || true
-                        fi
-                        ;;
-                esac
+                if command -v update-initramfs >/dev/null 2>&1; then
+                    sudo update-initramfs -u -k "$(uname -r)" 2>/dev/null && \
+                        echo "  ✓ initramfs updated" || true
+                elif command -v dracut >/dev/null 2>&1; then
+                    sudo dracut --force 2>/dev/null && \
+                        echo "  ✓ initramfs updated" || true
+                elif command -v mkinitcpio >/dev/null 2>&1; then
+                    sudo mkinitcpio -P 2>/dev/null && \
+                        echo "  ✓ initramfs updated" || true
+                fi
             fi
         fi
 
@@ -1131,10 +1122,10 @@ if [[ -d "$RELAY_DIR" ]]; then
     echo "v4l2loopback" | sudo tee /etc/modules-load.d/v4l2loopback.conf > /dev/null
     echo "  ✓ Installed v4l2loopback autoload (/etc/modules-load.d/v4l2loopback.conf)"
 
-    # Fedora: rebuild initramfs so dracut picks up the new v4l2loopback config.
-    # Without this, v4l2loopback-akmods loads the module from initramfs with stale
+    # Rebuild initramfs so it picks up the new v4l2loopback config.
+    # Without this, v4l2loopback may load from initramfs with stale
     # defaults (e.g. "OBS Virtual Camera") before /etc/modprobe.d/ is read.
-    if [[ "$DISTRO" == "fedora" ]]; then
+    if command -v dracut &>/dev/null; then
         echo "  Rebuilding initramfs for v4l2loopback config (this may take a moment)..."
         sudo dracut --regenerate-all -f 2>/dev/null || true
         echo "  ✓ Initramfs rebuilt with Camera Relay config"
@@ -1272,17 +1263,9 @@ echo "  Configuration files created:"
 echo "    /etc/modules-load.d/ivsc.conf"
 echo "    /etc/modprobe.d/ivsc-camera.conf"
 echo "    /etc/udev/rules.d/90-hide-ipu6-v4l2.rules"
-case "$DISTRO" in
-    ubuntu|debian)
-        echo "    /etc/initramfs-tools/modules (updated)"
-        ;;
-    fedora)
-        echo "    /etc/dracut.conf.d/ivsc-camera.conf"
-        ;;
-    arch)
-        echo "    /etc/mkinitcpio.conf.d/ivsc-camera.conf"
-        ;;
-esac
+[[ -f /etc/initramfs-tools/modules ]] && echo "    /etc/initramfs-tools/modules (updated)"
+[[ -f /etc/dracut.conf.d/ivsc-camera.conf ]] && echo "    /etc/dracut.conf.d/ivsc-camera.conf"
+[[ -f /etc/mkinitcpio.conf.d/ivsc-camera.conf ]] && echo "    /etc/mkinitcpio.conf.d/ivsc-camera.conf"
 if [[ -f /etc/wireplumber/main.lua.d/51-disable-ipu6-v4l2.lua ]]; then
     echo "    /etc/wireplumber/main.lua.d/51-disable-ipu6-v4l2.lua"
 elif [[ -f /etc/wireplumber/wireplumber.conf.d/50-disable-ipu6-v4l2.conf ]]; then

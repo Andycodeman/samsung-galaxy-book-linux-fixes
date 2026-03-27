@@ -165,69 +165,70 @@ echo ""
 echo "[5/13] Adding IVSC modules to initramfs..."
 INITRAMFS_CHANGED=false
 
-case "$DISTRO" in
-    ubuntu|debian)
-        for mod in mei-vsc mei-vsc-hw ivsc-ace ivsc-csi; do
-            if ! grep -qxF "$mod" /etc/initramfs-tools/modules 2>/dev/null; then
-                echo "$mod" | sudo tee -a /etc/initramfs-tools/modules > /dev/null
-                INITRAMFS_CHANGED=true
-            fi
-        done
-        if $INITRAMFS_CHANGED; then
-            echo "  Rebuilding initramfs (this may take a moment)..."
-            sudo update-initramfs -u
-            echo "  ✓ IVSC modules added to initramfs"
-        else
-            echo "  ✓ IVSC modules already in initramfs"
+# Detect initramfs tool by what's actually installed (not distro name).
+# Arch users may use dracut instead of mkinitcpio, etc.
+if command -v update-initramfs &>/dev/null; then
+    # Debian/Ubuntu: append modules to /etc/initramfs-tools/modules
+    for mod in mei-vsc mei-vsc-hw ivsc-ace ivsc-csi; do
+        if ! grep -qxF "$mod" /etc/initramfs-tools/modules 2>/dev/null; then
+            echo "$mod" | sudo tee -a /etc/initramfs-tools/modules > /dev/null
+            INITRAMFS_CHANGED=true
         fi
-        INITRAMFS_CONFIG="/etc/initramfs-tools/modules"
-        ;;
-    fedora)
-        DRACUT_CONF="/etc/dracut.conf.d/ivsc-camera.conf"
-        if [[ ! -f "$DRACUT_CONF" ]]; then
-            sudo tee "$DRACUT_CONF" > /dev/null << 'DRACUT_EOF'
+    done
+    if $INITRAMFS_CHANGED; then
+        echo "  Rebuilding initramfs (this may take a moment)..."
+        sudo update-initramfs -u
+        echo "  ✓ IVSC modules added to initramfs"
+    else
+        echo "  ✓ IVSC modules already in initramfs"
+    fi
+    INITRAMFS_CONFIG="/etc/initramfs-tools/modules"
+elif command -v dracut &>/dev/null; then
+    # Fedora/RHEL/Arch-with-dracut: drop-in config
+    DRACUT_CONF="/etc/dracut.conf.d/ivsc-camera.conf"
+    if [[ ! -f "$DRACUT_CONF" ]]; then
+        sudo tee "$DRACUT_CONF" > /dev/null << 'DRACUT_EOF'
 # Force-load IVSC modules in initramfs so they're ready before udev
 # probes the OV02C10 sensor via ACPI. Without this, the sensor hits
 # -EPROBE_DEFER repeatedly and the CSI-2 link starts unstable.
 force_drivers+=" mei-vsc mei-vsc-hw ivsc-ace ivsc-csi "
 DRACUT_EOF
-            INITRAMFS_CHANGED=true
-        fi
-        if $INITRAMFS_CHANGED; then
-            echo "  Rebuilding initramfs with dracut (this may take a moment)..."
-            sudo dracut --force
-            echo "  ✓ IVSC modules added to initramfs (dracut)"
-        else
-            echo "  ✓ IVSC modules already in initramfs (dracut)"
-        fi
-        INITRAMFS_CONFIG="$DRACUT_CONF"
-        ;;
-    arch)
-        MKINITCPIO_CONF="/etc/mkinitcpio.conf.d/ivsc-camera.conf"
-        sudo mkdir -p /etc/mkinitcpio.conf.d
-        if [[ ! -f "$MKINITCPIO_CONF" ]]; then
-            sudo tee "$MKINITCPIO_CONF" > /dev/null << 'MKINIT_EOF'
+        INITRAMFS_CHANGED=true
+    fi
+    if $INITRAMFS_CHANGED; then
+        echo "  Rebuilding initramfs with dracut (this may take a moment)..."
+        sudo dracut --force
+        echo "  ✓ IVSC modules added to initramfs (dracut)"
+    else
+        echo "  ✓ IVSC modules already in initramfs (dracut)"
+    fi
+    INITRAMFS_CONFIG="$DRACUT_CONF"
+elif command -v mkinitcpio &>/dev/null; then
+    # Arch/Arch-based with mkinitcpio
+    MKINITCPIO_CONF="/etc/mkinitcpio.conf.d/ivsc-camera.conf"
+    sudo mkdir -p /etc/mkinitcpio.conf.d
+    if [[ ! -f "$MKINITCPIO_CONF" ]]; then
+        sudo tee "$MKINITCPIO_CONF" > /dev/null << 'MKINIT_EOF'
 # Force-load IVSC modules in initramfs so they're ready before udev
 # probes the OV02C10 sensor via ACPI.
 MODULES=(mei-vsc mei-vsc-hw ivsc-ace ivsc-csi)
 MKINIT_EOF
-            INITRAMFS_CHANGED=true
-        fi
-        if $INITRAMFS_CHANGED; then
-            echo "  Rebuilding initramfs with mkinitcpio (this may take a moment)..."
-            sudo mkinitcpio -P
-            echo "  ✓ IVSC modules added to initramfs (mkinitcpio)"
-        else
-            echo "  ✓ IVSC modules already in initramfs (mkinitcpio)"
-        fi
-        INITRAMFS_CONFIG="$MKINITCPIO_CONF"
-        ;;
-    *)
-        echo "  ⚠ Unknown initramfs system. You may need to manually add these modules"
-        echo "    to your initramfs: mei-vsc mei-vsc-hw ivsc-ace ivsc-csi"
-        INITRAMFS_CONFIG="(manual setup required)"
-        ;;
-esac
+        INITRAMFS_CHANGED=true
+    fi
+    if $INITRAMFS_CHANGED; then
+        echo "  Rebuilding initramfs with mkinitcpio (this may take a moment)..."
+        sudo mkinitcpio -P
+        echo "  ✓ IVSC modules added to initramfs (mkinitcpio)"
+    else
+        echo "  ✓ IVSC modules already in initramfs (mkinitcpio)"
+    fi
+    INITRAMFS_CONFIG="$MKINITCPIO_CONF"
+else
+    echo "  ⚠ No supported initramfs tool found (update-initramfs, dracut, mkinitcpio)."
+    echo "    You may need to manually add these modules to your initramfs:"
+    echo "    mei-vsc mei-vsc-hw ivsc-ace ivsc-csi"
+    INITRAMFS_CONFIG="(manual setup required)"
+fi
 
 # ──────────────────────────────────────────────
 # [6/13] Re-probe camera sensor
