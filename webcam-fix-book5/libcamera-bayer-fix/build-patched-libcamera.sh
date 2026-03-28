@@ -747,6 +747,14 @@ if [[ "$USE_SRPM" == "true" ]]; then
 elif [[ "$LIBCAMERA_LIB_DIR" == /usr/local/* ]]; then
     USE_FULL_INSTALL=true
     info "Full install: library is in /usr/local (built from source, not distro package)."
+elif [[ "$DISTRO" == "arch" ]]; then
+    # Arch: must use full install. The .so-only approach leaves build-tree
+    # paths embedded in the library (IPA search path becomes //src/ipa)
+    # because meson install is what rewrites the rpath. Arch's IPA signature
+    # checking falls back to non-sandboxed mode when signatures don't match,
+    # so this is safe.
+    USE_FULL_INSTALL=true
+    info "Full install: Arch Linux (so-only install breaks IPA path resolution)."
 fi
 
 if [[ "$USE_FULL_INSTALL" == "true" ]]; then
