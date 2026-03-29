@@ -23,6 +23,8 @@
 
 set -e
 
+NEEDS_INITRAMFS=0  # set to 1 by any section that modifies initramfs-relevant state
+
 VISION_DRIVER_VER="1.0.0"
 VISION_DRIVER_REPO="https://github.com/intel/vision-drivers"
 VISION_DRIVER_BRANCH="main"
@@ -254,7 +256,11 @@ echo ""
 echo "[6/15] Installing intel_cvs module via DKMS..."
 
 # Check if already installed and working
-if dkms status "vision-driver/${VISION_DRIVER_VER}" 2>/dev/null | grep -q "installed"; then
+if modinfo usb_ljca &>/dev/null 2>&1 && \
+   modinfo gpio_ljca &>/dev/null 2>&1 && \
+   modinfo intel_cvs &>/dev/null 2>&1; then
+    echo "  ✓ usb_ljca, gpio_ljca and intel_cvs modules already available — skipping DKMS build"
+elif dkms status "vision-driver/${VISION_DRIVER_VER}" 2>/dev/null | grep -q "installed"; then
     echo "  ✓ vision-driver/${VISION_DRIVER_VER} already installed via DKMS"
 else
     # Download tarball (no git dependency)
@@ -457,16 +463,10 @@ SIGNEOF
 
             # Update initramfs so the DKMS module is loaded at next boot
             # instead of the stock kernel module (which has rotation=0).
-            if command -v update-initramfs >/dev/null 2>&1; then
-                sudo update-initramfs -u -k "$(uname -r)" 2>/dev/null && \
-                    echo "  ✓ initramfs updated" || true
-            elif command -v dracut >/dev/null 2>&1; then
-                sudo dracut --force 2>/dev/null && \
-                    echo "  ✓ initramfs updated" || true
-            elif command -v mkinitcpio >/dev/null 2>&1; then
-                sudo mkinitcpio -P 2>/dev/null && \
-                    echo "  ✓ initramfs updated" || true
-            fi
+            # initramfs will be rebuilt once at the end of the script
+            NEEDS_INITRAMFS=1
+            echo "  ✓ initramfs update defered until the end of the script"
+
         fi
     fi
 
@@ -769,9 +769,9 @@ if [[ -d "$RELAY_DIR" ]]; then
     # Without this, v4l2loopback may load from initramfs with stale
     # defaults (e.g. "OBS Virtual Camera") before /etc/modprobe.d/ is read.
     if command -v dracut &>/dev/null; then
-        echo "  Rebuilding initramfs for v4l2loopback config (this may take a moment)..."
-        sudo dracut --regenerate-all -f 2>/dev/null || true
-        echo "  ✓ Initramfs rebuilt with Camera Relay config"
+    	# (initramfs rebuilt once at end of script)
+    	NEEDS_INITRAMFS=1
+        echo "  ✓ Initramfs rebuild with Camera Relay config defered until the end of the script"
     fi
 
     # Check for stale v4l2loopback with wrong label (e.g. OBS Virtual Camera)
@@ -867,6 +867,23 @@ else
     echo "  ⚠ cam (libcamera-tools) not installed — skipping live test"
     if [[ "$DISTRO" == "arch" ]]; then
         echo "    Optional: sudo pacman -S libcamera-tools"
+    fi
+fi
+
+# ──────────────────────────────────────────────
+# [14b/15] Rebuild initramfs (once, if needed)
+# ──────────────────────────────────────────────
+if [[ "$NEEDS_INITRAMFS" == "1" ]]; then
+    echo ""
+    echo "  Rebuilding initramfs (this may take a moment)..."
+    if command -v dracut >/dev/null 2>&1; then
+        sudo dracut --force 2>/dev/null && echo "  ✓ initramfs rebuilt" || true
+    elif command -v update-initramfs >/dev/null 2>&1; then
+        sudo update-initramfs -u -k "$(uname -r)" 2>/dev/null && echo "  ✓ initramfs rebuilt" || true
+    elif command -v mkinitcpio >/dev/null 2>&1; then
+        sudo mkinitcpio -P 2>/dev/null && echo "  ✓ initramfs rebuilt" || true
+    else
+        echo "  ⚠ Could not detect initramfs tool — rebuild manually before rebooting"
     fi
 fi
 
