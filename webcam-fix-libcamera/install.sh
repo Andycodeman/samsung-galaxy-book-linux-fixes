@@ -27,6 +27,8 @@
 
 set -e
 
+NEEDS_INITRAMFS=0  # set to 1 by any section that modifies initramfs-relevant state
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIBCAMERA_MIN_VER="0.7.0"
 LIBCAMERA_BUILD_VER="v0.7.0"
@@ -329,9 +331,8 @@ if command -v update-initramfs &>/dev/null; then
         fi
     done
     if $INITRAMFS_CHANGED; then
-        echo "  Rebuilding initramfs (this may take a moment)..."
-        sudo update-initramfs -u
-        echo "  ✓ IVSC modules added to initramfs"
+        echo "  ✓ IVSC modules added to initramfs config (will rebuild at end)"
+        NEEDS_INITRAMFS=1
     else
         echo "  ✓ IVSC modules already in initramfs"
     fi
@@ -347,9 +348,8 @@ DRACUT_EOF
         INITRAMFS_CHANGED=true
     fi
     if $INITRAMFS_CHANGED; then
-        echo "  Rebuilding initramfs with dracut (this may take a moment)..."
-        sudo dracut --force
-        echo "  ✓ IVSC modules added to initramfs (dracut)"
+        echo "  ✓ IVSC modules added to initramfs config (will rebuild at end)"
+        NEEDS_INITRAMFS=1
     else
         echo "  ✓ IVSC modules already in initramfs (dracut)"
     fi
@@ -366,9 +366,8 @@ MKINIT_EOF
         INITRAMFS_CHANGED=true
     fi
     if $INITRAMFS_CHANGED; then
-        echo "  Rebuilding initramfs with mkinitcpio (this may take a moment)..."
-        sudo mkinitcpio -P
-        echo "  ✓ IVSC modules added to initramfs (mkinitcpio)"
+        echo "  ✓ IVSC modules added to initramfs config (will rebuild at end)"
+        NEEDS_INITRAMFS=1
     else
         echo "  ✓ IVSC modules already in initramfs (mkinitcpio)"
     fi
@@ -478,16 +477,9 @@ SIGNEOF
 
                 # Update initramfs so the DKMS module is loaded at next boot
                 # instead of the stock kernel module (which has rotation=0).
-                if command -v update-initramfs >/dev/null 2>&1; then
-                    sudo update-initramfs -u -k "$(uname -r)" 2>/dev/null && \
-                        echo "  ✓ initramfs updated" || true
-                elif command -v dracut >/dev/null 2>&1; then
-                    sudo dracut --force 2>/dev/null && \
-                        echo "  ✓ initramfs updated" || true
-                elif command -v mkinitcpio >/dev/null 2>&1; then
-                    sudo mkinitcpio -P 2>/dev/null && \
-                        echo "  ✓ initramfs updated" || true
-                fi
+                # initramfs will be rebuilt once at the end of the script
+                NEEDS_INITRAMFS=1
+                echo "  ✓ initramfs update deferred until end of script"
             fi
         fi
 
@@ -1126,9 +1118,9 @@ if [[ -d "$RELAY_DIR" ]]; then
     # Without this, v4l2loopback may load from initramfs with stale
     # defaults (e.g. "OBS Virtual Camera") before /etc/modprobe.d/ is read.
     if command -v dracut &>/dev/null; then
-        echo "  Rebuilding initramfs for v4l2loopback config (this may take a moment)..."
-        sudo dracut --regenerate-all -f 2>/dev/null || true
-        echo "  ✓ Initramfs rebuilt with Camera Relay config"
+        # (initramfs rebuilt once at end of script)
+        NEEDS_INITRAMFS=1
+        echo "  ✓ Initramfs rebuild with Camera Relay config deferred until end of script"
     fi
 
     # Check for stale v4l2loopback with wrong label (e.g. OBS Virtual Camera)
@@ -1224,6 +1216,23 @@ if [[ -n "$CAM_CMD" ]]; then
     if echo "$CAM_OUTPUT" | grep -qi "ov02c10"; then
         echo "  ✓ libcamera detects OV02C10 sensor"
         CAPTURE_OK=true
+    fi
+fi
+
+# ──────────────────────────────────────────────
+# Rebuild initramfs (once, if needed)
+# ──────────────────────────────────────────────
+if [[ "$NEEDS_INITRAMFS" == "1" ]]; then
+    echo ""
+    echo "  Rebuilding initramfs (this may take a moment)..."
+    if command -v dracut >/dev/null 2>&1; then
+        sudo dracut --force 2>/dev/null && echo "  ✓ initramfs rebuilt" || true
+    elif command -v update-initramfs >/dev/null 2>&1; then
+        sudo update-initramfs -u 2>/dev/null && echo "  ✓ initramfs rebuilt" || true
+    elif command -v mkinitcpio >/dev/null 2>&1; then
+        sudo mkinitcpio -P 2>/dev/null && echo "  ✓ initramfs rebuilt" || true
+    else
+        echo "  ⚠ Could not detect initramfs tool — rebuild manually before rebooting"
     fi
 fi
 
