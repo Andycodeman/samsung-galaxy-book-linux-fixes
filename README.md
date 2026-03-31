@@ -196,6 +196,44 @@ Thanks to the following users for their contributions and testing:
 - [Samsung Galaxy Book Extras](https://github.com/joshuagrisham/samsung-galaxybook-extras) — Platform driver for Samsung-specific features
 - [Ubuntu Intel MIPI Camera Wiki](https://wiki.ubuntu.com/IntelMIPICamera) — IPU6 camera documentation
 
+## NixOS
+
+NixOS users can use the provided Nix modules in the [`nixos/`](nixos/) directory instead of the DKMS install scripts.
+
+### Speaker Fix
+
+Two files are provided:
+
+- **`max98390-hda-module.nix`** — Nix derivation that builds the out-of-tree MAX98390 HDA kernel modules against your current kernel.
+- **`samsung-speaker-fix.nix`** — NixOS module that loads the kernel modules, creates a systemd service to detect and register I2C amplifier devices at boot, and installs `i2c-tools`.
+
+### Usage
+
+Add the speaker fix module to your NixOS configuration:
+
+```nix
+# configuration.nix (or your hardware module)
+{ ... }:
+{
+  imports = [
+    /path/to/samsung-galaxy-book4-linux-fixes/nixos/samsung-speaker-fix.nix
+  ];
+}
+```
+
+Then rebuild:
+
+```bash
+sudo nixos-rebuild switch
+```
+
+The module will:
+1. Build and install `snd-hda-scodec-max98390` and `snd-hda-scodec-max98390-i2c` kernel modules
+2. Load them at boot via `boot.kernelModules`
+3. Run a systemd oneshot service that scans the I2C bus for additional MAX98390 amplifiers and registers them
+
+> **Note:** The Nix derivation fetches the driver source directly from this repository. If the hash becomes outdated after an upstream update, you may need to update the `hash` field in `max98390-hda-module.nix`.
+
 ## License
 
 [GPL-2.0](LICENSE) — Free to use, modify, and redistribute. Derivative works must use the same license.
