@@ -57,9 +57,67 @@ if [[ "${1:-}" == "--uninstall" ]]; then
         die "No backup found at $BACKUP_DIR — nothing to restore."
     fi
 
-    info "Restoring original libcamera files..."
+    # Check if the system libcamera version has changed since backup
+    # (e.g., distro upgrade). Restoring stale backup files over a newer
+    # version would break ABI compatibility and potentially brick camera.
+    BACKUP_VERSION=$(cat "$BACKUP_DIR/version" 2>/dev/null || echo "")
+    CURRENT_VERSION=""
+    if command -v pkg-config &>/dev/null; then
+        CURRENT_VERSION=$(pkg-config --modversion libcamera 2>/dev/null || true)
+    fi
+    if [[ -z "$CURRENT_VERSION" ]] && command -v rpm &>/dev/null; then
+        CURRENT_VERSION=$(rpm -q --qf '%{VERSION}' libcamera 2>/dev/null || true)
+        [[ "$CURRENT_VERSION" == *"not installed"* ]] && CURRENT_VERSION=""
+    fi
+    if [[ -z "$CURRENT_VERSION" ]] && command -v pacman &>/dev/null; then
+        CURRENT_VERSION=$(pacman -Q libcamera 2>/dev/null | awk '{print $2}' | grep -oP '^\d+\.\d+\.\d+' || true)
+    fi
+    if [[ -z "$CURRENT_VERSION" ]] && command -v dpkg &>/dev/null; then
+        CURRENT_VERSION=$(dpkg -l 'libcamera*' 2>/dev/null | awk '/^ii.*libcamera0/ {print $3}' | head -1 | grep -oP '^\d+\.\d+\.\d+' || true)
+    fi
+
+    STALE_BACKUP=false
+    if [[ -n "$BACKUP_VERSION" && -n "$CURRENT_VERSION" ]]; then
+        # Extract just major.minor.patch for comparison
+        BACKUP_VER_CLEAN=$(echo "$BACKUP_VERSION" | grep -oP '^\d+\.\d+\.\d+' || echo "$BACKUP_VERSION")
+        CURRENT_VER_CLEAN=$(echo "$CURRENT_VERSION" | grep -oP '^\d+\.\d+\.\d+' || echo "$CURRENT_VERSION")
+        if [[ "$BACKUP_VER_CLEAN" != "$CURRENT_VER_CLEAN" ]]; then
+            STALE_BACKUP=true
+        fi
+    elif [[ -z "$BACKUP_VERSION" ]]; then
+        # No version file — backup predates this check. Warn but proceed.
+        warn "Backup has no version marker (created before v0.3.25)."
+        warn "Cannot verify version match — proceeding with restore."
+        warn "If this breaks, reinstall libcamera from your package manager."
+    fi
+
+    if $STALE_BACKUP; then
+        warn "libcamera version changed since backup ($BACKUP_VER_CLEAN → $CURRENT_VER_CLEAN)"
+        warn "Restoring stale backup would break the system — skipping restore."
+        info "Removing stale backup and reinstalling from package manager..."
+        rm -rf "$BACKUP_DIR"
+
+        # Reinstall from distro package manager
+        if command -v dnf &>/dev/null; then
+            dnf reinstall -y 'libcamera*' 2>/dev/null || true
+        elif command -v pacman &>/dev/null; then
+            pacman -S --noconfirm libcamera libcamera-ipa 2>/dev/null || true
+        elif command -v apt-get &>/dev/null; then
+            apt-get install --reinstall -y 'libcamera*' 2>/dev/null || true
+        fi
+
+        ldconfig 2>/dev/null || true
+        rm -f /etc/profile.d/libcamera-ipa-path.sh
+        ok "Stale backup removed. libcamera reinstalled from package manager."
+        echo ""
+        exit 0
+    fi
+
+    info "Restoring original libcamera files (version: ${BACKUP_VERSION:-unknown})..."
     while IFS= read -r backup_file; do
         rel_path="${backup_file#$BACKUP_DIR}"
+        # Skip the version marker file
+        [[ "$backup_file" == "$BACKUP_DIR/version" ]] && continue
         if [[ -f "$backup_file" ]]; then
             cp -v "$backup_file" "$rel_path"
         fi
@@ -781,7 +839,11 @@ for dir in "${LIB_PREFIX}/libexec/libcamera" /usr/local/libexec/libcamera /usr/l
     fi
 done
 
-ok "Originals backed up to $BACKUP_DIR"
+# Record the libcamera version so uninstall can detect stale backups
+# (e.g., after a distro upgrade changes the system libcamera version)
+echo "${LIBCAMERA_VERSION_CLEAN:-$LIBCAMERA_VERSION}" > "$BACKUP_DIR/version"
+
+ok "Originals backed up to $BACKUP_DIR (version: ${LIBCAMERA_VERSION_CLEAN:-$LIBCAMERA_VERSION})"
 echo ""
 
 # Step 8: Install
