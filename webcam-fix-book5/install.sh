@@ -695,21 +695,25 @@ done
 
 if [[ -n "$TUNING_DIR" ]]; then
     SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
-    if [[ -f "$SCRIPT_DIR/$TUNING_FILE" ]]; then
-        sudo cp "$SCRIPT_DIR/$TUNING_FILE" "$TUNING_DIR/$TUNING_FILE"
 
-        # libcamera 0.5.x uses Lut; 0.6+ uses Adjust (replaces Lut)
-        if [[ -n "${LIBCAMERA_MINOR:-}" ]] && [[ "${LIBCAMERA_MINOR}" -lt 6 ]] 2>/dev/null; then
-            sudo sed -i '/^  - Adjust:/d' "$TUNING_DIR/$TUNING_FILE"
-            echo "  ✓ Installed $TUNING_FILE → $TUNING_DIR/ (v0.5: using Lut)"
-        else
-            sudo sed -i '/^  - Lut:/d' "$TUNING_DIR/$TUNING_FILE"
-            echo "  ✓ Installed $TUNING_FILE → $TUNING_DIR/ (v0.6+: using Adjust)"
-        fi
+    # Select tuning file based on libcamera version:
+    #   ov02e10.yaml       — 6-anchor CCM for libcamera 0.6+ (uses Adjust)
+    #   ov02e10-0.5.2.yaml — 3-anchor CCM for libcamera 0.5.x (uses Lut)
+    if [[ -n "${LIBCAMERA_MINOR:-}" ]] && [[ "${LIBCAMERA_MINOR}" -lt 6 ]] 2>/dev/null; then
+        TUNING_SRC="$SCRIPT_DIR/${TUNING_SENSOR}-0.5.2.yaml"
+        TUNING_VER="v0.5.x (Lut)"
+    else
+        TUNING_SRC="$SCRIPT_DIR/${TUNING_SENSOR}.yaml"
+        TUNING_VER="v0.6+ (Adjust)"
+    fi
+
+    if [[ -f "$TUNING_SRC" ]]; then
+        sudo cp "$TUNING_SRC" "$TUNING_DIR/$TUNING_FILE"
+        echo "  ✓ Installed $TUNING_FILE → $TUNING_DIR/ ($TUNING_VER)"
         echo "    (CCM tuned by david-bartlett on Galaxy Book5 Pro)"
         echo "    Use ./tune-ccm.sh to interactively find the best color preset"
     else
-        echo "  ⚠ Tuning file $TUNING_FILE not found in installer directory"
+        echo "  ⚠ Tuning file $TUNING_SRC not found in installer directory"
     fi
 else
     echo "  ⚠ Could not find libcamera IPA data directory"
