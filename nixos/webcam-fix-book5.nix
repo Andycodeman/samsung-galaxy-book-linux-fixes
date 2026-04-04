@@ -2,12 +2,13 @@
 
 let
   kernelPackages = config.boot.kernelPackages;
+  cc = pkgs.llvmPackages.clang-unwrapped;
 
   visionDriversSrc = pkgs.fetchFromGitHub {
     owner = "intel";
     repo = "vision-drivers";
     rev = "main";
-    hash = "sha256-KS6j/ZE4V0FbZnv5guxDvS7vKnDq77AMgU9VpP4rlGc=";
+    hash = "sha256-zOvCZKGwOGT9kcJiefzx/duHqR0V8PYhNbqsMHkH1r4=";
   };
 
   intelCvsModule = pkgs.stdenvNoCC.mkDerivation {
@@ -16,11 +17,11 @@ let
 
     src = visionDriversSrc;
 
-    nativeBuildInputs = [ kernelPackages.kernel.dev pkgs.gcc pkgs.gnumake pkgs.perl ];
+    nativeBuildInputs = [ kernelPackages.kernel.dev cc pkgs.gnumake pkgs.perl pkgs.llvmPackages.lld ];
 
     buildPhase = ''
-      make KERNELRELEASE=${kernelPackages.kernel.modDirVersion} \
-           KERNEL_SRC=${kernelPackages.kernel.dev}/lib/modules/${kernelPackages.kernel.modDirVersion}/build
+      make -C ${kernelPackages.kernel.dev}/lib/modules/${kernelPackages.kernel.modDirVersion}/build \
+        M=$PWD modules LLVM=1 CC=${cc}/bin/clang LD=${pkgs.llvmPackages.lld}/bin/ld.lld
     '';
 
     installPhase = ''
@@ -40,11 +41,11 @@ let
 
     src = ../webcam-fix-book5/ipu-bridge-fix;
 
-    nativeBuildInputs = [ kernelPackages.kernel.dev pkgs.gcc pkgs.gnumake pkgs.perl ];
+    nativeBuildInputs = [ kernelPackages.kernel.dev cc pkgs.gnumake pkgs.perl pkgs.llvmPackages.lld ];
 
     buildPhase = ''
-      make KERNELRELEASE=${kernelPackages.kernel.modDirVersion} \
-           KERNEL_SRC=${kernelPackages.kernel.dev}/lib/modules/${kernelPackages.kernel.modDirVersion}/build
+      make -C ${kernelPackages.kernel.dev}/lib/modules/${kernelPackages.kernel.modDirVersion}/build \
+        M=$PWD modules LLVM=1 CC=${cc}/bin/clang LD=${pkgs.llvmPackages.lld}/bin/ld.lld
     '';
 
     installPhase = ''
