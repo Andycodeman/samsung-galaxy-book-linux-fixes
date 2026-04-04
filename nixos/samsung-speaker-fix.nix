@@ -141,30 +141,32 @@ in
     };
   };
 
-  # Build and install the out-of-tree kernel modules
-  boot.extraModulePackages = [ max98390-hda ];
+  config = {
+    # Build and install the out-of-tree kernel modules
+    boot.extraModulePackages = [ max98390-hda ];
 
-  # Load the modules at boot
-  boot.kernelModules = [
-    "i2c-dev"
-    "snd-hda-scodec-max98390"
-    "snd-hda-scodec-max98390-i2c"
-  ];
+    # Load the modules at boot
+    boot.kernelModules = [
+      "i2c-dev"
+      "snd-hda-scodec-max98390"
+      "snd-hda-scodec-max98390-i2c"
+    ];
 
-  # i2c-tools needed for amplifier detection
-  environment.systemPackages = [ pkgs.i2c-tools ];
+    # i2c-tools needed for amplifier detection
+    environment.systemPackages = [ pkgs.i2c-tools ];
 
-  # Systemd service to create I2C devices for additional amplifiers
-  systemd.services.max98390-hda-i2c-setup = {
-    description = "Create I2C devices for MAX98390 HDA speaker amplifiers";
-    after = [ "systemd-modules-load.service" ];
-    before = [ "sound.target" ];
-    wantedBy = [ "sound.target" ];
-    serviceConfig = {
-      Type = "oneshot";
-      RemainAfterExit = true;
-      ExecStart = "${i2cSetupScript} start";
-      ExecStop = "${i2cSetupScript} stop";
+    # Systemd service to create I2C devices for additional amplifiers
+    systemd.services.max98390-hda-i2c-setup = {
+      description = "Create I2C devices for MAX98390 HDA speaker amplifiers";
+      after = [ "systemd-modules-load.service" ];
+      before = [ "sound.target" ];
+      wantedBy = [ "sound.target" ];
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        ExecStart = "${i2cSetupScript} start";
+        ExecStop = "${i2cSetupScript} stop";
+      };
     };
   };
 }
