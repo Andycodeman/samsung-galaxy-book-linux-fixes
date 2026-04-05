@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: CC0-1.0
+# Tuning file for OmniVision OV02E10 on Intel IPU7 (Lunar Lake)
+# Used by libcamera's Simple pipeline handler / Software ISP
+#
+# Multi-temperature CCM tuning by @david-bartlett.
+# 3-anchor tuning for libcamera 0.5.x (uses Lut, not Adjust).
+# Anchors: 3200K, 4000K, 6500K
+#
+# For libcamera 0.6.0+ use ov02e10.yaml instead.
+%YAML 1.1
+---
+version: 1
+algorithms:
+  - BlackLevel:
+  - Awb:
+  - Ccm:
+      ccms:
+        - ct: 3200
+          ccm: [  1.44, -0.12, -0.08,
+                 -0.10,  1.62, -0.25,
+                 -0.05, -0.28,  1.6 ]
+        - ct: 4000
+          ccm: [  1.38, -0.10, -0.05,
+                 -0.15,  1.6, -0.10,
+                 -0.15, -0.15,  1.56 ]
+        - ct: 6500
+          ccm: [  1.4, -0.04, -0.06,
+                  0,     0.66,  0.1,
+                 -0.02, -0.2,   1.2 ]
+  - Lut:
+  - Agc:
+...
