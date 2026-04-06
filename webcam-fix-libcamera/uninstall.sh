@@ -34,6 +34,26 @@ sudo rm -rf /usr/local/share/camera-relay
 sudo rm -f /usr/share/applications/camera-relay-systray.desktop
 # Remove user service file if still present
 rm -f "${HOME}/.config/systemd/user/camera-relay.service" 2>/dev/null || true
+
+_relay_user=$(loginctl list-sessions --no-legend 2>/dev/null \
+    | awk '$4 == "seat0" {print $3}' | head -1)
+
+# Remove bundled icons
+if [[ -n "$_relay_user" ]]; then
+    ICON_DIR="/home/${_relay_user}/.local/share/icons/hicolor/symbolic/apps"
+    for icon in camera-disabled-symbolic camera-switch-symbolic camera-video-symbolic; do
+        sudo -u "$_relay_user" rm -f "${ICON_DIR}/${icon}.svg" \
+            && echo "✓ Removed ${icon}.svg" || true
+    done
+    sudo -u "$_relay_user" \
+        gtk-update-icon-cache -f -t \
+        "/home/${_relay_user}/.local/share/icons/hicolor" 2>/dev/null \
+        && echo "✓ GTK icon cache updated" \
+        || echo "gtk-update-icon-cache failed — stale icons may linger until next login"
+else
+    echo "Could not detect logged-in user — icons not removed"
+fi
+
 systemctl --user daemon-reload 2>/dev/null || true
 # Unload v4l2loopback if it was only used by the relay
 if lsmod 2>/dev/null | grep -q v4l2loopback; then

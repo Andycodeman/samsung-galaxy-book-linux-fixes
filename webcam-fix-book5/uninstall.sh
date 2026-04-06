@@ -128,6 +128,24 @@ fi
 
 # [10/11] Remove camera relay tool
 echo "[10/11] Removing camera relay tool..."
+_relay_user=$(loginctl list-sessions --no-legend 2>/dev/null \
+    | awk '$4 == "seat0" {print $3}' | head -1)
+
+# Remove bundled icons
+if [[ -n "$_relay_user" ]]; then
+    ICON_DIR="/home/${_relay_user}/.local/share/icons/hicolor/symbolic/apps"
+    for icon in camera-disabled-symbolic camera-switch-symbolic camera-video-symbolic; do
+        sudo -u "$_relay_user" rm -f "${ICON_DIR}/${icon}.svg" \
+            && echo "✓ Removed ${icon}.svg" || true
+    done
+    sudo -u "$_relay_user" \
+        gtk-update-icon-cache -f -t \
+        "/home/${_relay_user}/.local/share/icons/hicolor" 2>/dev/null \
+        && echo "✓ GTK icon cache updated" \
+        || echo "gtk-update-icon-cache failed — stale icons may linger until next login"
+else
+    echo "Could not detect logged-in user — icons not removed"
+fi
 # Stop any running relay
 if [[ -x /usr/local/bin/camera-relay ]]; then
     /usr/local/bin/camera-relay stop 2>/dev/null || true
