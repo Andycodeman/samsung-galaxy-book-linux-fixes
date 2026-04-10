@@ -572,6 +572,8 @@ elif [[ "$DISTRO" == "ubuntu" ]]; then
         IPA_PATH="/usr/local/lib/libcamera/ipa"
     elif [[ -d "/usr/local/lib/x86_64-linux-gnu/libcamera/ipa" ]]; then
         IPA_PATH="/usr/local/lib/x86_64-linux-gnu/libcamera/ipa"
+    elif [[ -d "/usr/lib/x86_64-linux-gnu/libcamera/ipa" ]]; then
+        IPA_PATH="/usr/lib/x86_64-linux-gnu/libcamera/ipa"
     else
         IPA_PATH="/usr/lib/libcamera/ipa"
     fi
@@ -586,7 +588,7 @@ fi
 # to /usr/local which PipeWire's systemd service doesn't search by default.
 SPA_PATH=""
 if [[ "$DISTRO" == "ubuntu" ]]; then
-    SPA_PLUGIN=$(find /usr/local/lib -path "*/spa-*/libcamera/libspa-libcamera.so" 2>/dev/null | head -1)
+    SPA_PLUGIN=$(find /usr/local/lib /usr/lib -path "*/spa-*/libcamera/libspa-libcamera.so" 2>/dev/null | head -1)
     if [[ -n "$SPA_PLUGIN" ]]; then
         # Extract the spa-0.2 directory (parent of libcamera/)
         SPA_PATH=$(dirname "$(dirname "$SPA_PLUGIN")")
@@ -856,6 +858,19 @@ if [[ -d "$RELAY_DIR" ]]; then
     fi
 else
     echo "  ⚠ camera-relay directory not found — skipping relay tool installation"
+fi
+
+# Ubuntu: ensure the user is in the video group so WirePlumber can access
+# /dev/media0. This must be done after _relay_user is set so we have a
+# reliable username regardless of whether the script is run as root.
+if [[ -n "$_relay_user" ]]; then
+    if ! groups "$_relay_user" | grep -q "\bvideo\b"; then
+        echo "  Adding $_relay_user to video group (required for /dev/media0 access)..."
+        sudo usermod -aG video "$_relay_user"
+        echo "  ⚠ $_relay_user must log out and back in for the video group to take effect."
+    else
+        echo "  ✓ $_relay_user already in video group"
+    fi
 fi
 
 # ──────────────────────────────────────────────

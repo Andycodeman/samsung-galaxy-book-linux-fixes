@@ -868,6 +868,12 @@ elif [[ "$DISTRO" == "arch" ]]; then
     # so this is safe.
     USE_FULL_INSTALL=true
     info "Full install: Arch Linux (so-only install breaks IPA path resolution)."
+elif [[ "$DISTRO" == "debian" || "$DISTRO" == "ubuntu" ]]; then
+    # Ubuntu/Debian: IPA modules must match the patched library's build hash.
+    # The .so-only approach preserves distro IPA .sign files which were built
+    # against the original library — causing signature mismatch and camera failure.
+    USE_FULL_INSTALL=true
+    info "Full install: Ubuntu/Debian (IPA modules must match patched library)."
 fi
 
 if [[ "$USE_FULL_INSTALL" == "true" ]]; then
@@ -930,10 +936,10 @@ else
     # not match the distro's layout.
     if [[ -n "${LIBCAMERA_IPA_DIR:-}" && -d "$LIBCAMERA_IPA_DIR" ]]; then
         IPA_ENV_FILE="/etc/profile.d/libcamera-ipa-path.sh"
-        echo "export LIBCAMERA_IPA_MODULE_PATH=$LIBCAMERA_IPA_DIR" > "$IPA_ENV_FILE"
+        echo "export LIBCAMERA_IPA_MODULE_PATH=$LIBCAMERA_IPA_DIR/ipa" > "$IPA_ENV_FILE"
         chmod 644 "$IPA_ENV_FILE"
-        export LIBCAMERA_IPA_MODULE_PATH="$LIBCAMERA_IPA_DIR"
-        ok "IPA module path configured: $LIBCAMERA_IPA_DIR"
+        export LIBCAMERA_IPA_MODULE_PATH="$LIBCAMERA_IPA_DIR/ipa"
+        ok "IPA module path configured: $LIBCAMERA_IPA_DIR/ipa"
         info "  Environment file: $IPA_ENV_FILE"
     fi
 

@@ -259,6 +259,8 @@ detect_ipa_path() {
     local path
     for path in /usr/local/lib/x86_64-linux-gnu/libcamera \
                 /usr/local/lib/aarch64-linux-gnu/libcamera \
+                /usr/lib/x86_64-linux-gnu/libcamera \
+                /usr/lib/aarch64-linux-gnu/libcamera \
                 /usr/lib64/libcamera /usr/lib/libcamera /usr/local/lib/libcamera \
                 /lib64/libcamera /lib/libcamera; do
         if find "$path" -name "*.so" -path "*/ipa/*" 2>/dev/null | grep -q .; then
