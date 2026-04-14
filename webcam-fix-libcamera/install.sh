@@ -397,7 +397,7 @@ if [[ "$DMI_VENDOR" == "SAMSUNG ELECTRONICS CO., LTD." ]]; then
     esac
 fi
 
-IPU_BRIDGE_FIX_VER="1.0"
+IPU_BRIDGE_FIX_VER="1.2"
 IPU_BRIDGE_FIX_SRC="/usr/src/ipu-bridge-fix-${IPU_BRIDGE_FIX_VER}"
 
 if $NEEDS_ROTATION_FIX; then
@@ -444,10 +444,13 @@ if $NEEDS_ROTATION_FIX; then
             if $UPSTREAM_HAS_FIX; then
                 echo "  ✓ Native kernel ipu-bridge already has Samsung rotation fix — skipping DKMS"
             else
-                # Remove old DKMS version if present
-                if dkms status "ipu-bridge-fix/${IPU_BRIDGE_FIX_VER}" 2>/dev/null | grep -q "ipu-bridge-fix"; then
-                    sudo dkms remove "ipu-bridge-fix/${IPU_BRIDGE_FIX_VER}" --all 2>/dev/null || true
+                # Remove any previously installed ipu-bridge-fix versions (all are superseded)
+                if dkms status 2>/dev/null | grep -q '^ipu-bridge-fix'; then
+                    while IFS= read -r _old_ver; do
+                        sudo dkms remove "ipu-bridge-fix/${_old_ver}" --all 2>/dev/null || true
+                    done < <(dkms status 2>/dev/null | awk -F'[/,: ]+' '/^ipu-bridge-fix/ {print $2}' | sort -u)
                 fi
+                sudo rm -rf /usr/src/ipu-bridge-fix-* 2>/dev/null || true
 
                 # Copy source to DKMS tree
                 sudo rm -rf "$IPU_BRIDGE_FIX_SRC"
