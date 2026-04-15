@@ -137,7 +137,7 @@ detect_distro() {
     if [[ -f /etc/os-release ]]; then
         . /etc/os-release
         case "$ID" in
-            ubuntu|debian|linuxmint|pop)
+            ubuntu|debian|linuxmint|pop|zorin)
                 DISTRO="debian"
                 DISTRO_NAME="$PRETTY_NAME"
                 ;;
@@ -145,7 +145,7 @@ detect_distro() {
                 DISTRO="fedora"
                 DISTRO_NAME="$PRETTY_NAME"
                 ;;
-            arch|manjaro|endeavouros)
+            arch|manjaro|endeavouros|cachyos)
                 DISTRO="arch"
                 DISTRO_NAME="$PRETTY_NAME"
                 ;;

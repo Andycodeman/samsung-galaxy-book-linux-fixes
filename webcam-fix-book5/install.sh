@@ -160,7 +160,7 @@ KVER=$(uname -r)
 KMAJOR=$(echo "$KVER" | cut -d. -f1)
 KMINOR=$(echo "$KVER" | cut -d. -f2)
 
-if [[ "$KMAJOR" -lt 6 ]] || { [[ "$KMAJOR" -eq 6 ]] && [[ "$KMINOR" -lt 18 ]]; }; then
+if [[ "$KMAJOR" -lt 6 ]] || { [[ "$KMAJOR" -eq 6 ]] && [[ "$KMINOR" -lt 17 ]]; }; then
     echo "ERROR: Kernel ${KVER} is too old. IPU7 webcam support requires kernel 6.18+."
     echo ""
     echo "       Kernel 6.18 includes in-tree IPU7, USBIO, and OV02C10 drivers."
