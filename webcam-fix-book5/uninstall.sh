@@ -7,7 +7,9 @@ set -e
 
 VISION_DRIVER_VER="1.0.0"
 SRC_DIR="/usr/src/vision-driver-${VISION_DRIVER_VER}"
-IPU_BRIDGE_FIX_VER="1.1"
+# Detect installed ipu-bridge-fix version from DKMS rather than hardcoding —
+# the installed version may differ from the version in the current source tree.
+IPU_BRIDGE_FIX_VER=$(dkms status 2>/dev/null     | grep "^ipu-bridge-fix"     | grep -oP 'ipu-bridge-fix/\K[0-9.]+'     | head -1 || true)
 IPU_BRIDGE_FIX_SRC="/usr/src/ipu-bridge-fix-${IPU_BRIDGE_FIX_VER}"
 
 echo "=============================================="
@@ -41,7 +43,10 @@ fi
 # [3/11] Remove ipu-bridge-fix DKMS module (camera rotation fix)
 echo "[3/11] Removing ipu-bridge-fix DKMS module..."
 IPU_BRIDGE_REMOVED=false
-for ver in "$IPU_BRIDGE_FIX_VER" "1.0"; do
+# Build list of versions to check: dynamically detected version + known legacy versions
+IPU_BRIDGE_VERSIONS=("1.0")
+[[ -n "$IPU_BRIDGE_FIX_VER" ]] && IPU_BRIDGE_VERSIONS=("$IPU_BRIDGE_FIX_VER" "1.0")
+for ver in "${IPU_BRIDGE_VERSIONS[@]}"; do
     if dkms status "ipu-bridge-fix/${ver}" 2>/dev/null | grep -q "ipu-bridge-fix"; then
         sudo dkms remove "ipu-bridge-fix/${ver}" --all 2>/dev/null || true
         IPU_BRIDGE_REMOVED=true
@@ -156,7 +161,7 @@ while IFS=: read -r user _ _ _ _ home _; do
     service_file="$home/.config/systemd/user/camera-relay.service"
     if [[ -f "$service_file" ]]; then
         sudo -u "$user" systemctl --user disable camera-relay.service 2>/dev/null || true
-        rm -f "$service_file"
+        sudo -u "$user" rm -f "$service_file"
     fi
 done < <(getent passwd)
 sudo rm -f /usr/local/bin/camera-relay

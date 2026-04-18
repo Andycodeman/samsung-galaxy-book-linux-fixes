@@ -9,7 +9,9 @@
 #   - Next reboot uses the native kernel module instead
 
 DKMS_NAME="ipu-bridge-fix"
-DKMS_VER="1.0"
+# Detect installed version from DKMS rather than hardcoding — the installed
+# version may differ from what this script was originally shipped with.
+DKMS_VER=$(dkms status 2>/dev/null     | grep "^${DKMS_NAME}"     | grep -oP "${DKMS_NAME}/\K[0-9.]+"     | head -1 || true)
 
 log() { echo "ipu-bridge-check: $*"; }
 

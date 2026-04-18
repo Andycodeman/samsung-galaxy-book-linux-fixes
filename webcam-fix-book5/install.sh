@@ -30,6 +30,8 @@ VISION_DRIVER_REPO="https://github.com/intel/vision-drivers"
 VISION_DRIVER_BRANCH="main"
 SRC_DIR="/usr/src/vision-driver-${VISION_DRIVER_VER}"
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 FORCE=false
 [ "$1" = "--force" ] && FORCE=true
 
@@ -397,11 +399,10 @@ if [[ "$DMI_VENDOR" == "SAMSUNG ELECTRONICS CO., LTD." ]]; then
     esac
 fi
 
-IPU_BRIDGE_FIX_VER="1.1"
+IPU_BRIDGE_FIX_VER=$(grep "^PACKAGE_VERSION=" "$SCRIPT_DIR/ipu-bridge-fix/dkms.conf"     | cut -d= -f2 | tr -d '"')
 IPU_BRIDGE_FIX_SRC="/usr/src/ipu-bridge-fix-${IPU_BRIDGE_FIX_VER}"
 
 if $NEEDS_ROTATION_FIX; then
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
     # Check if already installed and working
     if dkms status "ipu-bridge-fix/${IPU_BRIDGE_FIX_VER}" 2>/dev/null | grep -q "installed"; then
@@ -502,7 +503,7 @@ if [[ "$SENSOR" == "ov02e10" ]] && $NEEDS_ROTATION_FIX; then
         echo "  OV02E10 + rotation fix detected — building patched libcamera..."
         echo "  (This fixes purple/magenta tint caused by bayer pattern mismatch)"
         echo ""
-        SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+        # SCRIPT_DIR set at top of script
         if sudo "$SCRIPT_DIR/libcamera-bayer-fix/build-patched-libcamera.sh"; then
             echo "  ✓ Patched libcamera installed (bayer order fix)"
         else
