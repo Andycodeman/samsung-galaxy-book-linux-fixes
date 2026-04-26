@@ -722,16 +722,37 @@ if check_libcamera_version >/dev/null 2>&1; then
     LIBCAMERA_OK=true
 fi
 
+# Check if the distro already provides a working libcamerasrc gst plugin
+# alongside libcamera >= 0.7. On Kubuntu 26.04 / Fedora 42+ / Arch, the system
+# packages cover everything we need for streaming, so building libcamera from
+# source into /usr/local just creates a shadow that can fail to load (issue #45).
+# When this returns 0, we skip the source build entirely.
+system_libcamera_works() {
+    # libcamerasrc must be loadable using only system paths — no /usr/local
+    # overrides (which is exactly the env this fresh shell already has).
+    env -u LD_LIBRARY_PATH -u GST_PLUGIN_PATH -u LIBCAMERA_IPA_MODULE_PATH \
+        gst-inspect-1.0 libcamerasrc &>/dev/null
+}
+
 # Check if a source-built libcamera at /usr/local has the OV02C10 sensor helper.
 # A previous install (before v0.3.6) may have built v0.7.0 without the helper patch.
-# If so, force a rebuild so the sensor helper gets patched in.
+# If so, force a rebuild so the sensor helper gets patched in — but only when
+# we'd actually be using that source build (i.e. the system libcamerasrc isn't
+# already adequate).
 check_sensor_helper() {
     local lib
     lib=$(find /usr/local/lib /usr/local/lib64 -name "libcamera.so.0.7.*" -not -type l 2>/dev/null | head -1)
     [[ -n "$lib" ]] && strings "$lib" | grep -q "CameraSensorHelperOv02c10"
 }
 
-if $LIBCAMERA_OK; then
+# If the distro packages already provide everything we need, prefer them. This
+# avoids the /usr/local shadow trap and keeps users on a tested package set.
+SYSTEM_LIBCAMERA_OK=false
+if $LIBCAMERA_OK && system_libcamera_works; then
+    SYSTEM_LIBCAMERA_OK=true
+fi
+
+if $LIBCAMERA_OK && ! $SYSTEM_LIBCAMERA_OK; then
     local_lib=$(find /usr/local/lib /usr/local/lib64 -name "libcamera.so.0.*" -not -type l 2>/dev/null | head -1)
     if [[ -n "$local_lib" ]] && ! check_sensor_helper 2>/dev/null; then
         echo "  ⚠ libcamera $LIBCAMERA_VER found but missing OV02C10 sensor helper — rebuild needed"
@@ -808,9 +829,29 @@ cleanup_stale_local_libcamera() {
     fi
 }
 
+# Verify the libcamera setup is functional before continuing. Silent failures
+# here are what created issue #45: a source build was installed to /usr/local
+# but the gst plugin wouldn't load, so the relay was permanently broken.
+verify_libcamerasrc() {
+    if env -u LD_LIBRARY_PATH -u GST_PLUGIN_PATH -u LIBCAMERA_IPA_MODULE_PATH \
+           gst-inspect-1.0 libcamerasrc &>/dev/null; then
+        return 0
+    fi
+    if [[ -d /usr/local/lib/x86_64-linux-gnu/gstreamer-1.0 ]] && \
+       GST_PLUGIN_PATH=/usr/local/lib/x86_64-linux-gnu/gstreamer-1.0 \
+       LD_LIBRARY_PATH=/usr/local/lib/x86_64-linux-gnu \
+       gst-inspect-1.0 libcamerasrc &>/dev/null; then
+        return 0
+    fi
+    return 1
+}
+
 case "$DISTRO" in
     fedora)
-        if $LIBCAMERA_OK; then
+        if $SYSTEM_LIBCAMERA_OK; then
+            echo "  ✓ libcamera $LIBCAMERA_VER and gstreamer1-plugin-libcamera ready (system packages)"
+            cleanup_stale_local_libcamera
+        elif $LIBCAMERA_OK; then
             echo "  ✓ libcamera $LIBCAMERA_VER already installed (>= $LIBCAMERA_MIN_VER)"
             cleanup_stale_local_libcamera
         else
@@ -819,8 +860,9 @@ case "$DISTRO" in
             sudo dnf install -y libcamera libcamera-gstreamer libcamera-ipa \
                 pipewire-plugin-libcamera 2>/dev/null || true
             LIBCAMERA_VER=$(check_libcamera_version || true)
-            if check_libcamera_version >/dev/null 2>&1; then
+            if check_libcamera_version >/dev/null 2>&1 && system_libcamera_works; then
                 echo "  ✓ libcamera $LIBCAMERA_VER installed from repos"
+                SYSTEM_LIBCAMERA_OK=true
             else
                 echo "  Fedora repo version ($LIBCAMERA_VER) is too old. Building from source..."
                 build_libcamera_from_source
@@ -828,15 +870,19 @@ case "$DISTRO" in
         fi
         ;;
     arch)
-        if $LIBCAMERA_OK; then
+        if $SYSTEM_LIBCAMERA_OK; then
+            echo "  ✓ libcamera $LIBCAMERA_VER and gst-plugin-libcamera ready (system packages)"
+            cleanup_stale_local_libcamera
+        elif $LIBCAMERA_OK; then
             echo "  ✓ libcamera $LIBCAMERA_VER already installed (>= $LIBCAMERA_MIN_VER)"
             cleanup_stale_local_libcamera
         else
             echo "  Installing libcamera from Arch repos..."
-            sudo pacman -S --needed --noconfirm libcamera 2>/dev/null || true
+            sudo pacman -S --needed --noconfirm libcamera gst-plugin-libcamera 2>/dev/null || true
             LIBCAMERA_VER=$(check_libcamera_version || true)
-            if check_libcamera_version >/dev/null 2>&1; then
+            if check_libcamera_version >/dev/null 2>&1 && system_libcamera_works; then
                 echo "  ✓ libcamera $LIBCAMERA_VER installed from repos"
+                SYSTEM_LIBCAMERA_OK=true
             else
                 echo "  Arch repo version ($LIBCAMERA_VER) is too old. Building from source..."
                 build_libcamera_from_source
@@ -844,8 +890,20 @@ case "$DISTRO" in
         fi
         ;;
     ubuntu|debian)
-        if $LIBCAMERA_OK; then
+        if $SYSTEM_LIBCAMERA_OK; then
+            echo "  ✓ libcamera $LIBCAMERA_VER and gstreamer1.0-libcamera ready (system packages)"
+            cleanup_stale_local_libcamera
+        elif $LIBCAMERA_OK; then
             echo "  ✓ libcamera $LIBCAMERA_VER already installed (>= $LIBCAMERA_MIN_VER)"
+            # Make sure the gst plugin package is also installed so we can use
+            # system paths instead of forcing a source build for users on 26.04+.
+            if ! dpkg -l gstreamer1.0-libcamera 2>/dev/null | grep -q "^ii"; then
+                echo "  Installing gstreamer1.0-libcamera (needed for libcamerasrc)..."
+                sudo apt-get install -y gstreamer1.0-libcamera 2>/dev/null || true
+                if system_libcamera_works; then
+                    SYSTEM_LIBCAMERA_OK=true
+                fi
+            fi
             cleanup_stale_local_libcamera
         else
             if [[ -n "$LIBCAMERA_VER" ]]; then
@@ -869,6 +927,25 @@ case "$DISTRO" in
         fi
         ;;
 esac
+
+# Sanity check: after whichever path we took, libcamerasrc must actually load.
+# This catches the issue #45 scenario where a source build silently produced an
+# unloadable libgstlibcamera.so.
+if ! verify_libcamerasrc; then
+    echo ""
+    echo "ERROR: GStreamer 'libcamerasrc' element is not loadable."
+    echo "       libcamera was installed but the gst plugin failed to register."
+    echo "       Diagnostics:"
+    echo "         gst-inspect-1.0 --gst-debug=2 libcamerasrc 2>&1 | tail -20"
+    if [[ -f /usr/local/lib/x86_64-linux-gnu/gstreamer-1.0/libgstlibcamera.so ]]; then
+        echo "         ldd /usr/local/lib/x86_64-linux-gnu/gstreamer-1.0/libgstlibcamera.so"
+        echo ""
+        echo "       If a stale source build is shadowing the system package, remove"
+        echo "       /usr/local/lib/x86_64-linux-gnu/{libcamera*.so*,gstreamer-1.0/libgstlibcamera.so}"
+        echo "       and re-run this installer. See issue #45 for details."
+    fi
+    exit 1
+fi
 
 # ──────────────────────────────────────────────
 # [10/14] Install PipeWire libcamera plugin

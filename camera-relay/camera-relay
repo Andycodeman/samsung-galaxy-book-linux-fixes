@@ -280,26 +280,53 @@ detect_ipa_path() {
 }
 
 setup_environment() {
+    # Save current env so we can roll back if the /usr/local override breaks things
+    local saved_ld_library_path="${LD_LIBRARY_PATH:-}"
+    local saved_gst_plugin_path="${GST_PLUGIN_PATH:-}"
+
     # Source-built libcamera library path (must be set BEFORE gst-inspect
     # so the GStreamer plugin resolves against our build, not the system one)
-    local lib_path
+    local lib_path gst_extra_path
     if lib_path=$(detect_libcamera_lib_path); then
         export LD_LIBRARY_PATH="${lib_path}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     fi
 
     # GStreamer plugin path
-    local gst_extra_path
     if gst_extra_path=$(detect_gst_plugin_path); then
         export GST_PLUGIN_PATH="${gst_extra_path}${GST_PLUGIN_PATH:+:$GST_PLUGIN_PATH}"
         info "Using GStreamer plugin: $gst_extra_path"
     fi
 
-    # Check for libcamerasrc
+    # Check for libcamerasrc. If a /usr/local source build is shadowing the
+    # system package and fails to load (issue #45 — Kubuntu 26.04 ships
+    # gstreamer1.0-libcamera 0.7.0, the source-built libgstlibcamera.so in
+    # /usr/local was unloadable), fall back to system paths so the relay can
+    # still start using the distro packages.
     if ! gst-inspect-1.0 libcamerasrc &>/dev/null; then
-        die "GStreamer 'libcamerasrc' element not found. Install it:
-  Fedora:  sudo dnf install gstreamer1-plugins-bad-free-extras
-  Arch:    sudo pacman -S gst-plugin-libcamera
-  Ubuntu:  sudo apt install gstreamer1.0-plugins-bad"
+        if [[ -n "${gst_extra_path:-}" ]] || [[ -n "${lib_path:-}" ]]; then
+            warn "Source-built libcamerasrc at ${gst_extra_path:-/usr/local} failed to load — falling back to system paths"
+            if [[ -n "$saved_ld_library_path" ]]; then
+                export LD_LIBRARY_PATH="$saved_ld_library_path"
+            else
+                unset LD_LIBRARY_PATH
+            fi
+            if [[ -n "$saved_gst_plugin_path" ]]; then
+                export GST_PLUGIN_PATH="$saved_gst_plugin_path"
+            else
+                unset GST_PLUGIN_PATH
+            fi
+            # The GStreamer registry caches plugin->path mappings; if it cached
+            # the broken /usr/local path, gst-inspect will still find nothing.
+            # Force a fresh scan by removing the user cache.
+            rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/gstreamer-1.0" 2>/dev/null || true
+        fi
+        if ! gst-inspect-1.0 libcamerasrc &>/dev/null; then
+            die "GStreamer 'libcamerasrc' element not found. Install it:
+  Fedora:        sudo dnf install gstreamer1-plugin-libcamera
+  Arch:          sudo pacman -S gst-plugin-libcamera
+  Ubuntu/Debian: sudo apt install gstreamer1.0-libcamera"
+        fi
+        info "Using system libcamerasrc"
     fi
 
     # IPA path
@@ -661,6 +688,36 @@ cmd_enable_persistent() {
     ipa_path=$(detect_ipa_path 2>/dev/null) || true
     gst_path=$(detect_gst_plugin_path 2>/dev/null) || true
     lib_path=$(detect_libcamera_lib_path 2>/dev/null) || true
+
+    # Validate that the /usr/local source-build paths actually produce a working
+    # libcamerasrc before baking them into the unit (issue #45). If they don't,
+    # drop all the source-build overrides so the unit picks up the system
+    # libcamera packages instead.
+    if [[ -n "$gst_path" ]] || [[ -n "$lib_path" ]] || [[ -n "$ipa_path" && "$ipa_path" == /usr/local/* ]]; then
+        if ! env GST_PLUGIN_PATH="${gst_path:-}" \
+                 LD_LIBRARY_PATH="${lib_path:-}" \
+                 LIBCAMERA_IPA_MODULE_PATH="${ipa_path:-}" \
+                 gst-inspect-1.0 libcamerasrc &>/dev/null; then
+            warn "Source-built libcamerasrc at ${gst_path:-/usr/local} failed to load — service unit will use system paths"
+            gst_path=""
+            lib_path=""
+            # Re-detect IPA path with /usr/local excluded so the unit picks the
+            # system path instead of pointing libcamera at the broken build.
+            if [[ "$ipa_path" == /usr/local/* ]]; then
+                ipa_path=""
+                local sys_ipa
+                for sys_ipa in /usr/lib/x86_64-linux-gnu/libcamera \
+                               /usr/lib/aarch64-linux-gnu/libcamera \
+                               /usr/lib64/libcamera /usr/lib/libcamera; do
+                    if find "$sys_ipa" -name "*.so" 2>/dev/null | grep -q .; then
+                        ipa_path="$sys_ipa"
+                        break
+                    fi
+                done
+            fi
+            rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/gstreamer-1.0" 2>/dev/null || true
+        fi
+    fi
 
     # Detect if NVIDIA is the active EGL renderer. libcamera 0.7.0's GPU debayer
     # (debayer_egl.cpp) is incompatible with NVIDIA's proprietary EGL driver,
