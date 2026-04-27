@@ -722,40 +722,38 @@ if check_libcamera_version >/dev/null 2>&1; then
     LIBCAMERA_OK=true
 fi
 
-# Check if the distro already provides a working libcamerasrc gst plugin
-# alongside libcamera >= 0.7. On Kubuntu 26.04 / Fedora 42+ / Arch, the system
-# packages cover everything we need for streaming, so building libcamera from
-# source into /usr/local just creates a shadow that can fail to load (issue #45).
-# When this returns 0, we skip the source build entirely.
-system_libcamera_works() {
-    # libcamerasrc must be loadable using only system paths — no /usr/local
-    # overrides (which is exactly the env this fresh shell already has).
-    env -u LD_LIBRARY_PATH -u GST_PLUGIN_PATH -u LIBCAMERA_IPA_MODULE_PATH \
-        gst-inspect-1.0 libcamerasrc &>/dev/null
-}
-
-# Check if a source-built libcamera at /usr/local has the OV02C10 sensor helper.
-# A previous install (before v0.3.6) may have built v0.7.0 without the helper patch.
-# If so, force a rebuild so the sensor helper gets patched in — but only when
-# we'd actually be using that source build (i.e. the system libcamerasrc isn't
-# already adequate).
+# Check whether ANY installed libcamera (system OR /usr/local) carries the
+# OV02C10 sensor helper. Without it, IPASoft can't translate the kernel's
+# analogue-gain control to the right multiplier and exposure ends up dim
+# (issue #45 — Kubuntu 26.04 ships libcamera 0.7.0-1ubuntu2 which lacks the
+# helper, since upstream v0.7.0 only registers ov2685 and ov2740 for the OV
+# family). If the helper is missing everywhere, force a source build to add it.
 check_sensor_helper() {
     local lib
-    lib=$(find /usr/local/lib /usr/local/lib64 -name "libcamera.so.0.7.*" -not -type l 2>/dev/null | head -1)
-    [[ -n "$lib" ]] && strings "$lib" | grep -q "CameraSensorHelperOv02c10"
+    for lib in $(find /usr/local/lib /usr/local/lib64 \
+                      /usr/lib/x86_64-linux-gnu /usr/lib/aarch64-linux-gnu \
+                      /usr/lib64 /usr/lib \
+                      -maxdepth 2 -name "libcamera.so.0.7*" -not -type l 2>/dev/null); do
+        if strings "$lib" 2>/dev/null | grep -q "CameraSensorHelperOv02c10"; then
+            return 0
+        fi
+    done
+    # Also check the libipa shared object, since the helper compiles into
+    # libipa rather than libcamera-base on some build configurations.
+    for lib in $(find /usr/local/lib /usr/local/lib64 \
+                      /usr/lib/x86_64-linux-gnu /usr/lib/aarch64-linux-gnu \
+                      /usr/lib64 /usr/lib \
+                      -name "ipa_soft_simple*.so" -o -name "libcamera-ipa*.so" 2>/dev/null); do
+        if strings "$lib" 2>/dev/null | grep -q "CameraSensorHelperOv02c10"; then
+            return 0
+        fi
+    done
+    return 1
 }
 
-# If the distro packages already provide everything we need, prefer them. This
-# avoids the /usr/local shadow trap and keeps users on a tested package set.
-SYSTEM_LIBCAMERA_OK=false
-if $LIBCAMERA_OK && system_libcamera_works; then
-    SYSTEM_LIBCAMERA_OK=true
-fi
-
-if $LIBCAMERA_OK && ! $SYSTEM_LIBCAMERA_OK; then
-    local_lib=$(find /usr/local/lib /usr/local/lib64 -name "libcamera.so.0.*" -not -type l 2>/dev/null | head -1)
-    if [[ -n "$local_lib" ]] && ! check_sensor_helper 2>/dev/null; then
-        echo "  ⚠ libcamera $LIBCAMERA_VER found but missing OV02C10 sensor helper — rebuild needed"
+if $LIBCAMERA_OK; then
+    if ! check_sensor_helper 2>/dev/null; then
+        echo "  ⚠ libcamera $LIBCAMERA_VER lacks OV02C10 sensor helper — source build needed for proper exposure"
         LIBCAMERA_OK=false
     fi
 fi
@@ -848,11 +846,8 @@ verify_libcamerasrc() {
 
 case "$DISTRO" in
     fedora)
-        if $SYSTEM_LIBCAMERA_OK; then
-            echo "  ✓ libcamera $LIBCAMERA_VER and gstreamer1-plugin-libcamera ready (system packages)"
-            cleanup_stale_local_libcamera
-        elif $LIBCAMERA_OK; then
-            echo "  ✓ libcamera $LIBCAMERA_VER already installed (>= $LIBCAMERA_MIN_VER)"
+        if $LIBCAMERA_OK; then
+            echo "  ✓ libcamera $LIBCAMERA_VER already installed (>= $LIBCAMERA_MIN_VER, with OV02C10 helper)"
             cleanup_stale_local_libcamera
         else
             # Fedora 41+ ships libcamera 0.4+ in repos
@@ -860,59 +855,43 @@ case "$DISTRO" in
             sudo dnf install -y libcamera libcamera-gstreamer libcamera-ipa \
                 pipewire-plugin-libcamera 2>/dev/null || true
             LIBCAMERA_VER=$(check_libcamera_version || true)
-            if check_libcamera_version >/dev/null 2>&1 && system_libcamera_works; then
-                echo "  ✓ libcamera $LIBCAMERA_VER installed from repos"
-                SYSTEM_LIBCAMERA_OK=true
+            if check_libcamera_version >/dev/null 2>&1 && check_sensor_helper 2>/dev/null; then
+                echo "  ✓ libcamera $LIBCAMERA_VER installed from repos with OV02C10 helper"
             else
-                echo "  Fedora repo version ($LIBCAMERA_VER) is too old. Building from source..."
+                echo "  Fedora repo version ($LIBCAMERA_VER) lacks OV02C10 helper. Building from source..."
                 build_libcamera_from_source
             fi
         fi
         ;;
     arch)
-        if $SYSTEM_LIBCAMERA_OK; then
-            echo "  ✓ libcamera $LIBCAMERA_VER and gst-plugin-libcamera ready (system packages)"
-            cleanup_stale_local_libcamera
-        elif $LIBCAMERA_OK; then
-            echo "  ✓ libcamera $LIBCAMERA_VER already installed (>= $LIBCAMERA_MIN_VER)"
+        if $LIBCAMERA_OK; then
+            echo "  ✓ libcamera $LIBCAMERA_VER already installed (>= $LIBCAMERA_MIN_VER, with OV02C10 helper)"
             cleanup_stale_local_libcamera
         else
             echo "  Installing libcamera from Arch repos..."
             sudo pacman -S --needed --noconfirm libcamera gst-plugin-libcamera 2>/dev/null || true
             LIBCAMERA_VER=$(check_libcamera_version || true)
-            if check_libcamera_version >/dev/null 2>&1 && system_libcamera_works; then
-                echo "  ✓ libcamera $LIBCAMERA_VER installed from repos"
-                SYSTEM_LIBCAMERA_OK=true
+            if check_libcamera_version >/dev/null 2>&1 && check_sensor_helper 2>/dev/null; then
+                echo "  ✓ libcamera $LIBCAMERA_VER installed from repos with OV02C10 helper"
             else
-                echo "  Arch repo version ($LIBCAMERA_VER) is too old. Building from source..."
+                echo "  Arch repo version ($LIBCAMERA_VER) lacks OV02C10 helper. Building from source..."
                 build_libcamera_from_source
             fi
         fi
         ;;
     ubuntu|debian)
-        if $SYSTEM_LIBCAMERA_OK; then
-            echo "  ✓ libcamera $LIBCAMERA_VER and gstreamer1.0-libcamera ready (system packages)"
-            cleanup_stale_local_libcamera
-        elif $LIBCAMERA_OK; then
-            echo "  ✓ libcamera $LIBCAMERA_VER already installed (>= $LIBCAMERA_MIN_VER)"
-            # Make sure the gst plugin package is also installed so we can use
-            # system paths instead of forcing a source build for users on 26.04+.
-            if ! dpkg -l gstreamer1.0-libcamera 2>/dev/null | grep -q "^ii"; then
-                echo "  Installing gstreamer1.0-libcamera (needed for libcamerasrc)..."
-                sudo apt-get install -y gstreamer1.0-libcamera 2>/dev/null || true
-                if system_libcamera_works; then
-                    SYSTEM_LIBCAMERA_OK=true
-                fi
-            fi
+        if $LIBCAMERA_OK; then
+            echo "  ✓ libcamera $LIBCAMERA_VER already installed (>= $LIBCAMERA_MIN_VER, with OV02C10 helper)"
             cleanup_stale_local_libcamera
         else
             if [[ -n "$LIBCAMERA_VER" ]]; then
-                echo "  System libcamera ($LIBCAMERA_VER) is too old (need >= $LIBCAMERA_MIN_VER)."
+                echo "  System libcamera ($LIBCAMERA_VER) lacks OV02C10 sensor helper (or version < $LIBCAMERA_MIN_VER)."
             else
                 echo "  libcamera not found."
             fi
             echo ""
-            echo "  Ubuntu/Debian repos ship an older version that doesn't support IPU6."
+            echo "  Even Kubuntu 26.04's libcamera 0.7.0 ships without the OV02C10 helper,"
+            echo "  which is required for proper exposure control on this sensor."
             echo "  libcamera $LIBCAMERA_BUILD_VER will be built from source and installed to /usr/local."
             echo "  This requires ~200MB of disk space and takes a few minutes."
             echo ""
@@ -921,12 +900,22 @@ case "$DISTRO" in
             if [[ "$REPLY" =~ ^[Yy] ]]; then
                 build_libcamera_from_source
             else
-                echo "ERROR: libcamera >= $LIBCAMERA_MIN_VER is required. Cannot continue."
+                echo "ERROR: libcamera with OV02C10 helper is required. Cannot continue."
                 exit 1
             fi
         fi
         ;;
 esac
+
+# After installation (or skip), drop the GStreamer registry cache for the
+# invoking user. If a previous run left a registry pointing at a now-stale
+# plugin path, gst-inspect won't re-scan even though GST_PLUGIN_PATH points
+# at a working .so — the original symptom of issue #45 in the systemd
+# user service.
+rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/gstreamer-1.0" 2>/dev/null || true
+if [[ -n "${SUDO_USER:-}" ]] && [[ "$SUDO_USER" != "$USER" ]]; then
+    sudo -u "$SUDO_USER" rm -rf "$(eval echo "~$SUDO_USER")/.cache/gstreamer-1.0" 2>/dev/null || true
+fi
 
 # Sanity check: after whichever path we took, libcamerasrc must actually load.
 # This catches the issue #45 scenario where a source build silently produced an
