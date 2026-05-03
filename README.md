@@ -247,6 +247,8 @@ Thanks to the following users for their contributions and testing:
 
 NixOS users can use the declarative Nix modules in [`nixos/`](nixos/) instead of the install scripts. Import `nixos/samsung-speaker-fix.nix` for the speaker fix, `nixos/webcam-fix-libcamera.nix` for the Book3/Book4 webcam fix, and `nixos/webcam-fix-book5.nix` for the Book5 webcam fix, then run `nixos-rebuild switch`. The speaker module builds the kernel modules from source, loads them at boot, and sets up I2C amplifier detection via systemd. The webcam modules load the camera stack early, install the relay or IPU7 module configuration, hide raw V4L2 nodes in WirePlumber, and start the camera services. See the module files for details. Contributed by [@pagliarinilucas](https://github.com/pagliarinilucas).
 
+If your camera image comes out upside-down on a Galaxy Book 360 / convertible (e.g. NP960QHA, NP960QFG, NP960QGK) — i.e. the bundled `ipu-bridge` kernel module override didn't engage — set `hardware.samsungGalaxyBook.webcamFixBook5.videoFlip = true;` in your NixOS configuration to flip the camera-relay output in userspace.
+
 ## License
 
 [GPL-2.0](LICENSE) — Free to use, modify, and redistribute. Derivative works must use the same license.

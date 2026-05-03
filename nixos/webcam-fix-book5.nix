@@ -1,6 +1,7 @@
 { config, lib, pkgs, ... }:
 
 let
+  cfg = config.hardware.samsungGalaxyBook.webcamFixBook5;
   kernelPackages = config.boot.kernelPackages;
   kernel = kernelPackages.kernel;
   kernelUsesClang = (kernel.stdenv.cc.isClang or false);
@@ -180,15 +181,49 @@ let
   wireplumberUsesConf = lib.versionAtLeast (pkgs.wireplumber.version or "0.5") "0.5";
 in
 {
+  options.hardware.samsungGalaxyBook.webcamFixBook5 = {
+    videoFlip = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      example = true;
+      description = ''
+        Apply a vertical flip to the camera-relay output via
+        `RELAY_COLOR_FILTER=videoflip method=vertical-flip`.
+
+        Enable this if the camera image is upside-down. On Samsung Galaxy
+        Book 360 / convertible models (e.g. NP960QHA, NP960QFG, NP960QGK)
+        the OV02E10 / OV02C10 sensor is physically mounted inverted, so
+        either the bundled ipu-bridge kernel module override must apply
+        rotation=180 to the SSDB or libcamera/the relay must flip the
+        frames. If the kernel module override doesn't engage in your
+        environment (e.g. the in-tree ipu-bridge wins at modprobe time),
+        enable this option as a userspace fallback.
+
+        Leave disabled if your image is already correctly oriented.
+      '';
+    };
+  };
+
+  config = {
   # OV02E10 (Book5) can show purple/green tint when rotated because the
   # kernel driver may not update Bayer layout metadata after transform.
   # Patch libcamera Simple pipeline to recompute Bayer order from transform.
+  # Also install the OV02C10 / OV02E10 sensor color tuning files into
+  # libcamera's IPA simple-pipeline data dir — without these, libcamera's
+  # software ISP falls back to uncalibrated.yaml (no CCM) and produces a
+  # heavily desaturated, green-tinted image.
   nixpkgs.overlays = [
     (final: prev: {
       libcamera = prev.libcamera.overrideAttrs (old: {
         patches = (old.patches or [ ]) ++ [
           ../webcam-fix-book5/libcamera-bayer-fix/bayer-fix-v0.6.patch
         ];
+        postInstall = (old.postInstall or "") + ''
+          install -Dm644 ${../webcam-fix-book5/ov02c10.yaml} \
+            $out/share/libcamera/ipa/simple/ov02c10.yaml
+          install -Dm644 ${../webcam-fix-book5/ov02e10.yaml} \
+            $out/share/libcamera/ipa/simple/ov02e10.yaml
+        '';
       });
     })
   ];
@@ -256,6 +291,9 @@ in
       Restart = "on-failure";
       RestartSec = 5;
     };
-    environment = cameraRelayServiceEnvironment;
+    environment = cameraRelayServiceEnvironment // lib.optionalAttrs cfg.videoFlip {
+      RELAY_COLOR_FILTER = "videoflip method=vertical-flip";
+    };
+  };
   };
 }
