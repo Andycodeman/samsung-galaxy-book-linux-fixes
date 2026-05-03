@@ -1205,15 +1205,30 @@ if [[ -d "$RELAY_DIR" ]]; then
     sudo chmod 755 /usr/local/bin/camera-relay
     echo "  ✓ Installed /usr/local/bin/camera-relay"
 
+    # Install systray runtime dependency (Python AppIndicator binding)
+    case "$DISTRO" in
+        ubuntu|debian)
+            sudo apt-get install -y --no-install-recommends \
+                gir1.2-ayatanaappindicator3-0.1 2>/dev/null \
+                && echo "  ✓ Installed gir1.2-ayatanaappindicator3-0.1 (systray binding)" \
+                || echo "  ⚠ Could not install gir1.2-ayatanaappindicator3-0.1 — systray icon will not appear"
+            ;;
+    esac
+
     # Install systray GUI
     sudo mkdir -p /usr/local/share/camera-relay
     sudo cp "$RELAY_DIR/camera-relay-systray.py" /usr/local/share/camera-relay/
     sudo chmod 755 /usr/local/share/camera-relay/camera-relay-systray.py
     echo "  ✓ Installed systray GUI"
 
-    # Install desktop file
+    # Install desktop file (app menu entry)
     sudo cp "$RELAY_DIR/camera-relay-systray.desktop" /usr/share/applications/
     echo "  ✓ Installed desktop entry"
+
+    # Install autostart entry so the systray launches on login
+    sudo install -m 644 "$RELAY_DIR/camera-relay-systray.desktop" \
+        /etc/xdg/autostart/camera-relay-systray.desktop
+    echo "  ✓ Installed autostart entry (/etc/xdg/autostart/)"
 
     # Auto-enable persistent on-demand relay
     echo "  Enabling on-demand relay (auto-starts on login)..."

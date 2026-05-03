@@ -32,6 +32,9 @@ sudo rm -f /etc/modprobe.d/99-camera-relay-loopback.conf
 sudo rm -f /etc/modules-load.d/v4l2loopback.conf
 sudo rm -rf /usr/local/share/camera-relay
 sudo rm -f /usr/share/applications/camera-relay-systray.desktop
+sudo rm -f /etc/xdg/autostart/camera-relay-systray.desktop
+# Stop any running systray instance from this install
+pkill -f "camera-relay-systray.py" 2>/dev/null || true
 # Remove user service file if still present
 rm -f "${HOME}/.config/systemd/user/camera-relay.service" 2>/dev/null || true
 
