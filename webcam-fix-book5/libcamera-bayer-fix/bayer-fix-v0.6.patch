@@ -1,7 +1,47 @@
 --- a/src/libcamera/pipeline/simple/simple.cpp
 +++ b/src/libcamera/pipeline/simple/simple.cpp
-@@ -1427,14 +1427,14 @@
-
+@@ -7,6 +7,7 @@
+  */
+ 
+ #include <algorithm>
++#include <cstdlib>
+ #include <iterator>
+ #include <list>
+ #include <map>
+@@ -1143,6 +1144,29 @@
+ 
+ 	Orientation requestedOrientation = orientation;
+ 	combinedTransform_ = sensor->computeTransform(&orientation);
++
++	/*
++	 * Optional rotation override gated by the env var
++	 * LIBCAMERA_FORCE_OV02E10_ROTATION=180. Composes a 180-degree
++	 * transform on top of whatever computeTransform() returned.
++	 *
++	 * Used on systems where the kernel ipu-bridge driver doesn't
++	 * report rotation=180 via SSDB for Samsung Galaxy Book 360
++	 * convertibles (e.g. NixOS, where the in-tree ipu-bridge wins
++	 * at modprobe time over the DKMS override that carries the
++	 * 360-model DMI quirks). Without this, the sensor stays
++	 * upside-down and the bayer-order recalculation below is fed
++	 * the wrong transform, producing a purple tint.
++	 *
++	 * Strictly opt-in via env var and restricted to ov02e10, so
++	 * other distros and other sensors are unaffected.
++	 */
++	if (sensor->model() == "ov02e10") {
++		const char *forceRot = std::getenv("LIBCAMERA_FORCE_OV02E10_ROTATION");
++		if (forceRot && std::string(forceRot) == "180")
++			combinedTransform_ = combinedTransform_ * Transform::Rot180;
++	}
++
+ 	if (orientation != requestedOrientation)
+ 		status = Adjusted;
+ 
+@@ -1523,19 +1547,20 @@
+ 	if (ret < 0)
+ 		return ret;
+ 
 -	/* Configure the video node, taking into account any Bayer pattern change. */
 +	/* Configure the video node, always accounting for Bayer pattern changes from transforms. */
  	V4L2PixelFormat videoFormat;
@@ -25,3 +65,5 @@
 +	} else {
 +		videoFormat = video->toV4L2PixelFormat(pipeConfig->captureFormat);
  	}
+ 
+ 	V4L2DeviceFormat captureFormat;

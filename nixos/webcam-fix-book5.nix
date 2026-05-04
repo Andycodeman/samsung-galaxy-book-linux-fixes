@@ -187,17 +187,35 @@ in
       default = false;
       example = true;
       description = ''
-        Apply a vertical flip to the camera-relay output via
-        `RELAY_COLOR_FILTER=videoflip method=vertical-flip`.
+        Force the OV02E10 sensor to be treated as rotation=180 inside
+        libcamera, and apply the same flip to the camera-relay output
+        via `RELAY_COLOR_FILTER=videoflip method=vertical-flip` for the
+        v4l2loopback path.
 
-        Enable this if the camera image is upside-down. On Samsung Galaxy
-        Book 360 / convertible models (e.g. NP960QHA, NP960QFG, NP960QGK)
-        the OV02E10 / OV02C10 sensor is physically mounted inverted, so
-        either the bundled ipu-bridge kernel module override must apply
-        rotation=180 to the SSDB or libcamera/the relay must flip the
-        frames. If the kernel module override doesn't engage in your
-        environment (e.g. the in-tree ipu-bridge wins at modprobe time),
-        enable this option as a userspace fallback.
+        Enable this on Samsung Galaxy Book 360 / convertible models
+        (NP960QHA, NP960QFG, NP960QGK, ...) where the OV02E10 sensor is
+        physically mounted inverted. Normally the bundled ipu-bridge
+        kernel module override reports rotation=180 to libcamera via
+        SSDB and everything Just Works — but on NixOS the in-tree
+        ipu-bridge can win at modprobe time and the rotation is never
+        reported. This option papers over that by:
+
+        1. Setting `LIBCAMERA_FORCE_OV02E10_ROTATION=180` system-wide,
+           which the bundled libcamera bayer-fix patch consumes to
+           force a 180-degree transform on the ov02e10 sensor only.
+           PipeWire-using apps (Firefox with
+           `media.webrtc.camera.allow-pipewire = true`, GNOME
+           Snapshot, etc.) get correctly oriented + correctly coloured
+           output via libcamera-direct.
+
+        2. Setting `RELAY_COLOR_FILTER=videoflip method=vertical-flip`
+           on the camera-relay user service so V4L2-only apps that go
+           through the v4l2loopback bridge also get a flipped frame.
+
+        Strictly opt-in. The env var is only consumed by the libcamera
+        bayer-fix patch when the sensor model is exactly `ov02e10`, so
+        other sensors and other distros' libcamera builds are
+        unaffected even if the env var is set.
 
         Leave disabled if your image is already correctly oriented.
       '';
@@ -297,7 +315,14 @@ in
   ];
 
   environment.systemPackages = [ cameraRelay ];
-  environment.sessionVariables.LIBCAMERA_IPA_MODULE_PATH = "${pkgs.libcamera}/lib/libcamera/ipa";
+  environment.sessionVariables = {
+    LIBCAMERA_IPA_MODULE_PATH = "${pkgs.libcamera}/lib/libcamera/ipa";
+  } // lib.optionalAttrs cfg.videoFlip {
+    # Consumed by the bundled libcamera bayer-fix patch only when sensor
+    # model is exactly "ov02e10" — strict opt-in, no effect on other
+    # sensors or systems where the env var isn't set.
+    LIBCAMERA_FORCE_OV02E10_ROTATION = "180";
+  };
 
   environment.etc = {
     "modules-load.d/intel-ipu7-camera.conf".text = ''
@@ -340,7 +365,22 @@ in
     };
     environment = cameraRelayServiceEnvironment // lib.optionalAttrs cfg.videoFlip {
       RELAY_COLOR_FILTER = "videoflip method=vertical-flip";
+      LIBCAMERA_FORCE_OV02E10_ROTATION = "180";
     };
+  };
+
+  # Also push LIBCAMERA_FORCE_OV02E10_ROTATION onto PipeWire/WirePlumber so
+  # libcamera-direct apps (Firefox with PipeWire WebRTC, GNOME Snapshot,
+  # etc.) get the rotation override. environment.sessionVariables flows
+  # to user systemd via PAM session import on next login, but explicit
+  # service env makes the fix take effect immediately after rebuild +
+  # `systemctl --user restart pipewire wireplumber`.
+  systemd.user.services.pipewire.environment = lib.optionalAttrs cfg.videoFlip {
+    LIBCAMERA_FORCE_OV02E10_ROTATION = "180";
+  };
+  systemd.user.services.wireplumber.environment = lib.optionalAttrs cfg.videoFlip {
+    LIBCAMERA_FORCE_OV02E10_ROTATION = "180";
+  };
   };
   };
 }
