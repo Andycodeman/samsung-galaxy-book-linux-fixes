@@ -935,6 +935,104 @@ cmd_doctor() {
         fi
     fi
 
+    # The Software ISP debayers on the GPU via EGL, and on a hybrid laptop GLVND
+    # hands it the NVIDIA driver, which it cannot use. Everything else in this
+    # report stays green while that happens, which is exactly what made this so
+    # hard to place — so name the GPU explicitly.
+    echo
+    echo "── GPU / EGL debayer ──"
+    local gst_log="$rt/camera-relay-gst.log"
+    local gpu_debayer_failed=false hybrid_unpinned=false
+    local nodes_seen=0 saw_nvidia=false saw_mesa_drv=false
+    local rn_base rn_drv
+    while read -r rn_base rn_drv; do
+        [[ -n "$rn_base" ]] || continue
+        nodes_seen=$((nodes_seen + 1))
+        echo "  render node: /dev/dri/$rn_base (driver $rn_drv)"
+        case "$rn_drv" in
+            nvidia|nvidia-drm) saw_nvidia=true ;;
+            unknown) ;;
+            *) saw_mesa_drv=true ;;
+        esac
+    done < <(render_node_drivers)
+    (( nodes_seen == 0 )) && echo "  render node: NONE — no /dev/dri/renderD*, the GPU debayer cannot run at all"
+
+    local vd vf
+    for vd in /etc/glvnd/egl_vendor.d /usr/share/glvnd/egl_vendor.d; do
+        [[ -d "$vd" ]] || continue
+        for vf in "$vd"/*.json; do
+            [[ -f "$vf" ]] || continue
+            echo "  EGL vendor ICD: $vf ($(grep -oP '"library_path"\s*:\s*"\K[^"]+' "$vf" 2>/dev/null | head -1 || echo '?'))"
+        done
+    done
+
+    # GLVND loads these in the order printed above, so an NVIDIA ICD sorting
+    # first is not a curiosity — it is the bug.
+    local want_pin="" unit_pin="" env_pin="${__EGL_VENDOR_LIBRARY_FILENAMES:-}"
+    want_pin=$(detect_egl_vendor_pin) || want_pin=""
+    if systemctl --user cat "$SERVICE_NAME" &>/dev/null; then
+        unit_pin=$(systemctl --user cat "$SERVICE_NAME" 2>/dev/null \
+            | grep -oP '^Environment=__EGL_VENDOR_LIBRARY_FILENAMES=\K.*' | tail -1) || unit_pin=""
+    fi
+    if $saw_nvidia && $saw_mesa_drv; then
+        echo "  topology: HYBRID (NVIDIA dGPU + Mesa-driven iGPU)"
+    elif $saw_nvidia; then
+        echo "  topology: NVIDIA only"
+    elif (( nodes_seen > 0 )); then
+        echo "  topology: single Mesa-driven GPU — no vendor pin needed"
+    fi
+    echo "  vendor pin (this shell):   ${env_pin:-none}"
+    echo "  vendor pin (service unit): ${unit_pin:-none}"
+    if [[ -n "$want_pin" && -z "$unit_pin" ]]; then
+        hybrid_unpinned=true
+        echo "  → HYBRID GPU WITH NO PIN. GLVND loads the NVIDIA ICD first, so the"
+        echo "    Software ISP's EGL debayer runs on NVIDIA's driver and fails."
+        echo "    Fix: camera-relay disable-persistent && camera-relay enable-persistent"
+        echo "    (or drop in Environment=__EGL_VENDOR_LIBRARY_FILENAMES=$want_pin)"
+    fi
+
+    # What the pipeline actually got, rather than what it should have got.
+    # Both logs, because the pipeline lives in a different process per mode:
+    # always-on runs gst-launch from start_pipeline() into camera-relay-gst.log,
+    # while on-demand — the default — runs it under camera-relay-monitor and
+    # everything lands in camera-relay.log. Reading only the first one missed
+    # libcamera's EGL banner, and the debayer failure, in the common mode.
+    local pipe_logs=() lf_egl
+    for lf_egl in "$gst_log" "$rt/camera-relay.log"; do
+        [[ -s "$lf_egl" ]] && pipe_logs+=("$lf_egl")
+    done
+    if (( ${#pipe_logs[@]} == 0 )); then
+        echo "  pipeline EGL: no relay log yet — start the relay and retry"
+    else
+        local egl_lines bench_line
+        egl_lines=$(grep -haoE '(EGL_VENDOR|EGL_VERSION|GL_VERSION|GL_RENDERER):.*' \
+            "${pipe_logs[@]}" 2>/dev/null | tail -4) || egl_lines=""
+        if [[ -n "$egl_lines" ]]; then
+            echo "  pipeline EGL (from ${pipe_logs[*]}):"
+            printf '%s\n' "$egl_lines" | sed 's/^/    /'
+        else
+            echo "  pipeline EGL: not reported in ${pipe_logs[*]}"
+            echo "    (CPU debayer, or the pipeline never got that far)"
+        fi
+        # Proof that frames are really going through the debayer, not just that
+        # it initialised — libcamera prints this once it has processed a batch.
+        bench_line=$(grep -ha 'Debayer processed' "${pipe_logs[@]}" 2>/dev/null | tail -1) || bench_line=""
+        [[ -n "$bench_line" ]] && echo "  debayer throughput: ${bench_line#*INFO }"
+        if grep -haq 'debayerGPU failed\|glFrameBufferTexture2D error' "${pipe_logs[@]}" 2>/dev/null; then
+            gpu_debayer_failed=true
+            echo "  → GPU DEBAYER FAILED — this is why no picture reaches the loopback:"
+            { grep -ha 'debayerGPU failed\|glFrameBufferTexture2D error' "${pipe_logs[@]}" 2>/dev/null \
+                | tail -3 | sed 's/^/    /'; } || true
+            echo "    The sensor still powers on (privacy LED lit) and the relay still"
+            echo "    reports STREAMING, but every frame is dropped in Bayer→RGB."
+            if [[ -n "$want_pin" ]]; then
+                echo "    Fix: pin EGL to the iGPU — $want_pin"
+            else
+                echo "    Fix: LIBCAMERA_SOFTISP_MODE=cpu in the service unit (slower, always works)"
+            fi
+        fi
+    fi
+
     echo
     echo "── v4l2loopback ──"
     # The module's reference count is the cheapest proof that something really
@@ -997,9 +1095,22 @@ cmd_doctor() {
             --stream-to=- 2>/dev/null | tail -c 262144 > "$frame" || true
         local size=0
         [[ -f "$frame" ]] && size=$(stat -c %s "$frame" 2>/dev/null || echo 0)
+        # A black picture with the relay "up" is the signature of the hybrid-GPU
+        # debayer failure, so say so here instead of leaving it to the reader to
+        # connect this section with the EGL one.
+        gpu_note() {
+            if $gpu_debayer_failed; then
+                echo "  → CAUSE: the GPU debayer failed (see 'GPU / EGL debayer' above)."
+                echo "    Nothing is wrong with the sensor or the loopback."
+            elif $hybrid_unpinned; then
+                echo "  → LIKELY CAUSE: hybrid GPU with no EGL vendor pin (see above)."
+                echo "    Re-run 'camera-relay enable-persistent' and check again."
+            fi
+        }
         if (( size == 0 )); then
             echo "  NO FRAMES — the device exists but nothing is writing to it."
             echo "  → the relay is not feeding the loopback. Check the logs below."
+            gpu_note
         else
             local distinct
             distinct=$(od -An -tu1 "$frame" 2>/dev/null | tr -s ' ' '\n' \
@@ -1008,12 +1119,14 @@ cmd_doctor() {
                 echo "  BLANK FRAMES — $size bytes captured, only $distinct distinct byte values."
                 echo "  → apps can open the device but the picture is uniform (black)."
                 echo "    The relay is holding the device open; the camera pipeline is not producing."
+                gpu_note
             else
                 echo "  REAL PICTURE — $size bytes captured, $distinct distinct byte values."
                 echo "  → the relay side is working end to end. If a browser still shows no"
                 echo "    camera, the problem is browser-side (see below), not the relay."
             fi
         fi
+        unset -f gpu_note
         rm -f "$frame"
     fi
 
