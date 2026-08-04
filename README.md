@@ -175,7 +175,7 @@ The Galaxy Book4/5 laptops have built-in dual array digital microphones (DMIC). 
 
 - **Samsung Galaxy Book4 Ultra** — Ubuntu 24.04 LTS, kernel 6.17.0-14-generic (HWE)
 - **Samsung Galaxy Book4 Ultra** — Fedora 43, kernel 6.18.9 (community-confirmed)
-- **Samsung Galaxy Book4 Ultra (NP960XGL)** — Kubuntu 26.04, kernel 7.0.0-28-generic, speaker + webcam fix and camera relay confirmed under **Secure Boot** (all DKMS modules MOK-signed). Meteor Lake IPU6, but still needed the [26 MHz clock fix](ov02c10-26mhz-fix/). The internal mic worked without the [mic fix](mic-fix/) — kernel 7.0 already selects the SOF driver and exposes the DMIC
+- **Samsung Galaxy Book4 Ultra (NP960XGL-XG1BR)** — Kubuntu 26.04, kernel 7.0.0-28-generic, speaker + webcam fix and camera relay confirmed under **Secure Boot** (all DKMS modules MOK-signed). Meteor Lake IPU6, but this board still needed the [26 MHz clock fix](ov02c10-26mhz-fix/) — note the SKU: another 960XGL on the same platform does not. The internal mic worked without the [mic fix](mic-fix/) — kernel 7.0 already selects the SOF driver and exposes the DMIC
 - **Samsung Galaxy Book4 Pro** — Ubuntu 25.10, kernel 6.18.7, speaker fix confirmed (community-confirmed)
 - **Samsung Galaxy Book5 Pro** — Speaker fix confirmed working, mic continues to work (community-confirmed)
 - **Samsung Galaxy Book5 Pro (940XHA)** — Fedora 43, webcam fix confirmed (correct colors + orientation with bayer fix)

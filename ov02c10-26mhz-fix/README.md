@@ -20,12 +20,20 @@ The 26 MHz clock is a **per-board property, not a platform property** — it sho
 up on both Raptor Lake and Meteor Lake IPU6. Confirmed affected models:
 
 - Galaxy Book4 Pro **940XGK** — Raptor Lake, subsystem ID `0x144dca07`
-- Galaxy Book4 Ultra **NP960XGL** — Meteor Lake IPU6 `8086:7d19`
+- Galaxy Book4 Ultra **NP960XGL-XG1BR** — Meteor Lake IPU6 `8086:7d19`
 - Book3/Book4 Ultra Raptor Lake variants
 
-So don't decide by platform: check `dmesg` for the error above. That is exactly
-what `webcam-fix-libcamera/install.sh` does — it greps for the clock rejection
-and offers this fix, regardless of which IPU6 generation the board uses.
+**It is not even model-determined.** Note the full SKU on the Book4 Ultra entry
+above — a different **960XGL** board (Meteor Lake IPU6 `8086:7d19`, same model
+designation) runs the stock in-tree `ov02c10` with no clock error at all, and
+does **not** need this fix. Two boards of the same model on the same platform
+can disagree, so treat the list above as "these were seen affected", never as
+"this model is affected".
+
+So don't decide by platform, and don't decide by model: check `dmesg` for the
+error above. That is exactly what `webcam-fix-libcamera/install.sh` does — it
+greps for the clock rejection and offers this fix, regardless of which IPU6
+generation or model the board is.
 
 ## Requirements
 

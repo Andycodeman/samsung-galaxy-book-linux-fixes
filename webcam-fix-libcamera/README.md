@@ -271,7 +271,7 @@ grep -i vsc /lib/modules/$(uname -r)/modules.builtin
 
 ### "external clock 26000000 is not supported" in dmesg
 
-Some Galaxy Book3/Book4 models have a 26 MHz external clock instead of the expected 19.2 MHz. This is a **per-board property, not a platform one** — it is confirmed on both Raptor Lake and Meteor Lake IPU6, including the Book4 Ultra `NP960XGL` (Meteor Lake, `8086:7d19`). Don't rule it out because your machine is Meteor Lake; go by the dmesg error. The installer detects it automatically and offers to install the [DKMS-patched ov02c10 driver](../ov02c10-26mhz-fix/). If you skipped the prompt during install, run the fix manually:
+Some Galaxy Book3/Book4 models have a 26 MHz external clock instead of the expected 19.2 MHz. This is a **per-board property, not a platform one** — it is confirmed on both Raptor Lake and Meteor Lake IPU6, including the Book4 Ultra `NP960XGL-XG1BR` (Meteor Lake, `8086:7d19`). It is not model-determined either: a different `960XGL` board, same model and same Meteor Lake IPU6, runs the stock driver with no clock error and does not need the fix. Don't rule it in or out from your platform or your model number; go by the dmesg error. The installer detects it automatically and offers to install the [DKMS-patched ov02c10 driver](../ov02c10-26mhz-fix/). If you skipped the prompt during install, run the fix manually:
 
 ```bash
 cd ov02c10-26mhz-fix && sudo ./install.sh
