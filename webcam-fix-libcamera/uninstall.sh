@@ -15,6 +15,25 @@ if [[ $EUID -eq 0 ]]; then
     exit 1
 fi
 
+# Hand the raw camera nodes back before anything else, mirroring the order
+# install.sh builds them up in. While 74-camera-relay-mc-nodes.rules is live the
+# nodes belong to the memberless camera-relay group and only the setgid launcher
+# can open them — so removing the launcher first opens exactly the dead-camera
+# window the installer was reordered to avoid, and `set -e` above would make it
+# permanent. This script is what someone reaches for to recover from a broken
+# state, so it is the worst possible place to leave that window.
+#
+# Reverting ownership first means a failure anywhere below lands on "the
+# spurious nodes are back and the camera works".
+echo "[0/8] Restoring raw camera node ownership..."
+sudo rm -f /etc/udev/rules.d/74-camera-relay-mc-nodes.rules
+# Earlier names for the same rule, from revisions that relied on TAG-= alone.
+sudo rm -f /etc/udev/rules.d/72-camera-relay-mc-nodes.rules \
+           /etc/udev/rules.d/90-camera-relay-mc-nodes.rules
+sudo udevadm control --reload-rules 2>/dev/null || true
+sudo udevadm trigger --action=change --subsystem-match=video4linux 2>/dev/null || true
+echo "  ✓ Raw nodes back to their default ownership"
+
 # [1/8] Stop and remove camera relay
 echo "[1/8] Removing camera relay..."
 # Disable persistent mode (stops user service, removes unit file)
@@ -28,6 +47,8 @@ pkill -f "camera-relay start" 2>/dev/null || true
 # Remove binaries and config
 sudo rm -f /usr/local/bin/camera-relay
 sudo rm -f /usr/local/bin/camera-relay-monitor
+sudo rm -f /usr/local/bin/camera-relay-gst
+sudo rm -rf /var/cache/camera-relay
 sudo rm -f /etc/modprobe.d/99-camera-relay-loopback.conf
 sudo rm -f /etc/modules-load.d/v4l2loopback.conf
 # Restore the Intel OEM v4l2-relayd stack if install.sh neutralized it (issue #54)
@@ -115,9 +136,17 @@ fi
 
 # [4/8] Remove udev rules
 echo "[4/8] Removing udev rules..."
+# The MC-node rule is already gone — step 0 removes it before the launcher, so
+# the nodes are never group-owned without something able to open them.
 sudo rm -f /etc/udev/rules.d/90-hide-ipu6-v4l2.rules
 sudo rm -f /etc/udev/rules.d/70-camera-relay-capabilities.rules
+sudo rm -f /usr/local/lib/udev/camera-relay-v4l2-io-mc
+sudo rm -f /usr/local/lib/sysusers.d/camera-relay.conf
 sudo udevadm control --reload-rules 2>/dev/null || true
+sudo udevadm trigger --action=change --subsystem-match=video4linux 2>/dev/null || true
+if getent group camera-relay >/dev/null 2>&1; then
+    sudo groupdel camera-relay 2>/dev/null || true
+fi
 echo "  ✓ Udev rules removed"
 
 # [5/8] Remove WirePlumber rules

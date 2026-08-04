@@ -1329,7 +1329,11 @@ if [[ -n "$LOCAL_IPA_DIR" ]]; then
     export LIBCAMERA_IPA_MODULE_PATH="$LOCAL_IPA_DIR"
 fi
 
-# Ensure user is in video group (needed for non-root camera access)
+# Ensure user is in video group. This is no longer what grants access to the
+# raw camera nodes — those move to the memberless 'camera-relay' group in step
+# 12, and both the loopback and /dev/media0 carry their own uaccess ACL. Kept
+# because the group still covers other video devices and setups where uaccess
+# does not apply (no logind seat).
 CURRENT_USER="${SUDO_USER:-$USER}"
 if ! groups "$CURRENT_USER" 2>/dev/null | grep -q '\bvideo\b'; then
     sudo usermod -aG video "$CURRENT_USER"
@@ -1463,17 +1467,143 @@ fi
 echo ""
 echo "[12/14] Hiding raw IPU6 nodes from applications..."
 
-# Remove session-level ACL from raw V4L2 nodes (keeps file permissions intact
-# so libcamera can still access them via the video group)
-sudo tee /etc/udev/rules.d/90-hide-ipu6-v4l2.rules > /dev/null << 'EOF'
-# Remove uaccess tag from raw Intel IPU6 ISYS V4L2 nodes.
-# libcamera accesses these via /dev/media0 and the video device nodes.
-# TAG-="uaccess" removes session-level permissions added by systemd.
-SUBSYSTEM=="video4linux", KERNEL=="video*", ATTR{name}=="Intel IPU6 ISYS Capture*", TAG-="uaccess"
-SUBSYSTEM=="video4linux", KERNEL=="video*", ATTR{name}=="Intel IPU6 CSI2*", TAG-="uaccess"
+# The ISYS driver registers one capture node per possible stream — 48 on a
+# Book4 — and the kernel flags each one V4L2_CAP_IO_MC: usable only once
+# userspace has configured the media graph, never as a standalone camera.
+# Nothing carries that bit into udev (systemd's v4l_id derives
+# ID_V4L_CAPABILITIES from V4L2_CAP_VIDEO_CAPTURE alone and never looks at
+# IO_MC), so all 48 advertise themselves as cameras.
+#
+# Applications split into two groups needing different answers:
+#   - Chromium and friends enumerate through udev, so clearing the capability
+#     properties is enough to drop them from those pickers.
+#   - Firefox/libwebrtc walks /dev/video0..63 calling QUERYCAP, ignores udev
+#     entirely, and only skips a node whose open() fails. Permissions are the
+#     only lever that works there.
+#
+# Hence the dedicated group: the nodes move out of 'video' (which the desktop
+# user is in, so it granted access no matter what happened to the uaccess tag)
+# into a group with no members. The relay's pipeline gets it from the setgid
+# launcher instead — see camera-relay-gst.c.
+CAMERA_RELAY_SRC="$SCRIPT_DIR/../camera-relay"
+
+sudo mkdir -p /usr/local/lib/sysusers.d
+sudo tee /usr/local/lib/sysusers.d/camera-relay.conf > /dev/null << 'EOF'
+# Owns the raw MC-centric camera nodes. Deliberately memberless: the relay
+# pipeline acquires it through the setgid launcher, nothing else should hold it.
+g camera-relay -
 EOF
-sudo udevadm control --reload-rules
-sudo udevadm trigger --action=change --subsystem-match=video4linux
+command -v systemd-sysusers >/dev/null 2>&1 && sudo systemd-sysusers >/dev/null 2>&1 || true
+if ! getent group camera-relay >/dev/null 2>&1; then
+    sudo groupadd -r camera-relay
+fi
+echo "  ✓ Group 'camera-relay' present (no members by design)"
+
+# Writable state for the pipeline's own caches. The GStreamer registry maps
+# elements to .so paths that get dlopen()ed, so it must not live anywhere the
+# user can write — that would hand the group back through a poisoned cache.
+sudo install -d -m 2770 -o root -g camera-relay /var/cache/camera-relay
+
+MC_HELPER=/usr/local/lib/udev/camera-relay-v4l2-io-mc
+
+# Ordering here is a safety property, not tidiness. The moment the rule below
+# takes effect the raw nodes belong to 'camera-relay', and the only thing that
+# can still open them is the setgid launcher — so the launcher has to exist
+# first. Build both helpers up front and install the rule only if both are in
+# place; if either fails, the nodes keep their old ownership and the camera
+# keeps working with the spurious entries still listed. A degraded camera list
+# beats a camera nothing can open.
+MC_HELPER_OK=""
+LAUNCHER_OK=""
+if gcc -O2 -Wall -o /tmp/camera-relay-v4l2-io-mc "$CAMERA_RELAY_SRC/v4l2-io-mc.c" 2>/dev/null; then
+    sudo install -d -m 755 /usr/local/lib/udev
+    sudo install -m 755 /tmp/camera-relay-v4l2-io-mc "$MC_HELPER"
+    rm -f /tmp/camera-relay-v4l2-io-mc
+    MC_HELPER_OK=1
+fi
+
+if [[ -f "$CAMERA_RELAY_SRC/camera-relay-gst.c" ]] \
+   && gcc -O2 -Wall -o /tmp/camera-relay-gst "$CAMERA_RELAY_SRC/camera-relay-gst.c" 2>/dev/null; then
+    sudo install -o root -g camera-relay -m 755 \
+        /tmp/camera-relay-gst /usr/local/bin/camera-relay-gst
+    # After the group change: chgrp clears S_ISGID, so `install -m 2755 -g ...`
+    # silently lands as plain 0755 and the launcher cannot reach the nodes.
+    sudo chmod 2755 /usr/local/bin/camera-relay-gst
+    rm -f /tmp/camera-relay-gst
+    LAUNCHER_OK=1
+    echo "  ✓ Installed /usr/local/bin/camera-relay-gst (setgid camera-relay)"
+else
+    echo "  ⚠ Failed to build the pipeline launcher (gcc required)."
+fi
+
+if [[ -n "$MC_HELPER_OK" && -n "$LAUNCHER_OK" ]]; then
+    sudo tee /etc/udev/rules.d/74-camera-relay-mc-nodes.rules > /dev/null << 'EOF'
+# Raw MC-centric V4L2 nodes are not standalone cameras. Keyed off the kernel's
+# own V4L2_CAP_IO_MC rather than a driver-specific card name, so this covers
+# IPU6, IPU7 and anything else media-controller based.
+#
+# The 74- prefix is load-bearing, pinned by three stock rule files:
+#   60-persistent-v4l.rules  runs v4l_id, which sets the properties cleared below
+#   73-seat-late.rules       queues RUN{builtin}+="uaccess", the session ACL
+#   95-cd-devices.rules      hands anything with ID_V4L_PRODUCT to colord
+#
+# Note what does NOT work, because it looks like it should: TAG-="uaccess" on
+# its own. 70-uaccess.rules tags every video4linux device unconditionally, and
+# the TAG== test in 73 matches the *sticky* tag list, which TAG-= does not
+# touch. So the ACL is granted no matter where this file sits, and the node
+# stays openable — which is what kept the nodes visible in app pickers even
+# with a rule that appeared to remove the tag. Stripping the ACL afterwards is
+# the reliable option: RUN entries execute in the order rules added them, so
+# the setfacl below lands after 73's builtin.
+#
+# TAG-= is still worth keeping. It clears the *current* tag list, which is what
+# logind re-enumerates when a session becomes active — without it the ACL comes
+# back on the next login.
+ACTION=="remove", GOTO="camera_relay_mc_end"
+SUBSYSTEM!="video4linux", GOTO="camera_relay_mc_end"
+
+# Only probe when the classification is not already known. udev runs as root,
+# so opening the node succeeds even after the group change below.
+KERNEL=="video*", ENV{ID_V4L_IO_MC}=="", \
+  IMPORT{program}="/usr/local/lib/udev/camera-relay-v4l2-io-mc $devnode"
+
+# Out of 'video' (the desktop user is in it), and no longer claiming to be a
+# camera. Clearing ID_V4L_PRODUCT is what stops colord: 95-cd-devices.rules
+# keys on the product name, not on the capabilities.
+ENV{ID_V4L_IO_MC}=="1", GROUP="camera-relay", MODE="0660", TAG-="uaccess", \
+  ENV{ID_V4L_CAPABILITIES}="", ENV{ID_V4L_PRODUCT}="", \
+  RUN+="/usr/bin/setfacl -b $devnode"
+
+LABEL="camera_relay_mc_end"
+EOF
+
+    # Superseded: matched card names instead of the capability, and only
+    # dropped the uaccess tag while the 'video' group kept granting access —
+    # so it never actually hid anything.
+    sudo rm -f /etc/udev/rules.d/90-hide-ipu6-v4l2.rules
+    # Earlier revisions of this fix; both relied on TAG-= alone, which cannot
+    # stop the uaccess ACL (see the header of the rule above).
+    sudo rm -f /etc/udev/rules.d/90-camera-relay-mc-nodes.rules \
+               /etc/udev/rules.d/72-camera-relay-mc-nodes.rules
+
+    # The rule strips the session ACL with setfacl; without it the raw nodes
+    # stay open to the desktop user and keep showing up in camera lists.
+    if [[ ! -x /usr/bin/setfacl ]]; then
+        echo "  ⚠ /usr/bin/setfacl missing — install the 'acl' package, otherwise"
+        echo "    the raw nodes keep their session ACL and stay visible in apps."
+    fi
+
+    sudo udevadm control --reload-rules
+    # The rule's own RUN strips the ACL, so this trigger fixes the running
+    # session too — no reboot needed.
+    sudo udevadm trigger --action=change --subsystem-match=video4linux
+    echo "  ✓ Raw MC-centric nodes reassigned to the camera-relay group"
+else
+    # Deliberately leave the nodes alone. Reassigning them without a launcher
+    # to reach them would take the camera out entirely.
+    echo "  ⚠ Skipping the MC-node rule — the helpers did not build (gcc required)."
+    echo "    Raw nodes stay visible in app camera lists; the camera still works."
+fi
 
 # WirePlumber rule to hide raw IPU6 V4L2 nodes from PipeWire
 # This prevents ~48 unusable "ipu6 (V4L2)" entries in app camera lists.
@@ -1777,6 +1907,10 @@ EOF
         fi
     fi
 
+    # The setgid launcher is built in step 12, before the udev rule hands the
+    # raw nodes to the camera-relay group — it has to exist before anything
+    # depends on it. Nothing to do here.
+
     # Install CLI tool
     sudo cp "$RELAY_DIR/camera-relay" /usr/local/bin/camera-relay
     sudo chmod 755 /usr/local/bin/camera-relay
@@ -1938,7 +2072,10 @@ echo ""
 echo "  Configuration files created:"
 echo "    /etc/modules-load.d/ivsc.conf"
 echo "    /etc/modprobe.d/ivsc-camera.conf"
-echo "    /etc/udev/rules.d/90-hide-ipu6-v4l2.rules"
+echo "    /etc/udev/rules.d/74-camera-relay-mc-nodes.rules"
+[[ -f /usr/local/lib/udev/camera-relay-v4l2-io-mc ]] && \
+    echo "    /usr/local/lib/udev/camera-relay-v4l2-io-mc"
+echo "    /usr/local/lib/sysusers.d/camera-relay.conf"
 [[ -f /etc/initramfs-tools/modules ]] && echo "    /etc/initramfs-tools/modules (updated)"
 [[ -f /etc/dracut.conf.d/ivsc-camera.conf ]] && echo "    /etc/dracut.conf.d/ivsc-camera.conf"
 [[ -f /etc/mkinitcpio.conf.d/ivsc-camera.conf ]] && echo "    /etc/mkinitcpio.conf.d/ivsc-camera.conf"
@@ -1957,6 +2094,8 @@ echo "    /usr/local/share/libcamera/ipa/simple/ov02c10.yaml"
 if [[ -f /usr/local/bin/camera-relay ]]; then
     echo "    /usr/local/bin/camera-relay"
     echo "    /usr/local/bin/camera-relay-monitor"
+    [[ -f /usr/local/bin/camera-relay-gst ]] && \
+        echo "    /usr/local/bin/camera-relay-gst"
     echo "    /etc/modprobe.d/99-camera-relay-loopback.conf"
 fi
 echo ""
