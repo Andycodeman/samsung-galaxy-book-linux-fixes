@@ -1374,6 +1374,7 @@ fi
 # below: __EGL_VENDOR_LIBRARY_FILENAMES steers *every* GL client on the system,
 # so setting it globally would take NVIDIA offload away from games and everything
 # else. It belongs on the camera units only.
+# Keep this block in sync with webcam-fix-book5/install.sh.
 HYBRID_EGL_VENDOR=""
 HYBRID_GPU=false
 _nv_node=false
