@@ -139,6 +139,17 @@ static int count_other_openers(dev_t dev_id, pid_t our_pid,
 	return count;
 }
 
+/* Render a FOURCC for humans: 'YUYV', 'MJPG', ... */
+static const char *fourcc(char buf[5], __u32 pixelformat)
+{
+	buf[0] = (char)(pixelformat & 0xff);
+	buf[1] = (char)((pixelformat >> 8) & 0xff);
+	buf[2] = (char)((pixelformat >> 16) & 0xff);
+	buf[3] = (char)((pixelformat >> 24) & 0xff);
+	buf[4] = '\0';
+	return buf;
+}
+
 /* Open device for writing, set format, write initial black frame.
  * Returns fd on success, -1 on failure. */
 static int open_writer(const char *device, int width, int height,
@@ -160,9 +171,47 @@ static int open_writer(const char *device, int width, int height,
 	fmt.fmt.pix.sizeimage = frame_size;
 	fmt.fmt.pix.field = V4L2_FIELD_NONE;
 
-	if (xioctl(fd, VIDIOC_S_FMT, &fmt) < 0)
-		fprintf(stderr, "[monitor] S_FMT warning: %s\n",
-			strerror(errno));
+	/*
+	 * Every frame this process writes is a fixed-size YUYV buffer. If the
+	 * device is on any other format or geometry, those writes are garbage
+	 * to every reader — silently, because the device stays open and the
+	 * relay still reports "streaming".
+	 *
+	 * The loopback only advertises the writer's format while a writer holds
+	 * it; with no writer it offers everything it can carry, and a reader is
+	 * free to select one. So arriving here and finding a foreign format is
+	 * a real possibility, not a theoretical one.
+	 */
+	if (xioctl(fd, VIDIOC_S_FMT, &fmt) < 0) {
+		fprintf(stderr,
+			"[monitor] Cannot set %s to %dx%d YUYV: %s\n",
+			device, width, height, strerror(errno));
+		close(fd);
+		return -1;
+	}
+
+	/* S_FMT is allowed to adjust what it was given and report the result in
+	 * the same struct, so a successful ioctl is not confirmation. */
+	if (fmt.fmt.pix.pixelformat != V4L2_PIX_FMT_YUYV ||
+	    fmt.fmt.pix.width != (__u32)width ||
+	    fmt.fmt.pix.height != (__u32)height) {
+		char got[5];
+
+		fprintf(stderr,
+			"[monitor] %s stayed on %ux%u %s after asking for "
+			"%dx%d YUYV.\n"
+			"[monitor] Fixed-size YUYV frames written to it would "
+			"be garbage to every\n"
+			"[monitor] reader, so the relay stops here rather than "
+			"stream silently. If an\n"
+			"[monitor] application is holding the device with its "
+			"own format, closing it\n"
+			"[monitor] lets the relay recover on the next start.\n",
+			device, fmt.fmt.pix.width, fmt.fmt.pix.height,
+			fourcc(got, fmt.fmt.pix.pixelformat), width, height);
+		close(fd);
+		return -1;
+	}
 
 	if (write(fd, black_frame, frame_size) != frame_size)
 		fprintf(stderr, "[monitor] Initial write warning: %s\n",
