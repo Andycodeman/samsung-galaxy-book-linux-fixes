@@ -1,7 +1,7 @@
 # OV02C10 26 MHz Clock Fix (DKMS)
 
-**Test fix** for Samsung Galaxy Book 3/4 models with **Raptor Lake IPU6** where the
-OV02C10 camera sensor fails to probe with:
+**Test fix** for Samsung Galaxy Book 3/4 models where the OV02C10 camera sensor
+fails to probe with:
 
 ```
 ov02c10 i2c-OVTI02C1:00: error -EINVAL: external clock 26000000 is not supported
@@ -10,20 +10,29 @@ ov02c10 i2c-OVTI02C1:00: error -EINVAL: external clock 26000000 is not supported
 ## What this fixes
 
 The upstream kernel's `ov02c10` driver only accepts a 19.2 MHz external clock.
-Raptor Lake IPU6 provides 26 MHz instead. This DKMS module patches the driver to
+Some IPU6 boards provide 26 MHz instead. This DKMS module patches the driver to
 accept both frequencies.
 
 Based on the patch from:
 https://lore.kernel.org/linux-media/CAKP_te-WT+HTEyhSvQ3snEOaTp5B1OUL18JjuzO238=_fTOuXQ@mail.gmail.com/
 
-Confirmed affected models include the Galaxy Book4 Pro **940XGK** (subsystem
-ID `0x144dca07`), in addition to the Book3/Book4 Ultra Raptor Lake variants.
+The 26 MHz clock is a **per-board property, not a platform property** — it shows
+up on both Raptor Lake and Meteor Lake IPU6. Confirmed affected models:
+
+- Galaxy Book4 Pro **940XGK** — Raptor Lake, subsystem ID `0x144dca07`
+- Galaxy Book4 Ultra **NP960XGL** — Meteor Lake IPU6 `8086:7d19`
+- Book3/Book4 Ultra Raptor Lake variants
+
+So don't decide by platform: check `dmesg` for the error above. That is exactly
+what `webcam-fix-libcamera/install.sh` does — it greps for the clock rejection
+and offers this fix, regardless of which IPU6 generation the board uses.
 
 ## Requirements
 
-- Linux kernel with in-tree `ov02c10` driver (kernel 6.8+, tested up to 6.17)
+- Linux kernel with in-tree `ov02c10` driver (kernel 6.8+, tested up to 7.0)
 - `dkms` and kernel headers (the install script will try to install these)
-- Samsung Galaxy Book with Raptor Lake IPU6 + OV02C10 sensor
+- Samsung Galaxy Book with IPU6 + OV02C10 sensor rejecting the 26 MHz clock
+  (Raptor Lake or Meteor Lake — confirm in `dmesg`, see above)
 
 ## Secure Boot
 
