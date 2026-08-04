@@ -126,7 +126,7 @@ The internal DMIC requires SOF (Sound Open Firmware) with a recent enough firmwa
 
 ### [Webcam Fix — Book3 / Book4](webcam-fix-libcamera/) — IPU6 + libcamera (Recommended)
 
-The built-in webcam uses Intel IPU6 (Meteor Lake or Raptor Lake) with an OmniVision OV02C10 sensor. This fix uses the open-source libcamera Simple pipeline handler with Software ISP, accessed through PipeWire. Includes IVSC module loading, initramfs configuration (eliminating the boot race condition), sensor tuning, WirePlumber rules to hide raw IPU6 nodes, and an on-demand camera relay for non-PipeWire apps (Zoom, OBS, VLC). The installer also auto-detects the [26 MHz clock issue](ov02c10-26mhz-fix/) affecting some Raptor Lake models and offers to install the DKMS fix.
+The built-in webcam uses Intel IPU6 (Meteor Lake or Raptor Lake) with an OmniVision OV02C10 sensor. This fix uses the open-source libcamera Simple pipeline handler with Software ISP, accessed through PipeWire. Includes IVSC module loading, initramfs configuration (eliminating the boot race condition), sensor tuning, WirePlumber rules to hide raw IPU6 nodes, and an on-demand camera relay for non-PipeWire apps (Zoom, OBS, VLC). The installer also auto-detects the [26 MHz clock issue](ov02c10-26mhz-fix/) — which affects individual boards on both Raptor Lake and Meteor Lake, so it is detected from the dmesg error rather than from the platform — and offers to install the DKMS fix.
 
 - PipeWire-native apps (Firefox, Chromium) access the camera directly — no relay needed
 - Non-PipeWire apps use the on-demand V4L2 relay: near-zero CPU when idle, camera activates only when an app opens the device
@@ -175,6 +175,7 @@ The Galaxy Book4/5 laptops have built-in dual array digital microphones (DMIC). 
 
 - **Samsung Galaxy Book4 Ultra** — Ubuntu 24.04 LTS, kernel 6.17.0-14-generic (HWE)
 - **Samsung Galaxy Book4 Ultra** — Fedora 43, kernel 6.18.9 (community-confirmed)
+- **Samsung Galaxy Book4 Ultra (NP960XGL)** — Kubuntu 26.04, kernel 7.0.0-28-generic, speaker + webcam fix and camera relay confirmed under **Secure Boot** (all DKMS modules MOK-signed). Meteor Lake IPU6, but still needed the [26 MHz clock fix](ov02c10-26mhz-fix/). The internal mic worked without the [mic fix](mic-fix/) — kernel 7.0 already selects the SOF driver and exposes the DMIC
 - **Samsung Galaxy Book4 Pro** — Ubuntu 25.10, kernel 6.18.7, speaker fix confirmed (community-confirmed)
 - **Samsung Galaxy Book5 Pro** — Speaker fix confirmed working, mic continues to work (community-confirmed)
 - **Samsung Galaxy Book5 Pro (940XHA)** — Fedora 43, webcam fix confirmed (correct colors + orientation with bayer fix)
