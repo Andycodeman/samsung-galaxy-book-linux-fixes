@@ -43,7 +43,7 @@ This is **not** a kernel module. It does not patch `snd-hda-codec-realtek`.
 It is a userspace fix:
 
 - One bash script that talks to the codec via `hda-verb` (from `alsa-tools`)
-- One systemd unit that runs the script at boot
+- One systemd unit, activated by udev when the sound card registers (not enabled at boot)
 - One `system-sleep` hook that re-runs it after resume from suspend
 
 That keeps the fix entirely outside the kernel module hierarchy: it survives
@@ -74,7 +74,7 @@ The installer will:
 1. Verify the DMI product is `940XFG` and a codec with SSID `0x144dc882` is present.
 2. Install `alsa-tools` if `hda-verb` is missing.
 3. Copy `alc298-amp-init.sh` to `/usr/local/sbin/`.
-4. Install and enable `alc298-amp-init.service` (runs at every boot).
+4. Install `alc298-amp-init.service` and the udev rule that starts it as soon as the sound card registers (`controlC*` node appears) — not enabled at boot.
 5. Install `/lib/systemd/system-sleep/alc298-amp-init` (re-runs after suspend/resume).
 6. Fire the script once so speakers work immediately, no reboot required.
 

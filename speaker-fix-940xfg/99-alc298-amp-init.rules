@@ -1,0 +1,11 @@
+# Samsung Galaxy Book3 Pro 14" (940XFG) — start the ALC298 amp init as soon as
+# the sound card is fully registered.
+#
+# Why controlC? and not hwC?D?: /dev/snd/hwC*D* is never tagged for systemd
+# (99-systemd.rules tags controlC* only), which is what made the .device
+# dependency in this PR unsatisfiable. controlC* is created by
+# snd_card_register(), i.e. after every codec's hwdep node has been built, so
+# it is a guaranteed-late trigger with no card-index assumption baked in.
+# alc298-amp-init.sh does the real vendor_id/subsystem_id matching and exits 0
+# when the codec isn't ours, so firing on a second sound card is harmless.
+ACTION=="add", SUBSYSTEM=="sound", KERNEL=="controlC?", TAG+="systemd", ENV{SYSTEMD_WANTS}+="alc298-amp-init.service"
