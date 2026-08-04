@@ -1131,6 +1131,30 @@ if ! verify_libcamerasrc; then
     exit 1
 fi
 
+# Whoever put a libcamera under /usr/local, the linker has to prefer it — the
+# source build above writes this file, but that branch is skipped when a good
+# enough libcamera is already installed. uninstall.sh removes the file
+# unconditionally, so an uninstall/reinstall cycle used to drop /usr/local out
+# of the search path and leave the *system* libcamera winning.
+#
+# Nothing breaks at that moment, because the ldconfig cache still holds the old
+# entries. It breaks at the next unrelated `ldconfig` — a package upgrade,
+# another installer — and then camera-relay-gst, which deliberately does not
+# propagate LD_LIBRARY_PATH, silently loads the unpatched build.
+if compgen -G "/usr/local/lib*/libcamera.so.*" > /dev/null \
+   || compgen -G "/usr/local/lib/*/libcamera.so.*" > /dev/null; then
+    if [[ ! -f /etc/ld.so.conf.d/libcamera-local.conf ]]; then
+        sudo tee /etc/ld.so.conf.d/libcamera-local.conf > /dev/null << 'EOF'
+/usr/local/lib
+/usr/local/lib64
+/usr/local/lib/x86_64-linux-gnu
+/usr/local/lib/aarch64-linux-gnu
+EOF
+        sudo ldconfig
+        echo "  ✓ Restored /usr/local to the dynamic linker search path"
+    fi
+fi
+
 # ──────────────────────────────────────────────
 # [10/14] Install PipeWire libcamera plugin
 # ──────────────────────────────────────────────
