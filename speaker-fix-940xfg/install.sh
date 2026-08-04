@@ -135,6 +135,18 @@ echo "Installing udev rule..."
 install -m 644 "${SCRIPT_DIR}/99-alc298-amp-init.rules" /etc/udev/rules.d/99-alc298-amp-init.rules
 
 systemctl daemon-reload
+
+# Upgrades from a release before udev activation: that unit carried
+# [Install] WantedBy=multi-user.target and was `systemctl enable`d, leaving a
+# symlink in /etc/systemd/system/multi-user.target.wants/. Dropping [Install]
+# from the unit does NOT remove that symlink — [Install] only tells
+# enable/disable what to do, while the symlink is what actually activates —
+# so it would still pull the unit into the boot transaction, where it runs
+# before the codec exists, no-ops, and RemainAfterExit=yes then leaves it
+# active so the udev trigger below does nothing. That is exactly the bug this
+# rule replaced, reintroduced on every upgrade. Clear it explicitly.
+systemctl disable alc298-amp-init.service 2>/dev/null || true
+
 udevadm control --reload-rules
 
 # ---------------------------------------------------------------------------
