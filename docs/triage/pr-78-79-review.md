@@ -141,3 +141,79 @@ environment wholesale rather than filtering it, `require_prefix` rejects `..` so
 the prefix check isn't defeated by traversal, and the `setresgid` rationale for
 avoiding `AT_SECURE` is sound. The narrower prefix list for `--egl-vendor` than
 for plugin paths is the right call.
+
+---
+
+## Round 2 — 2026-08-04
+
+### #79 — MERGED as `a6372a8`
+
+Both review findings fixed, and @4nrry found **two more that neither the review
+nor the first fix caught** — both only surfaced by installing the binary and
+running it.
+
+1. **The review's own suggested fix was wrong.** `set -e` inside the process
+   substitution aborts the subshell *before* `echo "__monitor_exit:$?"` runs, so
+   the sentinel never reaches the loop. Note the trap in verifying this: with a
+   **builtin** (`false`) the sentinel still appears and the claim looks false;
+   it only reproduces with an **external** command, which is the real case.
+
+   ```
+   plain sentinel, external failing cmd → saw: READY          (no sentinel)
+   rc=0; cmd || rc=$?; echo             → saw: __monitor_exit:42
+   ```
+
+2. **Pre-existing, and would have defeated any correct sentinel.**
+   `pkill -P $$` exits 1 with no children left, and under `set -e` a command
+   failing inside an EXIT trap replaces the shell's exit status. Verified:
+   `1` without `|| true`, `42` with. Had been flattening every exit code in this
+   script since before the PR.
+
+Mutation-tested their suite rather than trusting the numbers — both are real
+guards:
+
+| mutation | result |
+|---|---|
+| revert to the naive sentinel | `✗ monitor exit status was swallowed` — 4/1, exit 1 |
+| drop `\|\| true` from the pkill | `✗ the EXIT trap rewrote the exit status to 1` — 4/1, exit 1 |
+
+Post-merge on `main`: `bash -n` clean, monitor compiles, exit-propagation 5/5,
+egl-vendor-pin 18/18.
+
+### #78 — still open, one new finding
+
+All four items verified on `8b7dc02`:
+
+- Overflow closed. Independent ASan sweep, 1–24 filters, **both** sink paths:
+  clean. `TAIL_SLOTS` with the derivation written out is better than the bare
+  constant the review suggested.
+- Suite now 29/29 sanitized, and mutation-confirmed: `TAIL_SLOTS` back to 8 →
+  `28 passed, 1 failed`, exit 1.
+- Header comment → `74-`; `--v4l2-sink` device number length-bounded.
+- Installer ordering fixed: helpers built at 1517–1534, rule written at 1540
+  only under `[[ -n "$MC_HELPER_OK" && -n "$LAUNCHER_OK" ]]`. They also found the
+  worse half the review missed — the build sat inside `[[ -d "$RELAY_DIR" ]]`, so
+  a tree without `camera-relay/` got the rule and *never* a launcher: permanent,
+  not a window.
+
+**New finding — `uninstall.sh` has the same bug, mirror-imaged:**
+
+```
+line  31:  rm -f /usr/local/bin/camera-relay-gst      ← launcher gone
+   …23 privileged commands, under set -e (line 6)…
+line 121:  rm -f …/74-camera-relay-mc-nodes.rules
+line 130:  udevadm trigger                            ← ownership only reverts here
+```
+
+~90 lines where the nodes still belong to `camera-relay` with nothing able to
+open them — the exact dead-camera state just eliminated from the installer, in
+the script someone runs to *recover* from a broken state. Fix: drop the rule and
+trigger udev before removing the launcher.
+
+Left to @4nrry rather than fixed here — three lines, but neither side has run
+that script and they have the hardware to exercise it (unlike #77, where the
+counter-evidence was ours to hold).
+
+Still-open caveats, stated rather than papered over: clean-install path untested
+(now safe-by-construction), `uninstall.sh` unrun, Book5/IPU7 out of scope. Plus
+`enable-persistent` not regenerating on reinstall — worth its own issue.
