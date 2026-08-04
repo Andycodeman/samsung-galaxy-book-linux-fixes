@@ -365,6 +365,89 @@ disables and masks `v4l2-relayd.service` and moves the OEM
 re-run `sudo bash install.sh` and reboot. The change is fully reversible:
 `uninstall.sh` restores the OEM file and re-enables the service.
 
+### LED on but black image, on laptops with a dedicated GPU
+
+**Symptom.** The webcam privacy LED lights up, `camera-relay status` reports
+`STREAMING`, and apps still get a black picture — Google Meet says *"Your camera
+may be blocked"*. Affects every hybrid-GPU laptop (Intel or AMD iGPU + NVIDIA
+dGPU), which includes all Galaxy Book4 Ultra and the RTX variants of the Book5
+Pro.
+
+**Cause.** libcamera's Software ISP converts Bayer→RGB on the GPU through EGL.
+Which GPU that is comes from GLVND, which loads the vendor ICDs in
+`/usr/share/glvnd/egl_vendor.d` in filename order — and NVIDIA's ships as
+`10_nvidia.json`, ahead of Mesa's `50_mesa.json`. The debayer therefore runs on
+NVIDIA's proprietary EGL driver, which it is not compatible with:
+
+```
+ERROR eGL egl.cpp:134 glFrameBufferTexture2D error 36054
+ERROR Debayer debayer_egl.cpp:639 debayerGPU failed
+```
+
+The sensor powers up — hence the LED — but every frame dies in the conversion
+and nothing ever reaches v4l2loopback.
+
+**Why it is so easy to misdiagnose.** Run `cam` from a terminal and it usually
+works: a desktop session normally has EGL already resolved to Mesa. The failure
+only appears inside the systemd user service, which inherits none of that.
+
+Confirm it directly:
+
+```bash
+__EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json cam -c 1 -C5
+```
+
+That should report a Mesa renderer and ~30 fps. Swapping `50_mesa.json` for
+`10_nvidia.json` hangs and dies at the timeout without a single frame.
+
+**Fix.** Handled automatically — `camera-relay enable-persistent` detects the
+hybrid setup and bakes the pin into `camera-relay.service`:
+
+```
+Environment=__EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json
+```
+
+If you are on an install from before this landed, re-run the installer, or just
+regenerate the unit:
+
+```bash
+camera-relay disable-persistent && camera-relay enable-persistent
+```
+
+`camera-relay doctor` now prints a **GPU / EGL debayer** section that lists the
+render nodes and their drivers, the vendor ICDs in GLVND's load order, the pin
+actually in effect, and any `debayerGPU failed` lines from the pipeline log.
+
+To apply it by hand instead — e.g. to a unit you maintain yourself — drop in:
+
+```bash
+mkdir -p ~/.config/systemd/user/camera-relay.service.d
+printf '[Service]\nEnvironment=__EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json\n' \
+  > ~/.config/systemd/user/camera-relay.service.d/10-force-intel-gpu.conf
+systemctl --user daemon-reload && systemctl --user restart camera-relay.service
+```
+
+Do **not** put `__EGL_VENDOR_LIBRARY_FILENAMES` in `/etc/environment.d`: unlike
+`LIBCAMERA_SOFTISP_MODE` it steers every GL client on the machine, so a global
+setting would take NVIDIA offload away from games and everything else.
+
+**Known gap.** The pin covers the camera-relay path. Apps that read the camera
+through **PipeWire's libcamera source** directly (Chromium with
+`#enable-webrtc-pipewire-camera`) run the debayer inside `pipewire.service`,
+which has no pin, so they can still hit this. Workaround — same drop-in, on
+PipeWire:
+
+```bash
+mkdir -p ~/.config/systemd/user/pipewire.service.d
+printf '[Service]\nEnvironment=__EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json\n' \
+  > ~/.config/systemd/user/pipewire.service.d/10-force-intel-gpu.conf
+systemctl --user daemon-reload && systemctl --user restart pipewire.service
+```
+
+The slower but unconditionally safe alternative for that path is CPU debayer
+(`LIBCAMERA_SOFTISP_MODE=cpu`), which the installer already sets globally when
+NVIDIA is the *active* renderer.
+
 ### Desaturated, green-tinted or purple image (colour tuning)
 
 The bundled `ov02c10.yaml` ships a conservative colour-correction matrix (CCM).

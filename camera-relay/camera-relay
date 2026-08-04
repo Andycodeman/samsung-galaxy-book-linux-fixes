@@ -351,6 +351,93 @@ find_libcamera_gst_plugin() {
     return 1
 }
 
+# ── Hybrid-GPU EGL vendor selection ──────────────────────────────────────────
+#
+# libcamera's Software ISP converts Bayer→RGB on the GPU through EGL
+# (debayer_egl.cpp). *Which* GPU that is comes from GLVND, which loads the
+# vendor ICDs in /usr/share/glvnd/egl_vendor.d in filename order — and NVIDIA's
+# ships as 10_nvidia.json, ahead of Mesa's 50_mesa.json. So on a hybrid laptop
+# (Intel or AMD iGPU + NVIDIA dGPU — every Galaxy Book4 Ultra, and the dGPU
+# Book5 Pro variants) the debayer runs on NVIDIA's proprietary EGL driver, which
+# it is not compatible with:
+#
+#   ERROR eGL egl.cpp:134 glFrameBufferTexture2D error 36054
+#   ERROR Debayer debayer_egl.cpp:639 debayerGPU failed
+#
+# The sensor still powers up — the privacy LED comes on, `status` says
+# STREAMING — but not one frame ever reaches v4l2loopback, so apps show a black
+# picture ("your camera may be blocked" in Google Meet).
+#
+# This hides well interactively: a desktop session usually has EGL already
+# resolved to Mesa, so `cam` from a terminal works and only the systemd service
+# breaks. Pinning __EGL_VENDOR_LIBRARY_FILENAMES makes the choice explicit in
+# both places. The alternative fix, LIBCAMERA_SOFTISP_MODE=cpu, also works but
+# costs a large chunk of the framerate (issue #66) — pin the iGPU instead.
+
+# Render nodes and the kernel driver behind each, as "renderD128 i915" lines.
+render_node_drivers() {
+    local node base link drv
+    for node in /dev/dri/renderD*; do
+        [[ -e "$node" ]] || continue
+        base=$(basename "$node")
+        drv="unknown"
+        if link=$(readlink -f "/sys/class/drm/$base/device/driver" 2>/dev/null) \
+           && [[ -n "$link" ]]; then
+            drv=$(basename "$link")
+        fi
+        echo "$base $drv"
+    done
+    return 0
+}
+
+# The GLVND vendor ICD that dispatches to Mesa, wherever the distro put it.
+# Deliberately not hardcoded to 50_mesa.json: the filename prefix is only a
+# load-order hint and distros renumber it.
+find_mesa_egl_vendor() {
+    local dir f
+    # GLVND reads /etc/glvnd/egl_vendor.d first, then /usr/share; within a
+    # directory, filename order. Match that so we name the file GLVND would use.
+    for dir in /etc/glvnd/egl_vendor.d /usr/share/glvnd/egl_vendor.d; do
+        [[ -d "$dir" ]] || continue
+        for f in "$dir"/*.json; do
+            [[ -f "$f" ]] || continue
+            if grep -q 'libEGL_mesa' "$f" 2>/dev/null; then
+                echo "$f"
+                return 0
+            fi
+        done
+    done
+    return 1
+}
+
+# Echo the EGL vendor ICD to pin for the debayer, or return 1 to leave GLVND
+# alone. Only a genuinely mixed NVIDIA-proprietary + Mesa setup gets a pin:
+# on a single-GPU box it is redundant, and on an NVIDIA-only box pointing at a
+# Mesa ICD that cannot drive the hardware would break a working camera.
+detect_egl_vendor_pin() {
+    local base drv have_nvidia=false mesa_driver="" count=0
+
+    while read -r base drv; do
+        [[ -n "$base" ]] || continue
+        count=$((count + 1))
+        case "$drv" in
+            nvidia|nvidia-drm)  have_nvidia=true ;;
+            unknown|"")         ;;
+            *)                  [[ -n "$mesa_driver" ]] || mesa_driver="$drv" ;;
+        esac
+    done < <(render_node_drivers)
+
+    $have_nvidia || return 1
+    [[ -n "$mesa_driver" ]] || return 1
+    (( count >= 2 )) || return 1
+
+    # Derive the target from the iGPU that is actually present rather than
+    # assuming Mesa: every non-NVIDIA render node we can meet here (i915, xe,
+    # amdgpu, radeon, nouveau) is driven by Mesa's EGL, so the file to pin is
+    # whichever ICD dispatches to libEGL_mesa.
+    find_mesa_egl_vendor
+}
+
 setup_environment() {
     require_gst_tools
 
@@ -445,6 +532,16 @@ $inspect_err}"
     local ipa_path
     if ipa_path=$(detect_ipa_path); then
         export LIBCAMERA_IPA_MODULE_PATH="$ipa_path"
+    fi
+
+    # Keep the GPU debayer off the NVIDIA EGL driver on hybrid laptops. An
+    # explicit setting from the caller always wins — if someone pinned a vendor
+    # by hand, that is the answer they want tested.
+    local egl_vendor
+    if [[ -z "${__EGL_VENDOR_LIBRARY_FILENAMES:-}" ]] \
+       && egl_vendor=$(detect_egl_vendor_pin); then
+        export __EGL_VENDOR_LIBRARY_FILENAMES="$egl_vendor"
+        info "Hybrid GPU detected — pinning EGL to $egl_vendor for the debayer"
     fi
 }
 
@@ -838,6 +935,147 @@ cmd_doctor() {
         fi
     fi
 
+    # The Software ISP debayers on the GPU via EGL, and on a hybrid laptop GLVND
+    # hands it the NVIDIA driver, which it cannot use. Everything else in this
+    # report stays green while that happens, which is exactly what made this so
+    # hard to place — so name the GPU explicitly.
+    echo
+    echo "── GPU / EGL debayer ──"
+    local gst_log="$rt/camera-relay-gst.log"
+    local gpu_debayer_failed=false hybrid_unpinned=false
+    local nodes_seen=0 saw_nvidia=false saw_mesa_drv=false
+    local rn_base rn_drv
+    while read -r rn_base rn_drv; do
+        [[ -n "$rn_base" ]] || continue
+        nodes_seen=$((nodes_seen + 1))
+        echo "  render node: /dev/dri/$rn_base (driver $rn_drv)"
+        case "$rn_drv" in
+            nvidia|nvidia-drm) saw_nvidia=true ;;
+            unknown) ;;
+            *) saw_mesa_drv=true ;;
+        esac
+    done < <(render_node_drivers)
+    (( nodes_seen == 0 )) && echo "  render node: NONE — no /dev/dri/renderD*, the GPU debayer cannot run at all"
+
+    local vd vf vlib
+    for vd in /etc/glvnd/egl_vendor.d /usr/share/glvnd/egl_vendor.d; do
+        [[ -d "$vd" ]] || continue
+        for vf in "$vd"/*.json; do
+            [[ -f "$vf" ]] || continue
+            # Assigned first, not inlined: `$(grep … | head -1 || echo '?')` binds
+            # the || to head, which exits 0 on empty input, so the fallback never
+            # fires and an ICD with no library_path renders as empty parens.
+            vlib=$(grep -oP '"library_path"\s*:\s*"\K[^"]+' "$vf" 2>/dev/null | head -1) || vlib=""
+            echo "  EGL vendor ICD: $vf (${vlib:-no library_path})"
+        done
+    done
+
+    # GLVND loads these in the order printed above, so an NVIDIA ICD sorting
+    # first is not a curiosity — it is the bug.
+    local want_pin="" unit_pin="" env_pin="${__EGL_VENDOR_LIBRARY_FILENAMES:-}"
+    want_pin=$(detect_egl_vendor_pin) || want_pin=""
+    if systemctl --user cat "$SERVICE_NAME" &>/dev/null; then
+        unit_pin=$(systemctl --user cat "$SERVICE_NAME" 2>/dev/null \
+            | grep -oP '^Environment=__EGL_VENDOR_LIBRARY_FILENAMES=\K.*' | tail -1) || unit_pin=""
+    fi
+    if $saw_nvidia && $saw_mesa_drv; then
+        echo "  topology: HYBRID (NVIDIA dGPU + Mesa-driven iGPU)"
+    elif $saw_nvidia; then
+        echo "  topology: NVIDIA only"
+    elif (( nodes_seen > 0 )); then
+        echo "  topology: single Mesa-driven GPU — no vendor pin needed"
+    fi
+    echo "  vendor pin (this shell):   ${env_pin:-none}"
+    echo "  vendor pin (service unit): ${unit_pin:-none}"
+
+    # The mode decides whether the pin matters at all: LIBCAMERA_SOFTISP_MODE=cpu
+    # skips EGL entirely. The installers write that to /etc/environment.d for the
+    # PipeWire path, systemd's user environment generator feeds it into the user
+    # manager, and this service inherits it — so a pin can be present and inert.
+    # Report all three layers, because only the effective one is the answer.
+    local unit_mode="" inherited_mode="" mode_file="" mf effective_mode
+    if systemctl --user cat "$SERVICE_NAME" &>/dev/null; then
+        unit_mode=$(systemctl --user cat "$SERVICE_NAME" 2>/dev/null \
+            | grep -oP '^Environment=LIBCAMERA_SOFTISP_MODE=\K.*' | tail -1) || unit_mode=""
+    fi
+    inherited_mode=$(systemctl --user show-environment 2>/dev/null \
+        | grep -oP '^LIBCAMERA_SOFTISP_MODE=\K.*' | tail -1) || inherited_mode=""
+    [[ -z "$inherited_mode" ]] && inherited_mode="${LIBCAMERA_SOFTISP_MODE:-}"
+    for mf in /etc/environment.d/*.conf "$HOME/.config/environment.d"/*.conf; do
+        [[ -f "$mf" ]] || continue
+        if grep -q '^LIBCAMERA_SOFTISP_MODE=' "$mf" 2>/dev/null; then
+            mode_file="$mf"
+            break
+        fi
+    done
+    if [[ -n "$unit_mode" ]]; then
+        effective_mode="$unit_mode (from the service unit)"
+    elif [[ -n "$inherited_mode" ]]; then
+        effective_mode="$inherited_mode (inherited${mode_file:+ from $mode_file})"
+    else
+        effective_mode="gpu (libcamera default, nothing set)"
+    fi
+    echo "  debayer mode (service unit): ${unit_mode:-none}"
+    echo "  debayer mode (inherited):    ${inherited_mode:-none}${mode_file:+  ($mode_file)}"
+    echo "  debayer mode (effective):    $effective_mode"
+    if [[ -n "$unit_pin" && -z "$unit_mode" && "$inherited_mode" == "cpu" ]]; then
+        echo "  → PIN IS INERT. CPU debayer touches no EGL at all, so the vendor pin"
+        echo "    above has no effect, and you are paying its framerate cost anyway."
+        echo "    The unit needs its own Environment=LIBCAMERA_SOFTISP_MODE=gpu to"
+        echo "    outrank the inherited value:"
+        echo "    camera-relay disable-persistent && camera-relay enable-persistent"
+    fi
+
+    if [[ -n "$want_pin" && -z "$unit_pin" ]]; then
+        hybrid_unpinned=true
+        echo "  → HYBRID GPU WITH NO PIN. GLVND loads the NVIDIA ICD first, so the"
+        echo "    Software ISP's EGL debayer runs on NVIDIA's driver and fails."
+        echo "    Fix: camera-relay disable-persistent && camera-relay enable-persistent"
+        echo "    (or drop in Environment=__EGL_VENDOR_LIBRARY_FILENAMES=$want_pin)"
+    fi
+
+    # What the pipeline actually got, rather than what it should have got.
+    # Both logs, because the pipeline lives in a different process per mode:
+    # always-on runs gst-launch from start_pipeline() into camera-relay-gst.log,
+    # while on-demand — the default — runs it under camera-relay-monitor and
+    # everything lands in camera-relay.log. Reading only the first one missed
+    # libcamera's EGL banner, and the debayer failure, in the common mode.
+    local pipe_logs=() lf_egl
+    for lf_egl in "$gst_log" "$rt/camera-relay.log"; do
+        [[ -s "$lf_egl" ]] && pipe_logs+=("$lf_egl")
+    done
+    if (( ${#pipe_logs[@]} == 0 )); then
+        echo "  pipeline EGL: no relay log yet — start the relay and retry"
+    else
+        local egl_lines bench_line
+        egl_lines=$(grep -haoE '(EGL_VENDOR|EGL_VERSION|GL_VERSION|GL_RENDERER):.*' \
+            "${pipe_logs[@]}" 2>/dev/null | tail -4) || egl_lines=""
+        if [[ -n "$egl_lines" ]]; then
+            echo "  pipeline EGL (from ${pipe_logs[*]}):"
+            printf '%s\n' "$egl_lines" | sed 's/^/    /'
+        else
+            echo "  pipeline EGL: not reported in ${pipe_logs[*]}"
+            echo "    (CPU debayer, or the pipeline never got that far)"
+        fi
+        # Proof that frames are really going through the debayer, not just that
+        # it initialised — libcamera prints this once it has processed a batch.
+        bench_line=$(grep -ha 'Debayer processed' "${pipe_logs[@]}" 2>/dev/null | tail -1) || bench_line=""
+        [[ -n "$bench_line" ]] && echo "  debayer throughput: ${bench_line#*INFO }"
+        if grep -haq 'debayerGPU failed\|glFrameBufferTexture2D error' "${pipe_logs[@]}" 2>/dev/null; then
+            gpu_debayer_failed=true
+            echo "  → GPU DEBAYER FAILED — this is why no picture reaches the loopback:"
+            { grep -ha 'debayerGPU failed\|glFrameBufferTexture2D error' "${pipe_logs[@]}" 2>/dev/null \
+                | tail -3 | sed 's/^/    /'; } || true
+            echo "    The sensor still powers on (privacy LED lit) and the relay still"
+            echo "    reports STREAMING, but every frame is dropped in Bayer→RGB."
+            if [[ -n "$want_pin" ]]; then
+                echo "    Fix: pin EGL to the iGPU — $want_pin"
+            else
+                echo "    Fix: LIBCAMERA_SOFTISP_MODE=cpu in the service unit (slower, always works)"
+            fi
+        fi
+    fi
+
     echo
     echo "── v4l2loopback ──"
     # The module's reference count is the cheapest proof that something really
@@ -900,9 +1138,22 @@ cmd_doctor() {
             --stream-to=- 2>/dev/null | tail -c 262144 > "$frame" || true
         local size=0
         [[ -f "$frame" ]] && size=$(stat -c %s "$frame" 2>/dev/null || echo 0)
+        # A black picture with the relay "up" is the signature of the hybrid-GPU
+        # debayer failure, so say so here instead of leaving it to the reader to
+        # connect this section with the EGL one.
+        gpu_note() {
+            if $gpu_debayer_failed; then
+                echo "  → CAUSE: the GPU debayer failed (see 'GPU / EGL debayer' above)."
+                echo "    Nothing is wrong with the sensor or the loopback."
+            elif $hybrid_unpinned; then
+                echo "  → LIKELY CAUSE: hybrid GPU with no EGL vendor pin (see above)."
+                echo "    Re-run 'camera-relay enable-persistent' and check again."
+            fi
+        }
         if (( size == 0 )); then
             echo "  NO FRAMES — the device exists but nothing is writing to it."
             echo "  → the relay is not feeding the loopback. Check the logs below."
+            gpu_note
         else
             local distinct
             distinct=$(od -An -tu1 "$frame" 2>/dev/null | tr -s ' ' '\n' \
@@ -911,12 +1162,14 @@ cmd_doctor() {
                 echo "  BLANK FRAMES — $size bytes captured, only $distinct distinct byte values."
                 echo "  → apps can open the device but the picture is uniform (black)."
                 echo "    The relay is holding the device open; the camera pipeline is not producing."
+                gpu_note
             else
                 echo "  REAL PICTURE — $size bytes captured, $distinct distinct byte values."
                 echo "  → the relay side is working end to end. If a browser still shows no"
                 echo "    camera, the problem is browser-side (see below), not the relay."
             fi
         fi
+        unset -f gpu_note
         rm -f "$frame"
     fi
 
@@ -1051,16 +1304,40 @@ cmd_enable_persistent() {
         unset -f gst_inspect_with_env
     fi
 
-    # Detect if NVIDIA is the active EGL renderer. libcamera 0.7.0's GPU debayer
-    # (debayer_egl.cpp) is incompatible with NVIDIA's proprietary EGL driver,
-    # causing black frames. Force CPU debayer on NVIDIA systems.
-    if command -v glxinfo &>/dev/null && glxinfo 2>/dev/null | grep -qi "opengl renderer.*nvidia"; then
+    # Keep libcamera's GPU debayer off NVIDIA's EGL driver, which it cannot use
+    # (debayer_egl.cpp → glFrameBufferTexture2D error 36054 → no frames at all,
+    # while `status` still reads STREAMING). There are two ways to do that, and
+    # they cover different machines:
+    #
+    #   1. Hybrid box (iGPU + NVIDIA dGPU): pin the vendor ICD to the iGPU. The
+    #      service inherits none of the session's EGL state, so GLVND falls back
+    #      to filename order and picks 10_nvidia.json — which is why this breaks
+    #      only under systemd and looks fine when you run `cam` by hand.
+    #   2. No iGPU to fall back to: force CPU debayer. Always works, but costs a
+    #      large chunk of the framerate (issue #66), so it is the second choice.
+    #
+    # Deliberately exclusive. Setting both would leave CPU mode winning (it uses
+    # no EGL at all) and the pin dead in the unit on exactly the hybrid machines
+    # it was written for.
+    #
+    # Not choosing cpu is not enough to get gpu, though: the installers write
+    # LIBCAMERA_SOFTISP_MODE=cpu to /etc/environment.d for the PipeWire-libcamera
+    # path, systemd's 30-systemd-environment-d-generator feeds that into the user
+    # manager, and this service inherits it — which would make the pin inert
+    # exactly here. A unit-level Environment= outranks the inherited value, so
+    # the hybrid branch has to state gpu rather than merely stay silent.
+    local egl_vendor=""
+    egl_vendor=$(detect_egl_vendor_pin) || egl_vendor=""
+    if [[ -n "$egl_vendor" ]]; then
+        softisp_mode="gpu"
+        info "Hybrid GPU detected — service will pin EGL to $egl_vendor (GPU debayer on the iGPU)"
+    elif command -v glxinfo &>/dev/null && glxinfo 2>/dev/null | grep -qi "opengl renderer.*nvidia"; then
         softisp_mode="cpu"
-        info "NVIDIA GPU detected as active renderer — using CPU debayer"
+        info "NVIDIA GPU detected as active renderer, no iGPU to pin — using CPU debayer"
     elif [[ -d /proc/driver/nvidia ]] && \
          ! { command -v prime-select &>/dev/null && [[ "$(prime-select query 2>/dev/null)" == "intel" ]]; }; then
         softisp_mode="cpu"
-        info "NVIDIA GPU detected — using CPU debayer"
+        info "NVIDIA GPU detected, no iGPU to pin — using CPU debayer"
     fi
 
     # Create systemd user service
@@ -1080,6 +1357,7 @@ ${ipa_path:+Environment=LIBCAMERA_IPA_MODULE_PATH=$ipa_path}
 ${gst_path:+Environment=GST_PLUGIN_PATH=$gst_path}
 ${lib_path:+Environment=LD_LIBRARY_PATH=$lib_path}
 ${softisp_mode:+Environment=LIBCAMERA_SOFTISP_MODE=$softisp_mode}
+${egl_vendor:+Environment=__EGL_VENDOR_LIBRARY_FILENAMES=$egl_vendor}
 
 [Install]
 WantedBy=default.target

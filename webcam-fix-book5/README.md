@@ -418,6 +418,35 @@ into a bug report. `gst-launch-1.0 ... autovideosink` showing a picture proves
 the camera works but says nothing about the loopback, which is the part
 browsers actually read. (issue #65)
 
+### LED on but black image, on RTX models
+
+The Book5 Pro ships in RTX dGPU configurations, and those run the same
+libcamera Software ISP as the Book4 Ultra — so they hit the same hybrid-GPU
+bug. The privacy LED lights, `camera-relay status` says `STREAMING`, and apps
+get a black picture, because GLVND loads `10_nvidia.json` ahead of
+`50_mesa.json` and the EGL debayer lands on NVIDIA's driver:
+
+```
+ERROR eGL egl.cpp:134 glFrameBufferTexture2D error 36054
+ERROR Debayer debayer_egl.cpp:639 debayerGPU failed
+```
+
+It only shows up under systemd — `cam` from a terminal works, because a desktop
+session usually has EGL already resolved to Mesa.
+
+`camera-relay enable-persistent` detects the hybrid setup and pins the vendor
+ICD to the iGPU in `camera-relay.service`, and `camera-relay doctor` reports the
+whole picture under **GPU / EGL debayer**. On an install from before this
+landed, regenerate the unit:
+
+```bash
+camera-relay disable-persistent && camera-relay enable-persistent
+```
+
+Full write-up, including the manual drop-in and the PipeWire-path caveat:
+[../webcam-fix-libcamera/README.md](../webcam-fix-libcamera/README.md) →
+*"LED on but black image, on laptops with a dedicated GPU"*.
+
 ### `camera-relay start` says `libcamerasrc element not found` — but it's installed
 
 If the plugin package is already the newest version and

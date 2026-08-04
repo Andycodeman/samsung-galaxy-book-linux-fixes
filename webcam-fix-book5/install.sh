@@ -689,13 +689,78 @@ EOF
 fi
 echo "  ✓ Created /etc/profile.d/libcamera-ipa.sh"
 
+# Book5 Pro ships in RTX dGPU configurations, so it runs the same hybrid-GPU
+# stack as the Book4 Ultra and hits the same EGL bug: GLVND loads the vendor ICDs
+# in /usr/share/glvnd/egl_vendor.d in filename order, NVIDIA's ships as
+# 10_nvidia.json ahead of Mesa's 50_mesa.json, and libcamera's Software ISP then
+# runs its EGL debayer on NVIDIA's proprietary driver, which it cannot use:
+#     ERROR eGL egl.cpp:134 glFrameBufferTexture2D error 36054
+#     ERROR Debayer debayer_egl.cpp:639 debayerGPU failed
+# The sensor still powers up (privacy LED on, relay says STREAMING) but not one
+# frame reaches v4l2loopback, so apps show a black picture. Same failure the
+# LIBCAMERA_SOFTISP_MODE=cpu block below was written for (#15, #50, #70), but
+# pinning the iGPU fixes it without giving up the framerate (#66). It only bites
+# under systemd — a desktop session normally has EGL already resolved to Mesa,
+# so `cam` from a terminal works and the bug looks like it isn't there.
+#
+# camera-relay bakes the pin into its own service unit (see detect_egl_vendor_pin
+# in ../camera-relay/camera-relay); detect the same thing here so the state is
+# visible at install time. Deliberately NOT written to /etc/environment.d like
+# LIBCAMERA_SOFTISP_MODE below: __EGL_VENDOR_LIBRARY_FILENAMES steers *every* GL
+# client on the system, so setting it globally would take NVIDIA offload away
+# from games and everything else. It belongs on the camera units only.
+# Keep this block in sync with webcam-fix-libcamera/install.sh.
+HYBRID_EGL_VENDOR=""
+HYBRID_GPU=false
+_nv_node=false
+_mesa_node=false
+_render_nodes=0
+for _node in /dev/dri/renderD*; do
+    [[ -e "$_node" ]] || continue
+    _render_nodes=$((_render_nodes + 1))
+    _drv=""
+    _link=$(readlink -f "/sys/class/drm/$(basename "$_node")/device/driver" 2>/dev/null) || _link=""
+    [[ -n "$_link" ]] && _drv=$(basename "$_link")
+    case "$_drv" in
+        nvidia|nvidia-drm) _nv_node=true ;;
+        "")                ;;
+        *)                 _mesa_node=true ;;
+    esac
+done
+if $_nv_node && $_mesa_node && [[ "$_render_nodes" -ge 2 ]]; then
+    HYBRID_GPU=true
+    # Derive the vendor ICD from the iGPU that is actually present rather than
+    # hardcoding 50_mesa.json: every non-NVIDIA render node here (i915, xe,
+    # amdgpu, radeon) is driven by Mesa's EGL, so the file to pin is whichever
+    # ICD dispatches to libEGL_mesa — whatever the distro numbered it.
+    for _dir in /etc/glvnd/egl_vendor.d /usr/share/glvnd/egl_vendor.d; do
+        [[ -d "$_dir" ]] || continue
+        for _f in "$_dir"/*.json; do
+            [[ -f "$_f" ]] || continue
+            if grep -q 'libEGL_mesa' "$_f" 2>/dev/null; then
+                HYBRID_EGL_VENDOR="$_f"
+                break 2
+            fi
+        done
+    done
+fi
+if [[ -n "$HYBRID_EGL_VENDOR" ]]; then
+    echo "  ✓ Hybrid GPU (iGPU + NVIDIA) — camera-relay.service will pin EGL to"
+    echo "    $HYBRID_EGL_VENDOR (keeps the GPU debayer off the NVIDIA driver)"
+elif $HYBRID_GPU; then
+    echo "  ⚠ Hybrid GPU detected but no Mesa EGL vendor file found in"
+    echo "    /usr/share/glvnd/egl_vendor.d — if the camera LED lights but apps show"
+    echo "    black, run 'camera-relay doctor' and check the GPU / EGL section"
+fi
+unset _node _link _drv _dir _f _nv_node _mesa_node _render_nodes
+
 # If an NVIDIA GPU is present, libcamera's GPU (EGL) debayer is unreliable
 # (debayer_egl.cpp is incompatible with NVIDIA's proprietary EGL driver, and on
 # hybrid laptops EGL may pick the NVIDIA renderer even when the iGPU is active)
-# and produces black frames. camera-relay already forces CPU debayer on its own
-# service unit, but the PipeWire-libcamera path (used by apps that pick that
-# source directly) needs it too — so set it globally for all user services /
-# sessions. Book5 Pro ships in RTX dGPU configurations. (issues #15, #50, #70)
+# and produces black frames. camera-relay pins EGL to the iGPU and, failing that,
+# forces CPU debayer on its own service unit — but the PipeWire-libcamera path
+# (used by apps that pick that source directly) needs a fix too, and only the CPU
+# one is safe to set globally, so set that here. (issues #15, #50, #70)
 # Only force CPU debayer when NVIDIA is the *active EGL renderer* — merely having
 # an NVIDIA card present is not enough. On a hybrid laptop rendering on the Intel
 # iGPU, EGL never touches the NVIDIA driver, so GPU debayer works fine and forcing
