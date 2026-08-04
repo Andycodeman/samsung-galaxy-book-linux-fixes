@@ -634,13 +634,149 @@ stop_pipeline() {
     fi
 }
 
-# No longer needed: with exclusive_caps=0, v4l2loopback always has
-# VIDEO_CAPTURE, so WirePlumber discovers it correctly on its own.
-# The old nudge_wireplumber (udevadm trigger + WirePlumber restart) was
-# needed for exclusive_caps=1 where caps only flipped after the relay
-# opened the device for writing. Removed because:
-# 1. sudo prompt blocks/confuses users
-# 2. WirePlumber restart disrupts active camera streams (causes flip)
+# nudge_wireplumber — make WirePlumber re-read the loopback's formats.
+#
+# This was removed once, on the grounds that exclusive_caps=0 always advertises
+# VIDEO_CAPTURE so WirePlumber classifies the node correctly on its own. That
+# part is true. What it missed is that *capabilities* are not the only thing
+# WirePlumber reads once and caches — the format list is too.
+#
+# v4l2loopback is loaded at boot from modules-load.d with no producer, so it
+# advertises its generic catch-all format set: BGRx/xRGB/BGR at any size from
+# 2x1 to 8192x8192, expressed as a Choice:Range. The relay's monitor only pins
+# YUYV 1920x1080 when it starts, at login — and camera-relay.service is
+# ordered After=wireplumber.service, so WirePlumber has already probed the
+# unconfigured device and will never look again.
+#
+# Firefox never noticed: it reads /dev/video0 directly. WebRTC's PipeWire camera
+# path (Chrome, Brave, Electron) parses SPA_PARAM_EnumFormat and needs a
+# discrete rectangle — a Choice:Range yields no parseable resolution, so the
+# node arrives with zero capabilities. Chrome logs "Found Camera: Camera Relay
+# (V4L2)" and then offers no device at all, which reads exactly like the camera
+# being missing.
+#
+# There is no lighter re-probe: the V4L2 monitor is udev-driven, nodes are built
+# at discovery, and WirePlumber exposes no "re-probe this device" call. Restart
+# is the documented answer — see "device.capabilities is read-only in PipeWire"
+# in webcam-fix/README.md, and the ExecStartPost the legacy v4l2-relayd fix uses.
+#
+# The two objections that got this removed do not apply to where it now runs:
+#   1. "sudo prompt blocks/confuses users" — that was udevadm trigger, needed
+#      because v4l2-relayd is a system service. camera-relay is a *user*
+#      service, so systemctl --user needs no privileges, and the restart alone
+#      is sufficient — the udev event was only ever about the caps flip.
+#   2. "restart disrupts active camera streams" — this runs from ExecStartPost
+#      at relay start, when by definition nothing is streaming yet.
+#
+# Conditional, so restarting the relay by hand does not cost an audio glitch
+# when the formats are already right.
+
+# The format the loopback really offers, as "<fourcc> <width>x<height>".
+#
+# Buffered into a variable first, then parsed from a here-string. Piping
+# v4l2-ctl into an awk that exits at the first match SIGPIPEs the writer, and
+# under `set -o pipefail` that surfaces as rc=141 — which reads as "no format"
+# and silently disables the whole check.
+loopback_real_format() {
+    local dev="$1" out
+    command -v v4l2-ctl &>/dev/null || return 1
+    out=$(v4l2-ctl -d "$dev" --list-formats-ext 2>/dev/null) || return 1
+    awk '
+        /^\t\[[0-9]+\]:/ { if (fmt == "") { fmt = $2; gsub(/'"'"'/, "", fmt) } }
+        /Size: Discrete/ { if (!done) { print fmt, $3; done = 1 } }
+    ' <<< "$out"
+}
+
+# Global id of the PipeWire node backing this loopback, if any.
+pipewire_node_for() {
+    local dev="$1"
+    command -v pw-dump &>/dev/null || return 1
+    command -v python3 &>/dev/null || return 1
+    pw-dump 2>/dev/null | python3 -c '
+import json, sys
+want = sys.argv[1]
+try:
+    data = json.load(sys.stdin)
+except ValueError:
+    sys.exit(0)
+for obj in data:
+    props = (obj.get("info") or {}).get("props") or {}
+    if props.get("media.class") == "Video/Source" and props.get("api.v4l2.path") == want:
+        print(obj["id"])
+        break
+' "$dev" 2>/dev/null
+}
+
+nudge_wireplumber() {
+    local dev="$1"
+    command -v systemctl &>/dev/null || return 0
+    command -v pw-cli &>/dev/null || return 0
+
+    local real node advertised
+    real=$(loopback_real_format "$dev") || return 0
+    [[ -n "$real" ]] || return 0
+
+    node=$(pipewire_node_for "$dev") || return 0
+    if [[ -z "$node" ]]; then
+        # No node yet — WirePlumber has not seen the device at all. A restart
+        # would not conjure one; leave it alone.
+        return 0
+    fi
+
+    # Same buffering rule as loopback_real_format: no `head` on a live pipe.
+    local params
+    params=$(pw-cli enum-params "$node" EnumFormat 2>/dev/null) || params=""
+    advertised=$(awk '/Rectangle/ { print $2; exit }' <<< "$params")
+
+    # Reading nothing is not evidence of a mismatch. Treating it as one would
+    # restart WirePlumber on every single relay start on any machine whose
+    # pw-cli output we cannot parse — an audio glitch per boot, forever, for a
+    # problem we have not established exists.
+    local want="${real##* }"
+    if [[ -z "$advertised" ]]; then
+        info "Could not read PipeWire's format for $dev — leaving WirePlumber alone"
+        return 0
+    fi
+
+    # A discrete rectangle matching the device means WirePlumber probed after
+    # the monitor pinned the format. Anything else — a range, or a stale
+    # resolution — means it probed too early.
+    if [[ "$advertised" == "$want" ]]; then
+        info "WirePlumber already sees $want — no re-probe needed"
+        return 0
+    fi
+
+    info "WirePlumber has stale formats for $dev (sees ${advertised:-none}, device offers $want)"
+    info "Restarting WirePlumber so PipeWire-based apps (Chrome, Brave) see a usable camera"
+    # --no-block: this unit is ordered After=wireplumber.service, so waiting on
+    # a wireplumber job from inside our own ExecStartPost can deadlock.
+    systemctl --user restart --no-block wireplumber 2>/dev/null || true
+}
+
+cmd_nudge_wireplumber() {
+    local dev
+    dev=$(detect_loopback_device 2>/dev/null) || return 0
+
+    # The unit is Type=simple, so systemd runs ExecStartPost as soon as
+    # ExecStart *forks* — well before the monitor has pinned YUYV on the
+    # loopback. Comparing at that moment reads no discrete format at all, which
+    # this function cannot distinguish from "nothing to do", so it would return
+    # silently and the stale node would survive the whole session. Wait for the
+    # monitor, bounded, then compare. (The legacy v4l2-relayd fix papered over
+    # the same race with a flat `sleep 2`.)
+    local waited=0
+    while [[ -z "$(loopback_real_format "$dev")" ]] && (( waited < 15 )); do
+        sleep 1
+        waited=$((waited + 1))
+    done
+
+    if [[ -z "$(loopback_real_format "$dev")" ]]; then
+        info "Loopback reported no format after ${waited}s — skipping WirePlumber check"
+        return 0
+    fi
+
+    nudge_wireplumber "$dev"
+}
 
 # ── Commands ─────────────────────────────────────────────────────────────────
 
@@ -1266,14 +1402,146 @@ cmd_doctor() {
             echo "  $b: $bpath"
         fi
     done
+
+    # Whether Chromium can see the loopback is not a matter of opinion: it
+    # applies a fixed capability test in
+    # media/capture/video/linux/video_capture_device_factory_v4l2.cc —
+    #
+    #   (capabilities & VIDEO_CAPTURE && !(capabilities & VIDEO_OUTPUT)) ||
+    #   (capabilities & DEVICE_CAPS &&
+    #    device_caps  & VIDEO_CAPTURE && !(device_caps  & VIDEO_OUTPUT))
+    #
+    # so we can evaluate the same expression here rather than guess. Under
+    # exclusive_caps=0 the relay reports both CAPTURE and OUTPUT, every branch
+    # fails, and the node is filtered out before any permission prompt —
+    # enumerateDevices() simply returns no videoinput. Firefox accepts dual caps
+    # and reads the node directly, which is the whole reason the two disagree.
+    if $chromium_family && [[ -n "$dev" ]] && command -v v4l2-ctl &>/dev/null; then
+        local caps_hex devcaps_hex info visible=1
+        info=$(v4l2-ctl -d "$dev" --info 2>/dev/null) || info=""
+        caps_hex=$(awk '/^\tCapabilities/ { print $3; exit }' <<< "$info")
+        devcaps_hex=$(awk '/^\tDevice Caps/ { print $4; exit }' <<< "$info")
+        if [[ -n "$caps_hex" ]]; then
+            local caps=$((caps_hex)) devcaps=0
+            [[ -n "$devcaps_hex" ]] && devcaps=$((devcaps_hex))
+            if (( (caps & 0x1) && !(caps & 0x2) )); then
+                visible=0
+            elif (( (caps & 0x80000000) && (devcaps & 0x1) && !(devcaps & 0x2) )); then
+                visible=0
+            fi
+            echo
+            if (( visible == 0 )); then
+                echo "  Direct V4L2: the relay node passes Chromium's capability test."
+            else
+                echo "  Direct V4L2: Chromium CANNOT see $dev."
+                echo "    It reports VIDEO_CAPTURE and VIDEO_OUTPUT together"
+                echo "    (caps $caps_hex, device caps ${devcaps_hex:-n/a}), and Chromium"
+                echo "    only accepts a node that reports capture WITHOUT output."
+                echo "    This is expected under exclusive_caps=0 and affects Chrome,"
+                echo "    Chromium, Brave, Edge and every Electron app. Firefox is fine."
+                echo "    → those browsers need the PipeWire path below instead."
+            fi
+        fi
+    fi
+
+    # The PipeWire path is the way out, so report whether it is actually usable
+    # rather than telling the user to flip a flag and hope.
     if $chromium_family; then
-        # The relay node carries both CAPTURE and OUTPUT caps under
-        # exclusive_caps=0; Firefox accepts that and reads it over V4L2, while
-        # Chromium-family browsers often will not (issue #65).
-        echo "  If Firefox sees the camera but a Chromium-family browser does not:"
-        echo "    chrome://flags/#enable-webrtc-pipewire-camera -> Enabled, then fully"
-        echo "    restart the browser. Safe on libcamera 0.7+; leave it OFF on"
-        echo "    Ubuntu 24.04/Zorin (libcamera 0.2.0 has no IPU6 support)."
+        local pw_source=""
+        if command -v pw-dump &>/dev/null && command -v python3 &>/dev/null; then
+            pw_source=$(pw-dump 2>/dev/null | python3 -c '
+import json, sys
+try:
+    data = json.load(sys.stdin)
+except ValueError:
+    sys.exit(0)
+for obj in data:
+    props = (obj.get("info") or {}).get("props") or {}
+    if props.get("media.class") == "Video/Source":
+        print(props.get("node.description") or props.get("node.name") or "?")
+        break
+' 2>/dev/null) || pw_source=""
+        fi
+        if [[ -n "$pw_source" ]]; then
+            echo "  PipeWire camera source: $pw_source"
+        else
+            echo "  PipeWire camera source: NONE — the flag below has nothing to consume."
+        fi
+
+        # Existing is not the same as usable. WirePlumber probes the loopback at
+        # login, before the monitor pins its format, and caches v4l2loopback's
+        # catch-all range. WebRTC needs a discrete rectangle, so a node in that
+        # state produces a camera with no resolutions — Chrome finds it and
+        # offers nothing, which looks identical to no camera at all.
+        if [[ -n "$dev" ]]; then
+            local real_fmt pw_node pw_rect
+            real_fmt=$(loopback_real_format "$dev") || real_fmt=""
+            pw_node=$(pipewire_node_for "$dev") || pw_node=""
+            if [[ -n "$real_fmt" && -n "$pw_node" ]]; then
+                local params_out
+                params_out=$(pw-cli enum-params "$pw_node" EnumFormat 2>/dev/null) || params_out=""
+                pw_rect=$(awk '/Rectangle/ { print $2; exit }' <<< "$params_out")
+                if [[ -z "$pw_rect" ]]; then
+                    echo "  PipeWire format:        could not read (node $pw_node)"
+                elif [[ "$pw_rect" == "${real_fmt##* }" ]]; then
+                    echo "  PipeWire format:        $real_fmt — matches the device"
+                else
+                    echo "  PipeWire format:        STALE — PipeWire says $pw_rect, device offers ${real_fmt##* }"
+                    echo "    WirePlumber probed the loopback before the relay pinned its format,"
+                    echo "    so it cached v4l2loopback's catch-all range. WebRTC cannot parse a"
+                    echo "    range, so Chrome finds the camera and still offers no device."
+                    echo "    → fix with: camera-relay nudge-wireplumber"
+                fi
+            fi
+        fi
+
+        # Per profile, what the flag actually is. "Consider enabling it" is not
+        # a diagnostic; whether it is set is.
+        local prof label dir state needs_flag=0
+        for prof in \
+            "Chrome|$HOME/.config/google-chrome" \
+            "Chromium|$HOME/.config/chromium" \
+            "Chromium (snap)|$HOME/snap/chromium/current/.config/chromium" \
+            "Brave|$HOME/.config/BraveSoftware/Brave-Browser" \
+            "Vivaldi|$HOME/.config/vivaldi"; do
+            label=${prof%%|*}
+            dir=${prof#*|}
+            [[ -f "$dir/Local State" ]] || continue
+            if ! command -v python3 &>/dev/null; then
+                echo "  $label PipeWire flag: unknown (python3 not installed)"
+                continue
+            fi
+            state=$(python3 -c '
+import json, re, sys
+flag = "enable-webrtc-pipewire-camera"
+try:
+    with open(sys.argv[1], encoding="utf-8") as fh:
+        data = json.load(fh)
+except (OSError, ValueError):
+    print("unreadable")
+    sys.exit(0)
+browser = data.get("browser")
+labs = browser.get("enabled_labs_experiments") if isinstance(browser, dict) else None
+labs = labs if isinstance(labs, list) else []
+hit = [x for x in labs if isinstance(x, str) and re.match(r"^%s(@\d+)?$" % re.escape(flag), x)]
+print("DISABLED" if any(x.endswith("@2") for x in hit) else ("ENABLED" if hit else "not set"))
+' "$dir/Local State" 2>/dev/null) || state="unreadable"
+            echo "  $label PipeWire flag: $state"
+            [[ "$state" == "ENABLED" ]] || needs_flag=1
+        done
+
+        # Only explain the fix when something still needs it. A doctor that
+        # prints the same remedy whether or not it applies trains people to
+        # skim past it.
+        if (( needs_flag )); then
+            echo "    Set it with: camera-relay/chromium-pipewire-camera.sh"
+            echo "    or by hand at chrome://flags/#enable-webrtc-pipewire-camera,"
+            echo "    then fully quit and reopen the browser. Needs libcamera 0.7+"
+            echo "    (this machine: $(pkg-config --modversion libcamera 2>/dev/null || echo unknown));"
+            echo "    on Ubuntu 24.04/Zorin libcamera 0.2.0 has no IPU6 support and the"
+            echo "    flag makes things worse. Edge has no such flag and cannot be fixed"
+            echo "    this way."
+        fi
     fi
     if command -v flatpak &>/dev/null; then
         { flatpak list --app --columns=application 2>/dev/null \
@@ -1431,6 +1699,18 @@ After=pipewire.service wireplumber.service
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/camera-relay start --on-demand
+# WirePlumber probed the loopback at login, before the monitor pinned its
+# format (this unit is After=wireplumber.service), so it cached v4l2loopback's
+# generic catch-all format range. WebRTC's PipeWire camera path cannot parse a
+# range and ends up with a camera that has no resolutions — Chrome finds the
+# node and still offers no device. Re-probe, but only when the formats really
+# do disagree. See nudge_wireplumber in this script.
+#
+# Leading '-': advisory. A camera that works for every V4L2 app is worth more
+# than this correction, so nothing here may take the relay down — including the
+# case where this unit was regenerated but /usr/local/bin/camera-relay is still
+# an older copy that does not know the subcommand.
+ExecStartPost=-/usr/local/bin/camera-relay nudge-wireplumber
 ExecStop=/usr/local/bin/camera-relay stop
 Restart=on-failure
 RestartSec=5
@@ -1498,6 +1778,7 @@ case "${1:-}" in
     stop)               cmd_stop ;;
     status)             cmd_status "${2:-}" ;;
     doctor)             cmd_doctor ;;
+    nudge-wireplumber)  cmd_nudge_wireplumber ;;
     enable-persistent)  cmd_enable_persistent "${2:-}" ;;
     disable-persistent) cmd_disable_persistent ;;
     -h|--help|help)     usage ;;

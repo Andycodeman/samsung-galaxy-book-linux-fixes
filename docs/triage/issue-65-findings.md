@@ -557,3 +557,137 @@ not something confirmed from Chromium's side, and the docs are worded to match.
 
 No code path changed; `bash -n` clean on all three scripts and the suite is
 still 13/13.
+
+---
+
+# Round 6 — the dual-caps inference is now confirmed from Chromium's side
+
+**2026-08-04.** Round 5 ends with:
+
+> The dual-caps fact is measured; that it is *the* reason Chromium skips the
+> node is a strong inference, not something confirmed from Chromium's side, and
+> the docs are worded to match.
+
+It is confirmed. `media/capture/video/linux/video_capture_device_factory_v4l2.cc`
+gates every candidate node on:
+
+```c
+(cap.capabilities & V4L2_CAP_VIDEO_CAPTURE &&
+ !(cap.capabilities & V4L2_CAP_VIDEO_OUTPUT)) ||
+(cap.capabilities & V4L2_CAP_DEVICE_CAPS &&
+ cap.device_caps & V4L2_CAP_VIDEO_CAPTURE &&
+ !(cap.device_caps & V4L2_CAP_VIDEO_OUTPUT))
+```
+
+Both branches require `!VIDEO_OUTPUT`, and the relay reports `0x05200003` —
+capture *and* output — so both fail. Enumeration itself is a `base::FileEnumerator`
+walk of `/dev/video*`, which also settles issue #54: no udev property is consulted
+anywhere in that path.
+
+## Consequences for how this was worded
+
+The docs said Chromium-family browsers "often will not" accept dual caps and are
+"stricter". Both understate it. The check is unconditional, so:
+
+- It is not setup-dependent and not a "some setups" problem. **No** Chromium-family
+  browser can ever see the relay node under `exclusive_caps=0`.
+- The flag is **required**, not a fallback for when Firefox works and Brave
+  doesn't. Round 5 already found users who needed it; every Chrome user needs it.
+- It applies to Edge and to Electron apps (Slack, Teams, Discord, VS Code), which
+  share the capture code. Edge has no such flag and cannot be fixed this way.
+
+Reproduced on a Book4 Ultra, Ubuntu 26.04, libcamera 0.7.2, Chrome 151 (deb, not
+snap, so sandboxing is not a factor): `enumerateDevices()` returns
+`videoinput: []` while audio devices enumerate normally, with the relay running
+and `ID_V4L_CAPABILITIES=:capture:` correctly set.
+
+## What changed
+
+- `camera-relay/chromium-pipewire-camera.sh` — sets the flag in every
+  Chromium-family profile (Chrome, Chromium incl. snap, Brave, Vivaldi, flatpaks),
+  gated on libcamera 0.7+, refusing while the browser is running because Chromium
+  rewrites `Local State` on exit. Both installers call it; both uninstallers call
+  `disable`. Covered by `camera-relay/tests/test-chromium-pipewire-flag.sh`.
+- `camera-relay doctor` — evaluates Chromium's expression against the live node
+  and reports the per-profile flag state instead of suggesting the user try it.
+- The top-level README claimed the installer already enabled this flag. No
+  installer did; now one does.
+
+---
+
+# Round 7 — the flag was necessary but not sufficient
+
+**2026-08-04.** Enabling `enable-webrtc-pipewire-camera` on the Book4 Ultra above
+did **not** make the camera appear. Chrome still returned:
+
+```js
+await navigator.mediaDevices.getUserMedia({video:true})
+// NotFoundError: Requested device not found
+```
+
+The flag itself was working — `--enable-features=WebRtcPipeWireCamera` reached
+every Chrome child process, and with `--vmodule=*pipewire*=3`:
+
+```
+camera_portal.cc:135]    Successfully created proxy for the portal.
+camera_portal.cc:215]    Camera access granted by the XDG portal.
+pipewire_session.cc:99]  Found Camera: Camera Relay (V4L2)
+pipewire_session.cc:427] Enumerating PipeWire camera devices complete.
+```
+
+Chrome **finds** the camera and then offers no device. The portal was fine too:
+`IsCameraPresent` was `true`, the permission store held
+`{'com.google.Chrome': ['yes']}`, and `media.role=Camera` was set on the node.
+
+## The node's format list is stale
+
+```
+$ pw-cli enum-params <node> EnumFormat        $ v4l2-ctl -d /dev/video0 --list-formats-ext
+  VideoFormat:BGRx                              [0]: 'YUYV' (YUYV 4:2:2)
+  Rectangle 2x1  →  8192x8192  (Choice:Range)        Size: Discrete 1920x1080
+```
+
+PipeWire is advertising v4l2loopback's unconfigured catch-all set, not the format
+the relay actually pins. WebRTC's PipeWire camera path needs a discrete rectangle
+out of `SPA_PARAM_EnumFormat`; a `Choice:Range` yields no resolution, so the
+device is built with zero capabilities — found, unusable.
+
+**Why:** v4l2loopback loads at boot from `modules-load.d` with no producer. The
+relay's monitor pins `YUYV 1920x1080` only at login, and `camera-relay.service`
+is ordered `After=wireplumber.service`, so WirePlumber always probes the
+unconfigured device and never re-probes. Firefox is immune because it reads
+`/dev/video0` directly and never consults PipeWire's format list.
+
+Confirmed by an actual reboot mid-investigation: the flag survived, the node
+regressed to `BGRx / Rectangle 2x1`, and Chrome went back to finding nothing.
+
+## Fix
+
+`nudge_wireplumber` is back in `camera-relay`, called from `ExecStartPost`. It
+waits for the monitor to pin the format (ExecStartPost runs as soon as
+`Type=simple` ExecStart *forks*, which is too early — the first attempt read no
+format at all and silently did nothing), compares it against what PipeWire
+advertises, and restarts WirePlumber only when they disagree.
+
+The two reasons it was removed in the first place do not apply where it now runs:
+
+- *"sudo prompt blocks/confuses users"* — that was `udevadm trigger`, needed
+  because the legacy `v4l2-relayd` is a **system** service. `camera-relay` is a
+  user service, so `systemctl --user` needs no privileges, and the restart alone
+  is sufficient; the udev event only ever mattered for the caps flip.
+- *"restart disrupts active camera streams"* — at relay start nothing is
+  streaming yet.
+
+`ExecStartPost` carries a `-` prefix: this is a browser-only correction and must
+never take down a relay that works for every V4L2 app.
+
+Verified by simulating the boot race — stop relay, restart WirePlumber (node goes
+to `BGRx 2x1`), start relay → `YUY2 1920x1080`, relay still active. Covered by
+`camera-relay/tests/test-wireplumber-format-nudge.sh` (22 assertions).
+
+## Note for future triage
+
+Two independent bugs stacked here, and each one alone fully explains the symptom
+"Chrome has no camera". Fixing only the first leaves the symptom unchanged, which
+is exactly how #54 and #65 both landed on the wrong mechanism. `camera-relay
+doctor` now checks both.

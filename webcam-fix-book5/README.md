@@ -167,13 +167,14 @@ libcamera on IPU7 currently supports only one client at a time. If Firefox is us
 
 ### Browser & App Compatibility
 
-With `exclusive_caps=0` (the default), browsers work best using V4L2 directly through the camera relay:
+Apps split into two groups, and which group a browser lands in is not a matter of
+configuration — see [Chromium can't use the V4L2 relay](#chromium-cant-use-the-v4l2-relay) below.
 
 | App | Status | Notes |
 |-----|--------|-------|
-| **Firefox** | Working | Works via PipeWire (no flags needed) |
-| **Chrome / Chromium / Brave** | Working | Works via V4L2 camera relay |
-| **Edge** | Working | Works via V4L2 camera relay only |
+| **Firefox** | Working | Reads the V4L2 relay directly; also works via PipeWire. No flags needed |
+| **Chrome / Chromium / Brave** | Working | **Only** via PipeWire — the installer enables the flag for you |
+| **Edge** | Not working | Same V4L2 filter as Chrome, but no PipeWire flag exists to work around it |
 | **Zoom / OBS / VLC** | Working | Uses V4L2 camera relay |
 | **Cheese** | Crashes | Use standalone fix: `cd ../camera-relay && ./cheese-fix.sh` |
 
@@ -243,46 +244,117 @@ restart of xdg-desktop-portal is needed.
 V4L2 camera relay, which needs no flags. Thanks to
 [@david-bartlett](https://github.com/david-bartlett) ([#37](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/37)).
 
-**Chrome / Chromium / Edge:** These browsers work via the V4L2 camera relay without any special flags. Make sure the relay is running:
-```bash
-camera-relay status
-camera-relay enable-persistent --yes  # if not enabled
-```
-
-If Chrome still shows "waiting for your permission" without a prompt, try:
+**Chrome / Chromium / Brave:** see the next section — these need the PipeWire
+flag, which the installer sets for you. If Chrome shows "waiting for your
+permission" without a prompt but *does* list the camera, try:
 1. Go to `chrome://settings/content/camera` and ensure the correct camera is selected
 2. Clear site permissions for the page you're testing
 3. Try an Incognito window (to rule out extension conflicts)
 
-### Firefox sees the camera but Brave / Chromium don't
+### Chromium can't use the V4L2 relay
 
-Enable the PipeWire camera flag in the Chromium-family browser:
+Chrome, Chromium, Brave, Edge and every Electron app filter the camera relay out
+of their device list before you ever see a permission prompt —
+`navigator.mediaDevices.enumerateDevices()` simply returns no `videoinput`.
 
+This is not a permission, sandbox or relay problem. Chromium's V4L2 enumeration
+([`video_capture_device_factory_v4l2.cc`](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/media/capture/video/linux/video_capture_device_factory_v4l2.cc))
+accepts a node only when it reports capture and **not** output:
+
+```c
+(cap.capabilities & V4L2_CAP_VIDEO_CAPTURE &&
+ !(cap.capabilities & V4L2_CAP_VIDEO_OUTPUT)) ||
+(cap.capabilities & V4L2_CAP_DEVICE_CAPS &&
+ cap.device_caps & V4L2_CAP_VIDEO_CAPTURE &&
+ !(cap.device_caps & V4L2_CAP_VIDEO_OUTPUT))
 ```
-chrome://flags/#enable-webrtc-pipewire-camera   →  Enabled
+
+The relay is created with `exclusive_caps=0`, so it advertises both
+(`v4l2-ctl -d /dev/videoN --info` shows `Video Capture` *and* `Video Output`
+under `Device Caps`) and every branch fails. Firefox accepts dual caps and reads
+the node directly, which is exactly why Firefox works out of the box and Chrome
+shows nothing. Snap and flatpak browsers are additionally sandboxed away from
+`/dev/video*`.
+
+**The fix** is to route those browsers through PipeWire, where WirePlumber
+publishes the relay as an ordinary camera source. The installer does this, and
+you can run it any time:
+
+```bash
+cd camera-relay && ./chromium-pipewire-camera.sh
 ```
 
-Then fully quit and reopen the browser — Chromium caches its device list at
-startup, so a page reload is not enough.
-
-Why the two browsers differ: the relay node is created with `exclusive_caps=0`,
-so it advertises **both** `Video Capture` and `Video Output`
-(`v4l2-ctl -d /dev/videoN --info` shows both under `Device Caps`). Firefox
-accepts that and reads the device directly over V4L2; Chromium-family browsers
-are stricter about it, and browsers installed as snaps or flatpaks are sandboxed
-away from `/dev/video*` entirely. The flag routes them through PipeWire instead,
-where WirePlumber presents the relay as an ordinary camera. Confirmed on a
+It enables `chrome://flags/#enable-webrtc-pipewire-camera` in each browser's
+`Local State` (backing the file up first); you can also set that flag by hand.
+Either way the browser must be **fully quit** first — Chromium rewrites
+`Local State` from memory on exit and would discard the change — and restarted
+afterwards, since it caches its device list at startup. Confirmed on a
 960QHA / Kubuntu 26.04 in [issue #65](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/65).
 
-**Two exceptions where the flag is the wrong move:**
+`camera-relay doctor` reports the node's actual capabilities, whether PipeWire
+publishes a camera source, and whether the flag is set per browser.
 
-- **Ubuntu 24.04 (Noble) / Zorin**, where the system libcamera is **0.2.0** and
-  has no IPU6/IPU7 support. There the flag makes Chrome take that broken path
-  and bypass the working V4L2 relay, so the camera is *not* found. Check with
-  `pkg-config --modversion libcamera` — at **0.7 or newer the flag is safe**,
-  and that is where the older "keep it disabled" advice comes from.
-- **Edge**, which doesn't support the flag at all. It works through the V4L2
-  relay only.
+#### The second half: WirePlumber's stale format list
+
+The flag alone is not enough, because a second timing bug sits behind it.
+
+`v4l2loopback` is loaded at boot with no producer attached, so it advertises a
+generic catch-all format set — `BGRx`/`xRGB` at any size from 2x1 to 8192x8192,
+expressed as a `Choice:Range`. The relay's monitor only pins `YUYV 1920x1080`
+when it starts at login, and `camera-relay.service` is ordered
+`After=wireplumber.service` — so WirePlumber has already probed the unconfigured
+device, cached that generic list, and will never look again.
+
+Firefox never notices, because it reads `/dev/video0` directly. WebRTC's PipeWire
+camera path needs a *discrete* rectangle out of `SPA_PARAM_EnumFormat`; a range
+yields no usable resolution, so the camera arrives with zero capabilities. Chrome
+logs the camera and then offers no device — indistinguishable from no camera:
+
+```
+camera_portal.cc:215]    Camera access granted by the XDG portal.
+pipewire_session.cc:99]  Found Camera: Camera Relay (V4L2)
+```
+```js
+await navigator.mediaDevices.getUserMedia({video:true})
+// NotFoundError: Requested device not found
+```
+
+Compare the two views to spot it:
+
+```bash
+v4l2-ctl -d /dev/videoN --list-formats-ext   # what the device really offers
+pw-cli enum-params <node-id> EnumFormat      # what PipeWire thinks it offers
+```
+
+There is no lighter re-probe available — the V4L2 monitor is udev-driven, nodes
+are built at discovery, and WirePlumber exposes no "re-probe this device" call.
+Restarting it is the documented answer; see *"`device.capabilities` is read-only
+in PipeWire"* in [the legacy fix](../webcam-fix/README.md#step-9-fix-pipewire-device-classification),
+which hit the same class of bug.
+
+The relay handles this itself, from `ExecStartPost`: it waits for the monitor to
+pin the format, compares it against what PipeWire advertises, and restarts
+WirePlumber **only** when they disagree — so restarting the relay by hand costs
+no audio glitch when things are already correct. Run it manually with:
+
+```bash
+camera-relay nudge-wireplumber
+```
+
+Two things this does **not** fix:
+
+- **Edge** has no such flag. It stays blind to the relay.
+- **libcamera 0.2.0** (Ubuntu 24.04 Noble / Zorin) has no IPU6/IPU7 support, so
+  the PipeWire path produces no frames either. Check with
+  `pkg-config --modversion libcamera`; the script refuses below 0.7, and that is
+  where the older "keep the flag disabled" advice came from.
+
+> **Why not `exclusive_caps=1`?** It would make the node advertise capture only
+> and fix every Chromium app at once, with no flag. The relay deliberately moved
+> away from it: with `exclusive_caps=1` WirePlumber classifies the node as an
+> output at boot, before the relay attaches, and the PipeWire path breaks instead
+> — trading one broken set of apps for another. See the note above
+> `nudge_wireplumber` in `camera-relay/camera-relay`.
 
 If enabling it makes things worse, set it back to Disabled — it is a per-browser
 setting and changes nothing system-wide.

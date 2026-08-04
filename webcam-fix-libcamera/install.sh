@@ -1845,22 +1845,30 @@ if [[ -d "$RELAY_DIR" ]]; then
     echo "v4l2loopback" | sudo tee /etc/modules-load.d/v4l2loopback.conf > /dev/null
     echo "  ✓ Installed v4l2loopback autoload (/etc/modules-load.d/v4l2loopback.conf)"
 
-    # Chromium/Chrome enumerate V4L2 cameras through udev and only list
-    # devices whose ID_V4L_CAPABILITIES udev property contains ":capture:".
-    # v4l_id (60-persistent-v4l.rules) tags the node ONCE at device creation
-    # — while the relay monitor holds the writer fd and no capture format is
-    # negotiated yet — so the property can come up without ":capture:" and
-    # Chrome never lists the camera (even though it streams capture fine, and
-    # libcamera/PipeWire apps like Cheese/Firefox work). Force the capture
-    # capability for the relay node so Chrome enumerates it. (issue #54)
+    # v4l_id (60-persistent-v4l.rules) tags the node ONCE at device creation —
+    # while the relay monitor holds the writer fd and no capture format is
+    # negotiated yet — so ID_V4L_CAPABILITIES can come up without ":capture:"
+    # and udev-based consumers misread the node. Normalise it here.
+    #
+    # This was originally added believing it was what made Chrome list the
+    # camera (issue #54). It is not: Chromium enumerates with base::FileEnumerator
+    # over /dev/video* and opens each node with VIDIOC_QUERYCAP — it never reads
+    # a udev property. Chrome stays blind to the relay with this rule applied and
+    # ID_V4L_CAPABILITIES=":capture:" set, because the node reports VIDEO_OUTPUT
+    # alongside VIDEO_CAPTURE. That is handled by the PipeWire flag below.
+    # The rule is kept because other udev consumers do read the property.
     sudo tee /etc/udev/rules.d/70-camera-relay-capabilities.rules > /dev/null << 'EOF'
-# Force ID_V4L_CAPABILITIES so Chromium/Chrome's udev-based V4L2 camera
-# enumeration lists the Camera Relay loopback. Runs after 60-persistent-v4l.
+# Normalise ID_V4L_CAPABILITIES for the Camera Relay loopback: v4l_id tags the
+# node before any capture format is negotiated, so the property can come up
+# without ":capture:". Runs after 60-persistent-v4l.
+#
+# Note: this does NOT affect Chromium. It enumerates /dev/video* directly and
+# never reads udev properties — see the PipeWire camera flag instead.
 SUBSYSTEM=="video4linux", ATTR{name}=="Camera Relay", ENV{ID_V4L_CAPABILITIES}=":capture:"
 EOF
     sudo udevadm control --reload-rules
     sudo udevadm trigger --action=change --subsystem-match=video4linux
-    echo "  ✓ Installed Camera Relay udev capabilities rule (Chrome/Chromium fix)"
+    echo "  ✓ Installed Camera Relay udev capabilities rule"
 
     # Rebuild initramfs so it picks up the new v4l2loopback config.
     # Without this, v4l2loopback may load from initramfs with stale
@@ -1979,6 +1987,19 @@ EOF
             || echo "gtk-update-icon-cache failed — icons may not appear until next login"
     else
         echo "Could not detect logged-in user — icons not installed"
+    fi
+
+    # Chromium-family browsers cannot see the relay node at all. Their V4L2
+    # enumeration accepts a device only when it reports VIDEO_CAPTURE and *not*
+    # VIDEO_OUTPUT, and the relay under exclusive_caps=0 reports both — so
+    # Chrome, Brave, Edge and every Electron app list zero cameras while Firefox
+    # (which accepts dual caps) works. Point them at PipeWire instead, where
+    # WirePlumber already publishes the relay as an ordinary camera source.
+    # Advisory: never fail the install over a browser preference.
+    if [[ -x "$RELAY_DIR/chromium-pipewire-camera.sh" ]]; then
+        echo ""
+        echo "  Configuring Chromium-family browsers..."
+        "$RELAY_DIR/chromium-pipewire-camera.sh" enable || true
     fi
 else
     echo "  ⚠ camera-relay directory not found — skipping"
@@ -2101,12 +2122,13 @@ fi
 echo ""
 echo "  Browser setup:"
 echo "    Firefox:  Works out of the box (no flags needed)"
-echo "    Chrome:   Works out of the box with the V4L2 camera relay"
-echo "    Brave/Chromium: if Firefox sees the camera but these don't, enable"
-echo "      chrome://flags/#enable-webrtc-pipewire-camera and fully restart the"
-echo "      browser. Safe on libcamera 0.7+ (check: pkg-config --modversion"
-echo "      libcamera); leave it OFF on Ubuntu 24.04/Zorin, where libcamera"
-echo "      0.2.0 has no IPU6 support and the flag breaks the relay path."
+echo "    Chrome/Chromium/Brave: cannot see the V4L2 relay at all — they only"
+echo "      accept a device that reports capture WITHOUT output, and the relay"
+echo "      reports both. They go through PipeWire instead, which is what the"
+echo "      flag above enables. If it was skipped because the browser was open,"
+echo "      quit it and run: camera-relay/chromium-pipewire-camera.sh"
+echo "    Edge:     no such flag exists — it stays blind to the relay."
+echo "    Run 'camera-relay doctor' to see the flag state per browser."
 echo ""
 echo "  Cheese fix (if needed):"
 echo "    Cheese crashes with this camera. A standalone fix is available:"

@@ -102,6 +102,14 @@ sudo rm -f /etc/udev/rules.d/70-camera-relay-capabilities.rules
 sudo udevadm control --reload-rules 2>/dev/null || true
 echo "  ✓ Udev rules removed"
 
+# Take the Chromium PipeWire camera flag back out. Left behind it would point
+# those browsers at a PipeWire camera that no longer exists.
+_UNINST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -x "$_UNINST_DIR/../camera-relay/chromium-pipewire-camera.sh" ]]; then
+    echo "  Reverting Chromium browser camera flag..."
+    "$_UNINST_DIR/../camera-relay/chromium-pipewire-camera.sh" disable || true
+fi
+
 # [7/11] Remove WirePlumber rules
 echo "[7/11] Removing WirePlumber rules..."
 sudo rm -f /etc/wireplumber/wireplumber.conf.d/50-disable-ipu7-v4l2.conf
