@@ -131,8 +131,11 @@ echo "Installing system-sleep resume hook..."
 mkdir -p /lib/systemd/system-sleep
 install -m 755 "${SCRIPT_DIR}/alc298-amp-init-sleep.sh"  /lib/systemd/system-sleep/alc298-amp-init
 
+echo "Installing udev rule..."
+install -m 644 "${SCRIPT_DIR}/99-alc298-amp-init.rules" /etc/udev/rules.d/99-alc298-amp-init.rules
+
 systemctl daemon-reload
-systemctl enable alc298-amp-init.service
+udevadm control --reload-rules
 
 # ---------------------------------------------------------------------------
 # Fire once now so the user has working speakers without rebooting

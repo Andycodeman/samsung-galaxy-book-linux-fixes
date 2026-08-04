@@ -1,14 +1,16 @@
 [Unit]
 Description=Initialize ALC298 internal speaker amps (Samsung Galaxy Book3 Pro 14" / 940XFG)
 Documentation=https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/44
-Requires=dev-snd-hwC0D0.device
-After=systemd-modules-load.service sound.target dev-snd-hwC0D0.device
-Wants=sound.target 
+After=systemd-modules-load.service
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/local/sbin/alc298-amp-init.sh
 
-[Install]
-WantedBy=multi-user.target
+# Deliberately no [Install] section — udev starts this unit when the sound card
+# registers (see /etc/udev/rules.d/99-alc298-amp-init.rules). Adding
+# WantedBy=multi-user.target back would reintroduce the original bug: the boot
+# transaction can start the unit before the codec exists, the script no-ops,
+# and RemainAfterExit=yes then leaves it active so udev's later trigger does
+# nothing at all.

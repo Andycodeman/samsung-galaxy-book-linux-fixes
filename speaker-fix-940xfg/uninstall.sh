@@ -17,8 +17,10 @@ echo "Removing installed files..."
 rm -f /usr/local/sbin/alc298-amp-init.sh
 rm -f /etc/systemd/system/alc298-amp-init.service
 rm -f /lib/systemd/system-sleep/alc298-amp-init
+rm -f /etc/udev/rules.d/99-alc298-amp-init.rules
 
 systemctl daemon-reload
+udevadm control --reload-rules
 
 echo ""
 echo "=== Uninstall complete ==="
