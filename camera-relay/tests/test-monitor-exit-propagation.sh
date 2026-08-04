@@ -58,7 +58,11 @@ STUB
     chmod +x "$TMP/stub"
 
     (
-        set -uo pipefail
+        # Must match camera-relay's own `set -euo pipefail`. With -e missing,
+        # the subshell inside the process substitution survives a failing
+        # monitor and the sentinel gets emitted either way — so the test would
+        # pass against a script that is broken in production.
+        set -euo pipefail
         info() { :; }
         warn() { :; }
         MONITOR_BIN="$TMP/stub"
@@ -87,6 +91,34 @@ elif [[ $rc -eq 0 ]]; then
     bad "monitor exit status was swallowed — the process substitution hides it"
 else
     bad "expected 42, got $rc"
+fi
+
+# The EXIT trap gets the last word on the exit status. Under set -e a command
+# failing inside it replaces whatever the shell was exiting with — and
+# cleanup_on_demand's pkill exits 1 whenever there are no children left, which
+# is the normal case. That flattened every status to 1, sentinel or not.
+sed -n '/cleanup_on_demand() {/,/^    }/p' "$RELAY" > "$TMP/cleanup.sh"
+if [[ ! -s "$TMP/cleanup.sh" ]]; then
+    bad "could not locate cleanup_on_demand"
+else
+    # Run it as its own shell, not a subshell: $$ does not change inside a
+    # subshell, so `pkill -P $$` would target this test's children and take the
+    # harness down with it.
+    {
+        echo 'set -euo pipefail'
+        echo "PID_FILE=\"$TMP/pid\"; STATE_CACHE=\"$TMP/state\""
+        sed 's/^    //' "$TMP/cleanup.sh"
+        echo 'trap cleanup_on_demand EXIT'
+        echo 'f() { return 42; }'
+        echo 'f'
+    } > "$TMP/trap-case.sh"
+    bash "$TMP/trap-case.sh" >/dev/null 2>&1
+    rc=$?
+    if [[ $rc -eq 42 ]]; then
+        ok "the EXIT trap leaves the exit status alone"
+    else
+        bad "the EXIT trap rewrote the exit status to $rc"
+    fi
 fi
 
 # The whole point is that the status keeps going up the call chain, so the

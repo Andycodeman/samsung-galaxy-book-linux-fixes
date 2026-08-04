@@ -763,7 +763,12 @@ Run the installer to build it, or use 'camera-relay start' for always-on mode."
 
     # Clean up all children on exit
     cleanup_on_demand() {
-        pkill -P $$ 2>/dev/null
+        # `|| true` is load-bearing: with no children left, pkill exits 1, and a
+        # command failing inside an EXIT trap under set -e replaces the shell's
+        # exit status with its own. That silently turned every status into 1 —
+        # including the monitor's, which is the whole point of the sentinel
+        # above.
+        pkill -P $$ 2>/dev/null || true
         rm -f "$PID_FILE" "$STATE_CACHE"
     }
     trap cleanup_on_demand EXIT
@@ -795,8 +800,11 @@ Run the installer to build it, or use 'camera-relay start' for always-on mode."
                 info "Camera released, resuming idle"
                 ;;
         esac
-    done < <("$MONITOR_BIN" "$loopback_dev" 1920 1080 \
-             -- "${gst_cmd[@]}" 2>"$gst_log"; echo "__monitor_exit:$?")
+    # `|| rc=$?` rather than a bare `; echo ...$?`: the subshell inherits set -e,
+    # so a failing monitor would abort it before the sentinel was ever emitted —
+    # which looks exactly like the bug this is here to prevent.
+    done < <(rc=0; "$MONITOR_BIN" "$loopback_dev" 1920 1080 \
+             -- "${gst_cmd[@]}" 2>"$gst_log" || rc=$?; echo "__monitor_exit:$rc")
 
     if (( monitor_rc != 0 )); then
         warn "Monitor exited with status $monitor_rc — see $gst_log"
