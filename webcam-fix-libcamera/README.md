@@ -192,12 +192,16 @@ The install script creates these files:
 |------|---------|
 | `/etc/modules-load.d/ivsc.conf` | IVSC module auto-loading at boot |
 | `/etc/modprobe.d/ivsc-camera.conf` | Softdep: IVSC loads before sensor |
-| `/etc/udev/rules.d/90-hide-ipu6-v4l2.rules` | Remove uaccess from raw IPU6 V4L2 nodes |
+| `/etc/udev/rules.d/74-camera-relay-mc-nodes.rules` | Move MC-centric V4L2 nodes to the `camera-relay` group, strip their session ACL, and stop them advertising as cameras (the `74-` prefix is load-bearing — see the comment in the file) |
+| `/usr/local/lib/udev/camera-relay-v4l2-io-mc` | udev helper: reports `V4L2_CAP_IO_MC` for a node |
+| `/usr/local/lib/sysusers.d/camera-relay.conf` | Declares the memberless `camera-relay` group |
 | `/etc/wireplumber/wireplumber.conf.d/50-disable-ipu6-v4l2.conf` | Hide raw IPU6 nodes from PipeWire (WP 0.5+) |
 | `/etc/wireplumber/main.lua.d/51-disable-ipu6-v4l2.lua` | Hide raw IPU6 nodes from PipeWire (WP 0.4) |
 | `/usr/share/libcamera/ipa/simple/ov02c10.yaml` | Sensor color tuning with CCM |
 | `/usr/local/bin/camera-relay` | On-demand camera relay CLI tool |
 | `/usr/local/bin/camera-relay-monitor` | V4L2 event monitor for on-demand activation |
+| `/usr/local/bin/camera-relay-gst` | setgid launcher: the only thing that can open the raw camera nodes |
+| `/var/cache/camera-relay/` | GStreamer/Mesa caches for the pipeline (root-owned, group-writable) |
 | `/etc/modules-load.d/v4l2loopback.conf` | Load v4l2loopback module at boot |
 | `/etc/modprobe.d/99-camera-relay-loopback.conf` | v4l2loopback config for camera relay |
 | `/usr/local/share/camera-relay/camera-relay-systray.py` | System tray GUI |
@@ -279,7 +283,21 @@ cd ov02c10-26mhz-fix && sudo ./install.sh
 
 ### Too many "ipu6" entries in camera list
 
-Log out and back in for the udev rules and WirePlumber config to take effect. The rules hide raw IPU6 V4L2 nodes so only the libcamera source and Camera Relay appear.
+Log out and back in for the udev rules and WirePlumber config to take effect, then check with:
+
+```bash
+camera-relay doctor
+```
+
+The `MC nodes` line reports whether any raw node is still reachable from your session — those are exactly the ones that show up as spurious "ipu6" cameras.
+
+The ISYS driver registers one capture node per possible stream (48 on a Book4), and the kernel marks each `V4L2_CAP_IO_MC`: usable only after userspace configures the media graph, never as a standalone camera. Nothing carries that bit into udev, so they all claim to be cameras. The installer therefore moves them into a memberless `camera-relay` group and clears the bogus properties, which covers both kinds of application — the ones that enumerate through udev (Chromium and friends) and the ones that walk `/dev/video*` calling `QUERYCAP` and only skip what they cannot open (Firefox, Zoom, OBS).
+
+One consequence: `cam` and `qcam` can no longer open the camera as your user. Run them through the launcher, which holds the group:
+
+```bash
+camera-relay-gst --list-cameras
+```
 
 ### Zoom / OBS / VLC don't see the camera
 

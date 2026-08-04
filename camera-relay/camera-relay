@@ -24,6 +24,24 @@ SERVICE_DIR="${HOME}/.config/systemd/user"
 SERVICE_NAME="camera-relay.service"
 LOOPBACK_CONF="/etc/modprobe.d/99-camera-relay-loopback.conf"
 MONITOR_BIN="/usr/local/bin/camera-relay-monitor"
+LAUNCHER_BIN="/usr/local/bin/camera-relay-gst"
+
+# Arguments shared by every launcher invocation. The launcher is setgid, so it
+# replaces its environment wholesale rather than trusting what it inherited —
+# the paths setup_environment exported have to be handed over as arguments.
+LAUNCHER_ARGS=()
+build_launcher_args() {
+    LAUNCHER_ARGS=()
+    [[ -n "${GST_PLUGIN_PATH:-}" ]] && \
+        LAUNCHER_ARGS+=(--gst-plugin-path "$GST_PLUGIN_PATH")
+    [[ -n "${LIBCAMERA_IPA_MODULE_PATH:-}" ]] && \
+        LAUNCHER_ARGS+=(--ipa-path "$LIBCAMERA_IPA_MODULE_PATH")
+    [[ -n "${LIBCAMERA_SOFTISP_MODE:-}" ]] && \
+        LAUNCHER_ARGS+=(--softisp-mode "$LIBCAMERA_SOFTISP_MODE")
+    [[ -n "${RELAY_COLOR_FILTER:-}" ]] && \
+        LAUNCHER_ARGS+=(--color-filter "$RELAY_COLOR_FILTER")
+    return 0
+}
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -63,23 +81,29 @@ detect_camera_name() {
     # Output format: "1: 'ov02c10' (\_SB_.PC00.LNK0)"
     # Extract the camera ID from parentheses — this is what gst-launch needs
     # for the camera-name property (not the display name in quotes).
-    local cam_cmd=""
-    # Prefer /usr/local/bin/cam only if it actually runs (not broken by stale libs)
-    if [[ -x /usr/local/bin/cam ]] && /usr/local/bin/cam -l &>/dev/null; then
-        cam_cmd="/usr/local/bin/cam"
+    # The raw camera nodes belong to the memberless camera-relay group, so a
+    # plain `cam` run as the user can no longer enumerate them. Go through the
+    # launcher, which holds the group. Direct `cam` remains the fallback for
+    # installs without the launcher and for hardware whose nodes were never
+    # restricted (nothing MC-centric to hide).
+    local -a cam_cmd=()
+    if [[ -x "$LAUNCHER_BIN" ]] && "$LAUNCHER_BIN" --list-cameras &>/dev/null; then
+        cam_cmd=("$LAUNCHER_BIN" --list-cameras)
+    elif [[ -x /usr/local/bin/cam ]] && /usr/local/bin/cam -l &>/dev/null; then
+        cam_cmd=(/usr/local/bin/cam -l)
     elif command -v cam &>/dev/null; then
-        cam_cmd="cam"
+        cam_cmd=(cam -l)
     fi
-    if [[ -n "$cam_cmd" ]]; then
+    if (( ${#cam_cmd[@]} > 0 )); then
         local name
-        name=$("$cam_cmd" -l 2>/dev/null | grep -oP '\(([^)]+)\)' | head -1 | tr -d '()')
+        name=$("${cam_cmd[@]}" 2>/dev/null | grep -oP '\(([^)]+)\)' | head -1 | tr -d '()')
         if [[ -n "$name" ]]; then
             echo "$name" > "$CAMERA_CACHE"
             echo "$name"
             return 0
         fi
         # Fallback to quoted display name if no parenthesized ID
-        name=$("$cam_cmd" -l 2>/dev/null | grep -oP "'[^']+'" | head -1 | tr -d "'")
+        name=$("${cam_cmd[@]}" 2>/dev/null | grep -oP "'[^']+'" | head -1 | tr -d "'")
         if [[ -n "$name" ]]; then
             echo "$name" > "$CAMERA_CACHE"
             echo "$name"
@@ -558,30 +582,20 @@ start_pipeline() {
     local fast="${3:-false}"
     local gst_log="${XDG_RUNTIME_DIR:-/tmp}/camera-relay-gst.log"
 
-    # gst-launch-1.0 interprets backslashes as escape characters.
-    # Camera names like "\_SB_.LNK0" need double-escaping.
-    local gst_camera_name="${camera_name//\\/\\\\}"
-
-    # Use io-mode=mmap for v4l2sink — kernel-managed buffers are the most
-    # compatible across v4l2loopback versions. io-mode=rw (1) breaks on
-    # some Fedora systems; io-mode=auto (0) may fall through to rw.
-    # GStreamer enum: 0=auto, 1=rw, 2=mmap, 3=userptr, 4=dmabuf
-    # RELAY_COLOR_FILTER: optional GStreamer element(s) for color correction.
-    # Set in service environment to apply per-sensor tuning, e.g.:
+    # The launcher assembles the pipeline itself — it is setgid and must never
+    # run a command line handed to it. Backslash escaping for the gst-launch
+    # parser (camera names look like "\_SB_.LNK0") happens in there too.
+    # RELAY_COLOR_FILTER: optional GStreamer element(s) for color correction,
+    # set in the service environment for per-sensor tuning, e.g.
     #   RELAY_COLOR_FILTER="videobalance saturation=0.85"
-    local -a color_filter=()
-    if [[ -n "${RELAY_COLOR_FILTER:-}" ]]; then
-        color_filter=(! $RELAY_COLOR_FILTER)
-    fi
+    # The launcher accepts only allow-listed video filters.
+    build_launcher_args
 
     local -a gst_cmd=(
-        gst-launch-1.0 -e
-        libcamerasrc camera-name="$gst_camera_name"
-        ! queue max-size-buffers=3 leaky=downstream
-        ! videoconvert
-        "${color_filter[@]}"
-        ! "video/x-raw,format=YUY2"
-        ! v4l2sink device="$loopback_dev" io-mode=mmap sync=false
+        "$LAUNCHER_BIN"
+        --camera "$camera_name"
+        --v4l2-sink "$loopback_dev"
+        "${LAUNCHER_ARGS[@]}"
     )
 
     "${gst_cmd[@]}" >"$gst_log" 2>&1 &
@@ -666,13 +680,13 @@ cmd_start() {
         info "Starting relay (foreground)..."
         echo "streaming" > "$STATE_CACHE"
         echo $$ > "$PID_FILE"
-        local gst_camera_name="${camera_name//\\/\\\\}"
-        exec gst-launch-1.0 -e \
-            libcamerasrc camera-name="$gst_camera_name" \
-            ! queue max-size-buffers=3 leaky=downstream \
-            ! videoconvert \
-            ! "video/x-raw,format=YUY2" \
-            ! v4l2sink device="$loopback_dev" io-mode=mmap sync=false
+        # Same launcher as the backgrounded path, so this one now honours
+        # RELAY_COLOR_FILTER too — it used to silently drop it.
+        build_launcher_args
+        exec "$LAUNCHER_BIN" \
+            --camera "$camera_name" \
+            --v4l2-sink "$loopback_dev" \
+            "${LAUNCHER_ARGS[@]}"
     else
         info "Starting relay..."
         local pid
@@ -732,6 +746,13 @@ cmd_start_on_demand() {
 Run the installer to build it, or use 'camera-relay start' for always-on mode."
     fi
 
+    # Without the launcher the pipeline cannot open the raw camera nodes —
+    # they belong to the camera-relay group, which this session is not in.
+    if [[ ! -x "$LAUNCHER_BIN" ]]; then
+        die "camera-relay-gst not found at $LAUNCHER_BIN.
+Run the installer to build it — the pipeline needs it to reach the camera."
+    fi
+
     echo $$ > "$PID_FILE"
     echo "idle" > "$STATE_CACHE"
 
@@ -745,20 +766,14 @@ Run the installer to build it, or use 'camera-relay start' for always-on mode."
     # YUY2 frames from its stdout, and relays them to the device.
     # This avoids the writer fd handoff gap — the monitor always holds
     # the device open, so ready_for_capture never drops.
-    local gst_camera_name="${camera_name//\\/\\\\}"
-    local -a color_filter=()
-    if [[ -n "${RELAY_COLOR_FILTER:-}" ]]; then
-        color_filter=(! $RELAY_COLOR_FILTER)
-    fi
+    build_launcher_args
 
     local -a gst_cmd=(
-        gst-launch-1.0 -e
-        libcamerasrc camera-name="$gst_camera_name"
-        ! queue max-size-buffers=3 leaky=downstream
-        ! videoconvert
-        "${color_filter[@]}"
-        ! "video/x-raw,format=YUY2,width=1920,height=1080"
-        ! fdsink fd=3 sync=false
+        "$LAUNCHER_BIN"
+        --camera "$camera_name"
+        --fd-sink 3
+        --width 1920 --height 1080
+        "${LAUNCHER_ARGS[@]}"
     )
 
     # Clean up all children on exit
@@ -916,6 +931,45 @@ cmd_doctor() {
         echo "  Groups:  video group OK"
     else
         echo "  Groups:  NOT in the 'video' group — sudo usermod -aG video $USER, then log out and back in"
+    fi
+
+    # The raw camera nodes are reachable only through the setgid launcher. If
+    # it loses that bit (a plain `cp` drops it) the camera stops working, with
+    # nothing in the GStreamer log pointing at the cause.
+    if [[ -x "$LAUNCHER_BIN" ]]; then
+        local l_mode l_group
+        l_mode=$(stat -c%a "$LAUNCHER_BIN" 2>/dev/null || echo "")
+        l_group=$(stat -c%G "$LAUNCHER_BIN" 2>/dev/null || echo "?")
+        if [[ "$l_mode" == 2??? ]]; then
+            echo "  Launcher: setgid $l_group OK"
+        else
+            echo "  Launcher: $LAUNCHER_BIN is not setgid (mode ${l_mode:-?}) —"
+            echo "            it cannot reach the raw camera nodes. Re-run the installer."
+        fi
+    else
+        echo "  Launcher: $LAUNCHER_BIN missing — re-run the installer"
+    fi
+
+    # Self-check the whole point of the arrangement: any MC-centric node this
+    # session can still open is one that shows up as a bogus camera in app
+    # pickers. The helper can only report on nodes it manages to open, so a
+    # successful IO_MC=1 read here IS the leak.
+    local mc_helper=/usr/local/lib/udev/camera-relay-v4l2-io-mc
+    if [[ -x "$mc_helper" ]]; then
+        local leaked=0 v
+        for v in /dev/video*; do
+            [[ -e "$v" ]] || continue
+            if [[ "$("$mc_helper" "$v" 2>/dev/null)" == "ID_V4L_IO_MC=1" ]]; then
+                leaked=$((leaked + 1))
+            fi
+        done
+        if (( leaked > 0 )); then
+            echo "  MC nodes: $leaked raw node(s) still open to this session —"
+            echo "            they will appear as spurious cameras in apps."
+            echo "            Re-run the installer, then log out and back in."
+        else
+            echo "  MC nodes: hidden from this session OK"
+        fi
     fi
 
     echo
