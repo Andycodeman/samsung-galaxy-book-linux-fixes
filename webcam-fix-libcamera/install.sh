@@ -1505,11 +1505,38 @@ echo "  ✓ Group 'camera-relay' present (no members by design)"
 sudo install -d -m 2770 -o root -g camera-relay /var/cache/camera-relay
 
 MC_HELPER=/usr/local/lib/udev/camera-relay-v4l2-io-mc
+
+# Ordering here is a safety property, not tidiness. The moment the rule below
+# takes effect the raw nodes belong to 'camera-relay', and the only thing that
+# can still open them is the setgid launcher — so the launcher has to exist
+# first. Build both helpers up front and install the rule only if both are in
+# place; if either fails, the nodes keep their old ownership and the camera
+# keeps working with the spurious entries still listed. A degraded camera list
+# beats a camera nothing can open.
+MC_HELPER_OK=""
+LAUNCHER_OK=""
 if gcc -O2 -Wall -o /tmp/camera-relay-v4l2-io-mc "$CAMERA_RELAY_SRC/v4l2-io-mc.c" 2>/dev/null; then
     sudo install -d -m 755 /usr/local/lib/udev
     sudo install -m 755 /tmp/camera-relay-v4l2-io-mc "$MC_HELPER"
     rm -f /tmp/camera-relay-v4l2-io-mc
+    MC_HELPER_OK=1
+fi
 
+if [[ -f "$CAMERA_RELAY_SRC/camera-relay-gst.c" ]] \
+   && gcc -O2 -Wall -o /tmp/camera-relay-gst "$CAMERA_RELAY_SRC/camera-relay-gst.c" 2>/dev/null; then
+    sudo install -o root -g camera-relay -m 755 \
+        /tmp/camera-relay-gst /usr/local/bin/camera-relay-gst
+    # After the group change: chgrp clears S_ISGID, so `install -m 2755 -g ...`
+    # silently lands as plain 0755 and the launcher cannot reach the nodes.
+    sudo chmod 2755 /usr/local/bin/camera-relay-gst
+    rm -f /tmp/camera-relay-gst
+    LAUNCHER_OK=1
+    echo "  ✓ Installed /usr/local/bin/camera-relay-gst (setgid camera-relay)"
+else
+    echo "  ⚠ Failed to build the pipeline launcher (gcc required)."
+fi
+
+if [[ -n "$MC_HELPER_OK" && -n "$LAUNCHER_OK" ]]; then
     sudo tee /etc/udev/rules.d/74-camera-relay-mc-nodes.rules > /dev/null << 'EOF'
 # Raw MC-centric V4L2 nodes are not standalone cameras. Keyed off the kernel's
 # own V4L2_CAP_IO_MC rather than a driver-specific card name, so this covers
@@ -1572,7 +1599,9 @@ EOF
     sudo udevadm trigger --action=change --subsystem-match=video4linux
     echo "  ✓ Raw MC-centric nodes reassigned to the camera-relay group"
 else
-    echo "  ⚠ Failed to build the IO_MC udev helper (gcc required)."
+    # Deliberately leave the nodes alone. Reassigning them without a launcher
+    # to reach them would take the camera out entirely.
+    echo "  ⚠ Skipping the MC-node rule — the helpers did not build (gcc required)."
     echo "    Raw nodes stay visible in app camera lists; the camera still works."
 fi
 
@@ -1878,26 +1907,9 @@ EOF
         fi
     fi
 
-    # Build and install the setgid pipeline launcher (C binary).
-    # Raw camera nodes belong to the memberless 'camera-relay' group, so the
-    # pipeline needs this to reach them. setgid, not setuid — the UID stays the
-    # user's, which is what keeps the EGL context, the uaccess ACLs and the
-    # monitor's same-UID /proc scan working.
-    if [[ -f "$RELAY_DIR/camera-relay-gst.c" ]]; then
-        echo "  Building pipeline launcher..."
-        if gcc -O2 -Wall -o /tmp/camera-relay-gst "$RELAY_DIR/camera-relay-gst.c"; then
-            sudo install -o root -g camera-relay -m 755 \
-                /tmp/camera-relay-gst /usr/local/bin/camera-relay-gst
-            # Must come after the group change: chgrp clears S_ISGID, so
-            # `install -m 2755 -g ...` silently lands as plain 0755.
-            sudo chmod 2755 /usr/local/bin/camera-relay-gst
-            rm -f /tmp/camera-relay-gst
-            echo "  ✓ Installed /usr/local/bin/camera-relay-gst (setgid camera-relay)"
-        else
-            echo "  ⚠ Failed to build the launcher (gcc required) — the relay"
-            echo "    cannot reach the camera nodes without it."
-        fi
-    fi
+    # The setgid launcher is built in step 12, before the udev rule hands the
+    # raw nodes to the camera-relay group — it has to exist before anything
+    # depends on it. Nothing to do here.
 
     # Install CLI tool
     sudo cp "$RELAY_DIR/camera-relay" /usr/local/bin/camera-relay
