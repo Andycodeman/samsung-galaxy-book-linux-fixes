@@ -157,15 +157,22 @@ if command -v v4l2-ctl &>/dev/null && dev=$(detect_loopback_device 2>/dev/null);
             ! v4l2sink device="$dev" io-mode=mmap sync=false &>/dev/null &
         black_pid=$!
         sleep 2
-        out=$(XDG_RUNTIME_DIR="$TMP/run6" "$BASH" "$RELAY" doctor 2>&1)
+        # v4l2loopback takes a single writer. If a real relay already holds the
+        # device, our synthetic stream never attached and gst-launch has already
+        # exited — doctor is then correctly reporting the live picture, which is
+        # not a doctor bug. Assert only once we know we own the writer.
+        if kill -0 "$black_pid" 2>/dev/null; then
+            out=$(XDG_RUNTIME_DIR="$TMP/run6" "$BASH" "$RELAY" doctor 2>&1)
+            if grep -q "BLANK FRAMES" <<<"$out"; then
+                ok "doctor calls a uniform stream blank rather than working"
+            else
+                bad "doctor did not flag black frames; got: $(grep -A2 'Frames on' <<<"$out")"
+            fi
+        else
+            skip "could not synthesise a black stream (a real relay holds the loopback, or the pipeline failed)"
+        fi
         kill "$black_pid" 2>/dev/null || true
         wait "$black_pid" 2>/dev/null || true
-
-        if grep -q "BLANK FRAMES" <<<"$out"; then
-            ok "doctor calls a uniform stream blank rather than working"
-        else
-            bad "doctor did not flag black frames; got: $(grep -A2 'Frames on' <<<"$out")"
-        fi
     else
         skip "gst-launch-1.0 not installed; cannot synthesise a black stream"
     fi
