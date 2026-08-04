@@ -3,7 +3,7 @@
  *
  * The raw IPU6/IPU7 ISYS nodes are owned by the 'camera-relay' group so
  * that ordinary applications cannot open them (see
- * 90-camera-relay-mc-nodes.rules). libcamera still needs them, so the one
+ * 74-camera-relay-mc-nodes.rules). libcamera still needs them, so the one
  * process that legitimately drives the camera gets the group through this
  * setgid launcher. The UID never changes: the pipeline stays inside the
  * user's session, keeping the uaccess ACLs on the loopback and the media
@@ -50,6 +50,21 @@
 #define CACHE_DIR "/var/cache/camera-relay"
 
 #define MAX_ARGS 64
+
+/*
+ * Slots append_color_filter() must leave free. The longest tail emitted after
+ * it is the --v4l2-sink path:
+ *
+ *   "!"  caps  "!"  v4l2sink  device=…  io-mode=mmap  sync=false   → 7
+ *   NULL terminator                                                → 8
+ *
+ * and one iteration of that loop can append two entries at once ("!" plus the
+ * element name), so it has to stop while there is still room for both → 9.
+ *
+ * Keep this in step with the tail in main(): the --fd-sink path is one shorter,
+ * which is exactly what hid an off-by-one here until it was caught under ASan.
+ */
+#define TAIL_SLOTS 9
 
 /* Directory arguments must live under one of these. All root-owned, so a
  * validated path cannot point at anything the caller controls. */
@@ -222,7 +237,7 @@ static int append_color_filter(char **argv, int argc, char *spec)
 
 	for (tok = strtok_r(spec, " \t", &save); tok;
 	     tok = strtok_r(NULL, " \t", &save)) {
-		if (argc >= MAX_ARGS - 8)
+		if (argc >= MAX_ARGS - TAIL_SLOTS)
 			die("color filter too long");
 
 		if (!strcmp(tok, "!")) {
@@ -415,8 +430,13 @@ int main(int argc, char *argv[])
 		die("give exactly one of --v4l2-sink or --fd-sink");
 
 	if (v4l2_sink) {
+		/* The length bound is what the charset check leaves unsaid:
+		 * without it "/dev/video" plus a hundred digits validates and
+		 * then silently truncates into sink_arg. snprintf keeps that
+		 * safe, but saying the bound is better than relying on it. */
 		if (strncmp(v4l2_sink, "/dev/video", 10) ||
-		    !valid_ident(v4l2_sink + 10, ""))
+		    !valid_ident(v4l2_sink + 10, "") ||
+		    strlen(v4l2_sink + 10) > 3)
 			die("--v4l2-sink must be /dev/videoN, got '%s'", v4l2_sink);
 	} else {
 		if (fd_sink < 3 || fd_sink > 20)
