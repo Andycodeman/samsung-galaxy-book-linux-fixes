@@ -1352,8 +1352,10 @@ if getent group kvm >/dev/null 2>&1; then
     fi
 fi
 
-# On a hybrid laptop — Intel/AMD iGPU + NVIDIA dGPU, which is every Galaxy Book4
-# Ultra — GLVND loads the EGL vendor ICDs in /usr/share/glvnd/egl_vendor.d in
+# On a hybrid laptop — Intel/AMD iGPU + NVIDIA dGPU, which is how the Galaxy
+# Book4 Ultra ships, when the NVIDIA driver is actually bound to the dGPU (no
+# driver bound means no render node, and the detection below correctly declines
+# to pin) — GLVND loads the EGL vendor ICDs in /usr/share/glvnd/egl_vendor.d in
 # filename order, and NVIDIA's ships as 10_nvidia.json, ahead of Mesa's
 # 50_mesa.json. libcamera's Software ISP then runs its EGL debayer on NVIDIA's
 # proprietary driver, which it is not compatible with:

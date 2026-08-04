@@ -357,9 +357,9 @@ find_libcamera_gst_plugin() {
 # (debayer_egl.cpp). *Which* GPU that is comes from GLVND, which loads the
 # vendor ICDs in /usr/share/glvnd/egl_vendor.d in filename order — and NVIDIA's
 # ships as 10_nvidia.json, ahead of Mesa's 50_mesa.json. So on a hybrid laptop
-# (Intel or AMD iGPU + NVIDIA dGPU — every Galaxy Book4 Ultra, and the dGPU
-# Book5 Pro variants) the debayer runs on NVIDIA's proprietary EGL driver, which
-# it is not compatible with:
+# (Intel or AMD iGPU + NVIDIA dGPU — the Galaxy Book4 Ultra and the dGPU Book5
+# Pro variants ship this way) the debayer runs on NVIDIA's proprietary EGL
+# driver, which it is not compatible with:
 #
 #   ERROR eGL egl.cpp:134 glFrameBufferTexture2D error 36054
 #   ERROR Debayer debayer_egl.cpp:639 debayerGPU failed

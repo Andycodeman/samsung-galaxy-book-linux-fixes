@@ -369,9 +369,20 @@ re-run `sudo bash install.sh` and reboot. The change is fully reversible:
 
 **Symptom.** The webcam privacy LED lights up, `camera-relay status` reports
 `STREAMING`, and apps still get a black picture — Google Meet says *"Your camera
-may be blocked"*. Affects every hybrid-GPU laptop (Intel or AMD iGPU + NVIDIA
-dGPU), which includes all Galaxy Book4 Ultra and the RTX variants of the Book5
-Pro.
+may be blocked"*. Affects hybrid-GPU laptops (Intel or AMD iGPU + NVIDIA dGPU)
+— the Galaxy Book4 Ultra and the RTX variants of the Book5 Pro ship in this
+configuration.
+
+Having the dGPU is not by itself enough: what matters is whether the **NVIDIA
+kernel driver is bound to it**. If nothing is bound — no `nvidia`/`nouveau`
+module loaded, no `/dev/dri/renderD*` node for it — then NVIDIA's EGL driver
+cannot claim a device, GLVND falls through to Mesa, and you are not affected
+even on a machine that has the hardware. Check with:
+
+```bash
+ls /dev/dri/renderD*      # two nodes = hybrid and affected; one = not
+camera-relay doctor       # the "GPU / EGL debayer" section reports the topology
+```
 
 **Cause.** libcamera's Software ISP converts Bayer→RGB on the GPU through EGL.
 Which GPU that is comes from GLVND, which loads the vendor ICDs in
