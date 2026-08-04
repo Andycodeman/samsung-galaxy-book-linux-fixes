@@ -957,12 +957,16 @@ cmd_doctor() {
     done < <(render_node_drivers)
     (( nodes_seen == 0 )) && echo "  render node: NONE — no /dev/dri/renderD*, the GPU debayer cannot run at all"
 
-    local vd vf
+    local vd vf vlib
     for vd in /etc/glvnd/egl_vendor.d /usr/share/glvnd/egl_vendor.d; do
         [[ -d "$vd" ]] || continue
         for vf in "$vd"/*.json; do
             [[ -f "$vf" ]] || continue
-            echo "  EGL vendor ICD: $vf ($(grep -oP '"library_path"\s*:\s*"\K[^"]+' "$vf" 2>/dev/null | head -1 || echo '?'))"
+            # Assigned first, not inlined: `$(grep … | head -1 || echo '?')` binds
+            # the || to head, which exits 0 on empty input, so the fallback never
+            # fires and an ICD with no library_path renders as empty parens.
+            vlib=$(grep -oP '"library_path"\s*:\s*"\K[^"]+' "$vf" 2>/dev/null | head -1) || vlib=""
+            echo "  EGL vendor ICD: $vf (${vlib:-no library_path})"
         done
     done
 
@@ -983,6 +987,45 @@ cmd_doctor() {
     fi
     echo "  vendor pin (this shell):   ${env_pin:-none}"
     echo "  vendor pin (service unit): ${unit_pin:-none}"
+
+    # The mode decides whether the pin matters at all: LIBCAMERA_SOFTISP_MODE=cpu
+    # skips EGL entirely. The installers write that to /etc/environment.d for the
+    # PipeWire path, systemd's user environment generator feeds it into the user
+    # manager, and this service inherits it — so a pin can be present and inert.
+    # Report all three layers, because only the effective one is the answer.
+    local unit_mode="" inherited_mode="" mode_file="" mf effective_mode
+    if systemctl --user cat "$SERVICE_NAME" &>/dev/null; then
+        unit_mode=$(systemctl --user cat "$SERVICE_NAME" 2>/dev/null \
+            | grep -oP '^Environment=LIBCAMERA_SOFTISP_MODE=\K.*' | tail -1) || unit_mode=""
+    fi
+    inherited_mode=$(systemctl --user show-environment 2>/dev/null \
+        | grep -oP '^LIBCAMERA_SOFTISP_MODE=\K.*' | tail -1) || inherited_mode=""
+    [[ -z "$inherited_mode" ]] && inherited_mode="${LIBCAMERA_SOFTISP_MODE:-}"
+    for mf in /etc/environment.d/*.conf "$HOME/.config/environment.d"/*.conf; do
+        [[ -f "$mf" ]] || continue
+        if grep -q '^LIBCAMERA_SOFTISP_MODE=' "$mf" 2>/dev/null; then
+            mode_file="$mf"
+            break
+        fi
+    done
+    if [[ -n "$unit_mode" ]]; then
+        effective_mode="$unit_mode (from the service unit)"
+    elif [[ -n "$inherited_mode" ]]; then
+        effective_mode="$inherited_mode (inherited${mode_file:+ from $mode_file})"
+    else
+        effective_mode="gpu (libcamera default, nothing set)"
+    fi
+    echo "  debayer mode (service unit): ${unit_mode:-none}"
+    echo "  debayer mode (inherited):    ${inherited_mode:-none}${mode_file:+  ($mode_file)}"
+    echo "  debayer mode (effective):    $effective_mode"
+    if [[ -n "$unit_pin" && -z "$unit_mode" && "$inherited_mode" == "cpu" ]]; then
+        echo "  → PIN IS INERT. CPU debayer touches no EGL at all, so the vendor pin"
+        echo "    above has no effect, and you are paying its framerate cost anyway."
+        echo "    The unit needs its own Environment=LIBCAMERA_SOFTISP_MODE=gpu to"
+        echo "    outrank the inherited value:"
+        echo "    camera-relay disable-persistent && camera-relay enable-persistent"
+    fi
+
     if [[ -n "$want_pin" && -z "$unit_pin" ]]; then
         hybrid_unpinned=true
         echo "  → HYBRID GPU WITH NO PIN. GLVND loads the NVIDIA ICD first, so the"
