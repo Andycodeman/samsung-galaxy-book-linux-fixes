@@ -1276,9 +1276,17 @@ cmd_enable_persistent() {
     # Deliberately exclusive. Setting both would leave CPU mode winning (it uses
     # no EGL at all) and the pin dead in the unit on exactly the hybrid machines
     # it was written for.
+    #
+    # Not choosing cpu is not enough to get gpu, though: the installers write
+    # LIBCAMERA_SOFTISP_MODE=cpu to /etc/environment.d for the PipeWire-libcamera
+    # path, systemd's 30-systemd-environment-d-generator feeds that into the user
+    # manager, and this service inherits it — which would make the pin inert
+    # exactly here. A unit-level Environment= outranks the inherited value, so
+    # the hybrid branch has to state gpu rather than merely stay silent.
     local egl_vendor=""
     egl_vendor=$(detect_egl_vendor_pin) || egl_vendor=""
     if [[ -n "$egl_vendor" ]]; then
+        softisp_mode="gpu"
         info "Hybrid GPU detected — service will pin EGL to $egl_vendor (GPU debayer on the iGPU)"
     elif command -v glxinfo &>/dev/null && glxinfo 2>/dev/null | grep -qi "opengl renderer.*nvidia"; then
         softisp_mode="cpu"
