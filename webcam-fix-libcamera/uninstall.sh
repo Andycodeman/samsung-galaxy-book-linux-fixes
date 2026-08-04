@@ -32,7 +32,34 @@ sudo rm -f /etc/udev/rules.d/72-camera-relay-mc-nodes.rules \
            /etc/udev/rules.d/90-camera-relay-mc-nodes.rules
 sudo udevadm control --reload-rules 2>/dev/null || true
 sudo udevadm trigger --action=change --subsystem-match=video4linux 2>/dev/null || true
-echo "  ✓ Raw nodes back to their default ownership"
+sudo udevadm settle 2>/dev/null || true
+
+# The trigger above is not enough on its own. It re-runs the rules — the
+# properties and the uaccess tag come back — but udev does not re-apply node
+# ownership on a change event, so every node keeps the camera-relay GID. With
+# the group deleted further down that leaves a dangling numeric GID, and if
+# that number is ever reused the nodes silently become reachable again.
+#
+# So restore the group explicitly rather than hoping udev does it. Nodes are
+# matched by GID, not by name, so this also repairs a system left dangling by
+# an earlier run of this script.
+_cr_gid=$(getent group camera-relay 2>/dev/null | cut -d: -f3)
+_restored=0
+for _v in /dev/video*; do
+    [[ -e "$_v" ]] || continue
+    _gid=$(stat -c%g "$_v" 2>/dev/null) || continue
+    # Either still owned by camera-relay, or owned by a GID that no longer
+    # resolves — both mean this script is what put it there.
+    if [[ -n "$_cr_gid" && "$_gid" == "$_cr_gid" ]] \
+       || ! getent group "$_gid" >/dev/null 2>&1; then
+        sudo chgrp video "$_v" 2>/dev/null && _restored=$((_restored + 1)) || true
+    fi
+done
+if (( _restored > 0 )); then
+    echo "  ✓ Raw nodes back to the 'video' group ($_restored restored)"
+else
+    echo "  ✓ Raw nodes already at their default ownership"
+fi
 
 # [1/8] Stop and remove camera relay
 echo "[1/8] Removing camera relay..."
@@ -144,8 +171,22 @@ sudo rm -f /usr/local/lib/udev/camera-relay-v4l2-io-mc
 sudo rm -f /usr/local/lib/sysusers.d/camera-relay.conf
 sudo udevadm control --reload-rules 2>/dev/null || true
 sudo udevadm trigger --action=change --subsystem-match=video4linux 2>/dev/null || true
+# Only drop the group once nothing references it. Deleting it while a device
+# node still carries its GID is what leaves the dangling numeric owner that
+# step 0 exists to prevent.
 if getent group camera-relay >/dev/null 2>&1; then
-    sudo groupdel camera-relay 2>/dev/null || true
+    _cr_gid=$(getent group camera-relay | cut -d: -f3)
+    _still=0
+    for _v in /dev/video*; do
+        [[ -e "$_v" ]] || continue
+        [[ "$(stat -c%g "$_v" 2>/dev/null)" == "$_cr_gid" ]] && _still=$((_still + 1)) || true
+    done
+    if (( _still > 0 )); then
+        echo "  ⚠ $_still device node(s) still owned by 'camera-relay' — keeping the"
+        echo "    group so their owner keeps resolving. Reboot and re-run to clear it."
+    else
+        sudo groupdel camera-relay 2>/dev/null || true
+    fi
 fi
 echo "  ✓ Udev rules removed"
 
