@@ -59,6 +59,13 @@ static const char *const TRUSTED_PREFIXES[] = {
 	NULL
 };
 
+/* Where GLVND keeps EGL vendor ICDs. Narrower than TRUSTED_PREFIXES because
+ * this value selects which driver the debayer runs on. */
+static const char *const EGL_VENDOR_PREFIXES[] = {
+	"/etc/glvnd/egl_vendor.d/", "/usr/share/glvnd/egl_vendor.d/",
+	NULL
+};
+
 /* Pure video filters. Excluding sources and sinks is what keeps a color
  * filter from turning into file or network access. */
 static const char *const FILTER_ELEMENTS[] = {
@@ -135,7 +142,8 @@ static int valid_ident(const char *s, const char *extra)
 	return 1;
 }
 
-static void require_trusted_dir(const char *opt, const char *path)
+static void require_prefix(const char *opt, const char *path,
+			   const char *const *prefixes)
 {
 	const char *const *p;
 	size_t len;
@@ -145,7 +153,7 @@ static void require_trusted_dir(const char *opt, const char *path)
 	if (strstr(path, ".."))
 		die("%s must not contain '..'", opt);
 
-	for (p = TRUSTED_PREFIXES; *p; p++) {
+	for (p = prefixes; *p; p++) {
 		len = strlen(*p);
 		/* Match the prefix with or without its trailing slash, so
 		 * "/usr/local/lib" itself is accepted. */
@@ -154,6 +162,34 @@ static void require_trusted_dir(const char *opt, const char *path)
 			return;
 	}
 	die("%s must be under a root-owned system directory, got '%s'", opt, path);
+}
+
+static void require_trusted_dir(const char *opt, const char *path)
+{
+	require_prefix(opt, path, TRUSTED_PREFIXES);
+}
+
+/*
+ * The EGL vendor pin is a colon-separated list of ICD files; validate each
+ * element. Without it the debayer lands on whichever ICD GLVND happens to load
+ * first, which on a hybrid laptop is NVIDIA's — and libcamera's EGL debayer
+ * fails against it, so every frame comes out black.
+ */
+static void require_egl_vendor_list(const char *opt, const char *list)
+{
+	char *copy, *tok, *save;
+
+	if (!*list)
+		die("%s must not be empty", opt);
+	copy = strdup(list);
+	if (!copy)
+		die("out of memory");
+
+	for (tok = strtok_r(copy, ":", &save); tok;
+	     tok = strtok_r(NULL, ":", &save))
+		require_prefix(opt, tok, EGL_VENDOR_PREFIXES);
+
+	free(copy);
 }
 
 /* gst-launch joins its argv and re-parses the result, so a backslash in
@@ -228,10 +264,11 @@ static int append_color_filter(char **argv, int argc, char *spec)
  */
 static char **build_environment(const char *gst_plugin_path,
 				const char *ipa_path,
-				const char *softisp_mode)
+				const char *softisp_mode,
+				const char *egl_vendor)
 {
-	static char *env[10];
-	static char buf[5][PATH_MAX + 64];
+	static char *env[12];
+	static char buf[6][PATH_MAX + 64];
 	int n = 0, b = 0;
 
 	env[n++] = "PATH=/usr/local/bin:/usr/bin:/bin";
@@ -251,6 +288,11 @@ static char **build_environment(const char *gst_plugin_path,
 	}
 	if (softisp_mode) {
 		snprintf(buf[b], sizeof(buf[b]), "LIBCAMERA_SOFTISP_MODE=%s", softisp_mode);
+		env[n++] = buf[b++];
+	}
+	if (egl_vendor) {
+		snprintf(buf[b], sizeof(buf[b]),
+			 "__EGL_VENDOR_LIBRARY_FILENAMES=%s", egl_vendor);
 		env[n++] = buf[b++];
 	}
 
@@ -282,7 +324,7 @@ static void usage(void)
 		"usage: camera-relay-gst --camera NAME (--v4l2-sink DEV | --fd-sink N)\n"
 		"                        [--width W --height H] [--color-filter SPEC]\n"
 		"                        [--gst-plugin-path DIR] [--ipa-path DIR]\n"
-		"                        [--softisp-mode cpu|gpu]\n"
+		"                        [--softisp-mode cpu|gpu] [--egl-vendor ICD[:ICD...]]\n"
 		"       camera-relay-gst --list-cameras\n");
 	exit(1);
 }
@@ -290,7 +332,7 @@ static void usage(void)
 int main(int argc, char *argv[])
 {
 	const char *camera = NULL, *v4l2_sink = NULL, *gst_plugin_path = NULL;
-	const char *ipa_path = NULL, *softisp_mode = NULL;
+	const char *ipa_path = NULL, *softisp_mode = NULL, *egl_vendor = NULL;
 	char *color_filter = NULL;
 	long fd_sink = -1, width = 0, height = 0;
 	int list_cameras = 0;
@@ -326,10 +368,24 @@ int main(int argc, char *argv[])
 			ipa_path = val; i++;
 		} else if (!strcmp(a, "--softisp-mode") && val) {
 			softisp_mode = val; i++;
+		} else if (!strcmp(a, "--egl-vendor") && val) {
+			egl_vendor = val; i++;
 		} else {
 			usage();
 		}
 	}
+
+	/* Validate everything that reaches the child environment before either
+	 * branch uses it — these select which code the pipeline loads, and
+	 * --list-cameras passes them through just the same. */
+	if (softisp_mode && strcmp(softisp_mode, "cpu") && strcmp(softisp_mode, "gpu"))
+		die("--softisp-mode must be 'cpu' or 'gpu'");
+	if (gst_plugin_path)
+		require_trusted_dir("--gst-plugin-path", gst_plugin_path);
+	if (ipa_path)
+		require_trusted_dir("--ipa-path", ipa_path);
+	if (egl_vendor)
+		require_egl_vendor_list("--egl-vendor", egl_vendor);
 
 	assume_group();
 
@@ -344,7 +400,7 @@ int main(int argc, char *argv[])
 
 		cam_argv[0] = (char *)cam;
 		execve(cam, cam_argv, build_environment(gst_plugin_path, ipa_path,
-						        softisp_mode));
+						        softisp_mode, egl_vendor));
 		die("execve %s: %s", cam, strerror(errno));
 	}
 
@@ -373,13 +429,6 @@ int main(int argc, char *argv[])
 		die("--width and --height must be given together");
 	if (width && (width < 16 || width > 8192 || height < 16 || height > 8192))
 		die("--width/--height out of range");
-
-	if (softisp_mode && strcmp(softisp_mode, "cpu") && strcmp(softisp_mode, "gpu"))
-		die("--softisp-mode must be 'cpu' or 'gpu'");
-	if (gst_plugin_path)
-		require_trusted_dir("--gst-plugin-path", gst_plugin_path);
-	if (ipa_path)
-		require_trusted_dir("--ipa-path", ipa_path);
 
 	/* ── assemble the pipeline ────────────────────────────────────── */
 
@@ -427,7 +476,7 @@ int main(int argc, char *argv[])
 	gst_argv[n] = NULL;
 
 	execve(gst, gst_argv,
-	       build_environment(gst_plugin_path, ipa_path, softisp_mode));
+	       build_environment(gst_plugin_path, ipa_path, softisp_mode, egl_vendor));
 	die("execve %s: %s", gst, strerror(errno));
 	return 1;
 }

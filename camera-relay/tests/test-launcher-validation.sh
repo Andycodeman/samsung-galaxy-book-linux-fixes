@@ -80,6 +80,35 @@ reject "traversal out of a trusted prefix" --camera X --fd-sink 3 \
 reject "IPA path in /tmp"      --camera X --fd-sink 3 --ipa-path /tmp/evil
 
 echo
+echo "── EGL vendor pin picks the debayer's driver, so it is validated too ──"
+reject "ICD in \$HOME"        --camera X --fd-sink 3 --egl-vendor "$HOME/evil.json"
+reject "ICD in /tmp"          --camera X --fd-sink 3 --egl-vendor /tmp/evil.json
+reject "traversal"            --camera X --fd-sink 3 \
+    --egl-vendor '/usr/share/glvnd/egl_vendor.d/../../../tmp/evil.json'
+reject "poisoned entry in a list" --camera X --fd-sink 3 \
+    --egl-vendor '/usr/share/glvnd/egl_vendor.d/50_mesa.json:/tmp/evil.json'
+reject "empty value"          --camera X --fd-sink 3 --egl-vendor ''
+
+echo
+echo "── path options are validated on the --list-cameras path too ──"
+# This branch also exports them into the child environment; skipping validation
+# there would hand the group away just as effectively.
+for opt in --ipa-path --gst-plugin-path; do
+    out=$("$TMP/launcher" --list-cameras "$opt" /tmp/evil 2>&1)
+    if [[ $? -ne 0 && "$out" == *"root-owned"* ]]; then
+        ok "--list-cameras $opt /tmp/evil"
+    else
+        bad "--list-cameras $opt /tmp/evil — not validated"
+    fi
+done
+out=$("$TMP/launcher" --list-cameras --egl-vendor /tmp/evil.json 2>&1)
+if [[ $? -ne 0 && "$out" == *"root-owned"* ]]; then
+    ok "--list-cameras --egl-vendor /tmp/evil.json"
+else
+    bad "--list-cameras --egl-vendor /tmp/evil.json — not validated"
+fi
+
+echo
 echo "── sinks ──"
 reject "no sink"                 --camera X
 reject "both sinks"              --camera X --fd-sink 3 --v4l2-sink /dev/video0
@@ -90,7 +119,7 @@ echo
 echo "── a trusted plugin path is still accepted ──"
 # Validation is the only thing under test here: the exec that follows needs a
 # real camera, so anything past argument parsing counts as accepted.
-out=$("$TMP/launcher" --camera X --fd-sink 3 \
+out=$("$TMP/launcher" --camera X --fd-sink 3 --egl-vendor /usr/share/glvnd/egl_vendor.d/50_mesa.json \
         --gst-plugin-path /usr/local/lib --softisp-mode cpu 3>/dev/null 2>&1)
 if [[ "$out" == *"must be under a root-owned"* || "$out" == *"not allowed"* ]]; then
     bad "/usr/local/lib was rejected"

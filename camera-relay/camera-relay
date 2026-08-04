@@ -38,6 +38,11 @@ build_launcher_args() {
         LAUNCHER_ARGS+=(--ipa-path "$LIBCAMERA_IPA_MODULE_PATH")
     [[ -n "${LIBCAMERA_SOFTISP_MODE:-}" ]] && \
         LAUNCHER_ARGS+=(--softisp-mode "$LIBCAMERA_SOFTISP_MODE")
+    # Must be forwarded explicitly: without the pin the debayer lands on
+    # whichever EGL ICD GLVND loads first, which on a hybrid laptop is
+    # NVIDIA's — and every frame comes out black (PR #76).
+    [[ -n "${__EGL_VENDOR_LIBRARY_FILENAMES:-}" ]] && \
+        LAUNCHER_ARGS+=(--egl-vendor "$__EGL_VENDOR_LIBRARY_FILENAMES")
     [[ -n "${RELAY_COLOR_FILTER:-}" ]] && \
         LAUNCHER_ARGS+=(--color-filter "$RELAY_COLOR_FILTER")
     return 0
