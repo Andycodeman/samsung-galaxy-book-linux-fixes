@@ -770,8 +770,18 @@ Run the installer to build it, or use 'camera-relay start' for always-on mode."
 
     # The monitor manages the pipeline subprocess itself.
     # We just read its events for status tracking.
+    #
+    # A process substitution gives no way to observe the child's exit code —
+    # it lands in neither $? nor PIPESTATUS. Without the sentinel below this
+    # function always returned 0, so a monitor that gave up looked like a
+    # clean shutdown and Restart=on-failure never fired: the same shape as the
+    # "Already running" exit-0 bug described above already_running_healthy().
+    local monitor_rc=0
     while IFS= read -r event; do
         case "$event" in
+            __monitor_exit:*)
+                monitor_rc="${event#__monitor_exit:}"
+                ;;
             READY)
                 info "Monitor ready, device visible to apps"
                 ;;
@@ -786,9 +796,13 @@ Run the installer to build it, or use 'camera-relay start' for always-on mode."
                 ;;
         esac
     done < <("$MONITOR_BIN" "$loopback_dev" 1920 1080 \
-             -- "${gst_cmd[@]}" 2>"$gst_log")
+             -- "${gst_cmd[@]}" 2>"$gst_log"; echo "__monitor_exit:$?")
 
+    if (( monitor_rc != 0 )); then
+        warn "Monitor exited with status $monitor_rc — see $gst_log"
+    fi
     info "On-demand relay stopped"
+    return "$monitor_rc"
 }
 
 cmd_stop() {

@@ -191,7 +191,13 @@ static int open_writer(const char *device, int width, int height,
 	}
 
 	/* S_FMT is allowed to adjust what it was given and report the result in
-	 * the same struct, so a successful ioctl is not confirmation. */
+	 * the same struct, so a successful ioctl is not confirmation.
+	 *
+	 * sizeimage is deliberately not compared: for a packed format like YUYV
+	 * it is derived from the geometry, so width/height/pixelformat agreeing
+	 * already pins it. That stops holding the moment this writes anything
+	 * planar or compressed — add the sizeimage check along with the format
+	 * if that ever happens. */
 	if (fmt.fmt.pix.pixelformat != V4L2_PIX_FMT_YUYV ||
 	    fmt.fmt.pix.width != (__u32)width ||
 	    fmt.fmt.pix.height != (__u32)height) {
@@ -429,6 +435,10 @@ int main(int argc, char *argv[])
 		return 1;
 	}
 	pid_t our_pid = getpid();
+	/* Distinguishes "asked to stop" from "gave up". A clean exit tells the
+	 * supervisor everything is fine and Restart=on-failure will not fire, so
+	 * any path that abandons the device has to say so here. */
+	int exit_status = 0;
 
 	/* Open writer and set up device */
 	int fd = open_writer(device, width, height, frame_size, black_frame);
@@ -688,6 +698,7 @@ int main(int argc, char *argv[])
 							"[monitor] "
 							"Re-open "
 							"failed!\n");
+						exit_status = 1;
 						running = 0;
 						break;
 					}
@@ -767,5 +778,5 @@ int main(int argc, char *argv[])
 	free(black_frame);
 	if (fd >= 0)
 		close(fd);
-	return 0;
+	return exit_status;
 }
