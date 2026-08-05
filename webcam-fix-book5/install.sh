@@ -1115,6 +1115,16 @@ EOF
     sudo chmod 755 /usr/local/bin/camera-relay
     echo "  ✓ Installed /usr/local/bin/camera-relay"
 
+    # The browser helper has to outlive this source tree. Its running-browser
+    # guard skips any profile whose browser is open — the common case during an
+    # install — so "quit the browser and re-run it" is the normal path, not the
+    # exception, and by then the extracted tarball is usually gone.
+    if [[ -f "$RELAY_DIR/chromium-pipewire-camera.sh" ]]; then
+        sudo install -m 755 "$RELAY_DIR/chromium-pipewire-camera.sh" \
+            /usr/local/bin/chromium-pipewire-camera
+        echo "  ✓ Installed /usr/local/bin/chromium-pipewire-camera"
+    fi
+
     # Install systray runtime dependency (Python AppIndicator binding).
     # Without this, camera-relay-systray.py falls back to Gtk.StatusIcon,
     # which is non-functional on GNOME >= 40 / Wayland and the icon never
@@ -1292,7 +1302,7 @@ echo "    Chrome/Chromium/Brave: cannot see the V4L2 relay at all — they only"
 echo "      accept a device that reports capture WITHOUT output, and the relay"
 echo "      reports both. They go through PipeWire instead, which is what the"
 echo "      flag above enables. If it was skipped because the browser was open,"
-echo "      quit it and run: camera-relay/chromium-pipewire-camera.sh"
+echo "      quit it and run: chromium-pipewire-camera"
 echo "    Edge:     no such flag exists — it stays blind to the relay."
 echo "    Run 'camera-relay doctor' to see the flag state per browser."
 echo ""

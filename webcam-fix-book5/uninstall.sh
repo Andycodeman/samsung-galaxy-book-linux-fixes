@@ -104,11 +104,25 @@ echo "  ✓ Udev rules removed"
 
 # Take the Chromium PipeWire camera flag back out. Left behind it would point
 # those browsers at a PipeWire camera that no longer exists.
+# Prefer the installed copy: an uninstall may well be run from a freshly
+# re-downloaded tarball, but it may equally be run from a stale checkout that
+# predates this script.
 _UNINST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [[ -x "$_UNINST_DIR/../camera-relay/chromium-pipewire-camera.sh" ]]; then
-    echo "  Reverting Chromium browser camera flag..."
-    "$_UNINST_DIR/../camera-relay/chromium-pipewire-camera.sh" disable || true
+_FLAG_TOOL=""
+if [[ -x /usr/local/bin/chromium-pipewire-camera ]]; then
+    _FLAG_TOOL=/usr/local/bin/chromium-pipewire-camera
+elif [[ -x "$_UNINST_DIR/../camera-relay/chromium-pipewire-camera.sh" ]]; then
+    _FLAG_TOOL="$_UNINST_DIR/../camera-relay/chromium-pipewire-camera.sh"
 fi
+if [[ -n "$_FLAG_TOOL" ]]; then
+    echo "  Reverting Chromium browser camera flag..."
+    # The running-browser guard skips any profile whose browser is open, so say
+    # what to do about that rather than leaving the flag silently behind.
+    "$_FLAG_TOOL" disable || true
+    echo "    (a browser that was open kept the flag — quit it and set"
+    echo "     chrome://flags/#enable-webrtc-pipewire-camera back to Default)"
+fi
+sudo rm -f /usr/local/bin/chromium-pipewire-camera
 
 # [7/11] Remove WirePlumber rules
 echo "[7/11] Removing WirePlumber rules..."
