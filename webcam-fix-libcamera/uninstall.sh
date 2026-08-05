@@ -5,6 +5,17 @@
 
 set -e
 
+NO_RESTART=false
+for arg in "$@"; do
+    case "$arg" in
+        --no-restart) NO_RESTART=true ;;
+        -h|--help)
+            echo "Usage: $0 [--no-restart]"
+            echo "  --no-restart  Never restart PipeWire. Reboot to finish instead."
+            exit 0 ;;
+    esac
+done
+
 echo "=============================================="
 echo "  Webcam Fix (libcamera) Uninstaller"
 echo "=============================================="
@@ -249,8 +260,51 @@ echo "  ✓ Environment configuration removed"
 
 # [8/8] Restart PipeWire
 echo "[8/8] Restarting PipeWire..."
-systemctl --user restart pipewire wireplumber 2>/dev/null || true
-echo "  ✓ PipeWire restarted"
+
+# Every application holding a stream loses it, and most do not reconnect. Losing
+# your speakers to a *camera* uninstaller points nowhere near its cause — during
+# #80 testing this read as "the uninstall broke my audio" and took a
+# speaker-test to rule out. (issue #81)
+#
+# Weaker case for restarting here than in install.sh: the documented flow is
+# `./uninstall.sh && sudo reboot`, which does this anyway. So default to not
+# interrupting.
+pipewire_stream_apps() {
+    command -v pactl &>/dev/null || return 1
+    # One type per call. `pactl list sink-inputs source-outputs` exits 0 and
+    # prints NOTHING — it takes a single type and silently ignores the rest — so
+    # the combined form looks like "no streams are active" on every machine.
+    { pactl list sink-inputs 2>/dev/null
+      pactl list source-outputs 2>/dev/null
+    } | sed -n 's/^[[:space:]]*application\.name = "\(.*\)"/\1/p' | sort -u
+}
+
+_RESTART=true
+if [[ "$NO_RESTART" == true ]]; then
+    echo "  – Skipped (--no-restart). Reboot to finish."
+    _RESTART=false
+else
+    _IN_USE=$(pipewire_stream_apps || true)
+    if [[ -n "$_IN_USE" ]]; then
+        echo "  ⚠ A PipeWire restart drops the streams these apps hold, and most"
+        echo "    will not reconnect on their own:"
+        sed 's/^/      /' <<< "$_IN_USE"
+        echo ""
+        echo "    Skipping is safe — the reboot this uninstaller recommends does it."
+        # `|| _ans=""` because this script runs under `set -e` and read returns 1
+        # on EOF, which would otherwise kill the uninstall for a piped stdin.
+        read -rp "  Restart PipeWire now and interrupt them? [y/N] " _ans || _ans=""
+        case "$_ans" in
+            [yY]|[yY][eE][sS]) ;;
+            *) echo "  – Skipped. Reboot to finish."; _RESTART=false ;;
+        esac
+    fi
+fi
+
+if [[ "$_RESTART" == true ]]; then
+    systemctl --user restart pipewire wireplumber 2>/dev/null || true
+    echo "  ✓ PipeWire restarted"
+fi
 
 echo ""
 echo "=============================================="
