@@ -165,7 +165,7 @@ browsers, not optional** — with one version-specific exception. Check with
 `pkg-config --modversion libcamera`:
 
 - **libcamera 0.7+: enable it.** This is what the installer does automatically,
-  and what `camera-relay/chromium-pipewire-camera.sh` does on demand.
+  and what `chromium-pipewire-camera` does on demand.
 - **libcamera 0.2.0 (Ubuntu 24.04 Noble / Zorin): leave it Disabled.** That
   libcamera has no IPU6 support, so the flag sends Chrome down a path that
   produces no frames either. Neither setting gives you a camera there; fix the
@@ -373,8 +373,12 @@ publishes the relay as an ordinary camera source. The installer does this, and
 you can run it any time:
 
 ```bash
-cd camera-relay && ./chromium-pipewire-camera.sh
+chromium-pipewire-camera          # installed to /usr/local/bin by the installer
 ```
+
+You will usually need to, because it skips any profile whose browser is open —
+which it normally is during an install. (From an unpacked source tree the same
+script is `camera-relay/chromium-pipewire-camera.sh`.)
 
 It edits each browser's `Local State` to enable
 `chrome://flags/#enable-webrtc-pipewire-camera` (backing the file up first), or

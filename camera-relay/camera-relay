@@ -1534,7 +1534,13 @@ print("DISABLED" if any(x.endswith("@2") for x in hit) else ("ENABLED" if hit el
         # prints the same remedy whether or not it applies trains people to
         # skim past it.
         if (( needs_flag )); then
-            echo "    Set it with: camera-relay/chromium-pipewire-camera.sh"
+            # Prefer the installed copy: the source tree it was run from during
+            # install is usually gone by the time anyone reads this.
+            local flag_tool="camera-relay/chromium-pipewire-camera.sh"
+            if [[ -x /usr/local/bin/chromium-pipewire-camera ]]; then
+                flag_tool="chromium-pipewire-camera"
+            fi
+            echo "    Set it with: $flag_tool"
             echo "    or by hand at chrome://flags/#enable-webrtc-pipewire-camera,"
             echo "    then fully quit and reopen the browser. Needs libcamera 0.7+"
             echo "    (this machine: $(pkg-config --modversion libcamera 2>/dev/null || echo unknown));"

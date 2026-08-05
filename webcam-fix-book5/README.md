@@ -281,8 +281,12 @@ publishes the relay as an ordinary camera source. The installer does this, and
 you can run it any time:
 
 ```bash
-cd camera-relay && ./chromium-pipewire-camera.sh
+chromium-pipewire-camera          # installed to /usr/local/bin by the installer
 ```
+
+You will usually need to, because it skips any profile whose browser is open —
+which it normally is during an install. (From an unpacked source tree the same
+script is `camera-relay/chromium-pipewire-camera.sh`.)
 
 It enables `chrome://flags/#enable-webrtc-pipewire-camera` in each browser's
 `Local State` (backing the file up first); you can also set that flag by hand.
