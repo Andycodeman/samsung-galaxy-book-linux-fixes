@@ -163,3 +163,75 @@ filename`, `dkms status`, `ls /etc/modprobe.d/ | xargs grep -l clk_freq`,
 `grep -r ov02c10 /etc/modprobe.d/`, and post-reboot `dmesg | grep -i ov02c10`
 after re-running `ov02c10-26mhz-fix/install.sh` directly and completing MOK
 enrollment.
+
+---
+
+# Correction — the Phase 3 root cause was wrong
+
+**2026-08-04.** Phase 3 above attributes Chrome's blindness to the udev
+`ID_V4L_CAPABILITIES` property. That is not the mechanism, and the rule it
+shipped does not fix Chrome.
+
+Measured on a Book4 Ultra, Ubuntu 26.04, libcamera 0.7.2, v4l2loopback 0.15.3,
+Google Chrome 151 (deb, not snap), relay running, `70-camera-relay-capabilities.rules`
+installed and applied:
+
+```
+$ udevadm info --query=property --name=/dev/video0 | grep ID_V4L_CAPABILITIES
+ID_V4L_CAPABILITIES=:capture:
+```
+
+and in that same Chrome, on an https page:
+
+```json
+{ "cameraPermission": "prompt", "total": 2,
+  "videoinput": [],
+  "kinds": { "audioinput": 1, "audiooutput": 1 } }
+```
+
+The property is exactly what Phase 3 wanted it to be, and Chrome still lists no
+camera. Audio devices enumerate normally, so this is not permissions, not the
+sandbox, and not the relay.
+
+## What Chromium actually does
+
+`media/capture/video/linux/video_capture_device_factory_v4l2.cc` enumerates with
+`base::FileEnumerator` over `/dev/` matching `video*` and opens each candidate —
+it reads no udev property at all. The filter is a `VIDIOC_QUERYCAP` test:
+
+```c
+(cap.capabilities & V4L2_CAP_VIDEO_CAPTURE &&
+ !(cap.capabilities & V4L2_CAP_VIDEO_OUTPUT)) ||
+(cap.capabilities & V4L2_CAP_DEVICE_CAPS &&
+ cap.device_caps & V4L2_CAP_VIDEO_CAPTURE &&
+ !(cap.device_caps & V4L2_CAP_VIDEO_OUTPUT))
+```
+
+Both branches require `!VIDEO_OUTPUT`. The relay node reports both:
+
+```
+Capabilities : 0x85200003   Video Capture + Video Output + ...
+Device Caps  : 0x05200003   Video Capture + Video Output + ...
+```
+
+so both branches fail and the node is dropped before any prompt. Firefox accepts
+dual caps and reads the node directly — hence the split this issue kept circling.
+
+This is a direct consequence of `exclusive_caps=0`, which the relay adopted
+deliberately (see the note above `nudge_wireplumber` in `camera-relay`) because
+`exclusive_caps=1` breaks WirePlumber's classification at boot instead. Fixing
+Chrome by reverting that would re-break Firefox, so the fix routes Chromium
+through PipeWire instead.
+
+## What changed
+
+- `camera-relay/chromium-pipewire-camera.sh` — enables
+  `chrome://flags/#enable-webrtc-pipewire-camera` in every Chromium-family
+  profile, called by both installers; `disable` is called by both uninstallers.
+- `camera-relay doctor` — evaluates Chromium's actual capability expression
+  against the live node instead of guessing, and reports the flag state per
+  browser profile.
+- `70-camera-relay-capabilities.rules` is **kept** — other udev consumers do read
+  the property — but its comments no longer claim it does anything for Chromium.
+- READMEs: `Chrome | Working | Works via V4L2 camera relay` was the opposite of
+  the truth and is corrected everywhere it appeared.

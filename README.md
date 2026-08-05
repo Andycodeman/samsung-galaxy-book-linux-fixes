@@ -59,13 +59,13 @@ curl -sL https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/archive/
 
 To uninstall: `./uninstall.sh && sudo reboot`
 
-The webcam works with **Firefox, Chromium, Zoom, Teams, OBS, mpv, VLC**, and most other apps. For Chromium-based browsers (Brave, Chrome), the installer automatically enables the PipeWire camera flag.
+The webcam works with **Firefox, Chromium, Zoom, Teams, OBS, mpv, VLC**, and most other apps. Chromium-based browsers (Chrome, Brave) cannot see the camera relay over V4L2 and need the PipeWire camera flag; the installer sets it for you when the browser is closed during install and libcamera is 0.7+.
 
 ### Webcam Fix (built-in camera not detected) — Lunar Lake / Galaxy Book5 / Arch, Fedora & Ubuntu
 
 > Confirmed working on Samsung Galaxy Book5 Pro 940XHA (Fedora 43), 960XHA (Ubuntu 24.04), Dell XPS 13 9350 (Arch), and Lenovo X1 Carbon Gen13 (Fedora). See the [full README](webcam-fix-book5/) for details, known issues, and tested hardware.
 
-> **Requires kernel 6.18+** and **Arch, Fedora, or Ubuntu** (Ubuntu requires libcamera 0.5.2+ and kernel 6.18+ built from source). Includes an on-demand camera relay for non-PipeWire apps (Zoom, OBS, VLC) with near-zero idle CPU usage. For Chromium-based browsers (Brave, Chrome), the installer automatically enables the PipeWire camera flag.
+> **Requires kernel 6.18+** and **Arch, Fedora, or Ubuntu** (Ubuntu requires libcamera 0.5.2+ and kernel 6.18+ built from source). Includes an on-demand camera relay for non-PipeWire apps (Zoom, OBS, VLC) with near-zero idle CPU usage. Chromium-based browsers (Chrome, Brave) cannot see that relay over V4L2 and need the PipeWire camera flag; the installer sets it for you when the browser is closed during install and libcamera is 0.7+.
 
 > **OV02E10 purple tint fix:** Samsung Book5 models with the OV02E10 sensor mounted upside-down get purple/magenta tint due to a bayer pattern mismatch after the rotation flip. A patched libcamera build fixes this — see [OV02E10 bayer fix](webcam-fix-book5/libcamera-bayer-fix/) and the [webcam-fix-book5 README](webcam-fix-book5/) for details.
 
@@ -130,7 +130,7 @@ The built-in webcam uses Intel IPU6 (Meteor Lake or Raptor Lake) with an OmniVis
 
 - PipeWire-native apps (Firefox, Chromium) access the camera directly — no relay needed
 - Non-PipeWire apps use the on-demand V4L2 relay: near-zero CPU when idle, camera activates only when an app opens the device
-- Chromium browser PipeWire camera flags are auto-enabled during install
+- Chromium-family browsers are filtered out of the relay's V4L2 node by their own capability check, so the installer enables the PipeWire camera flag for them (browser must be closed; libcamera 0.7+)
 
 > **Multi-distro:** Supports **Ubuntu, Fedora, and Arch-based distros**. The install script auto-detects your distro. Galaxy Book5 (Lunar Lake / IPU7) is not supported (different driver stack) — see [webcam-fix-book5](webcam-fix-book5/).
 
@@ -140,7 +140,7 @@ For Galaxy Book5 (Lunar Lake / IPU7) on Arch, Fedora, and Ubuntu (source build).
 
 - PipeWire-native apps (Firefox, Chromium) access the camera directly
 - Non-PipeWire apps (Zoom, OBS, VLC) use the on-demand V4L2 relay: near-zero CPU when idle, camera activates only when an app opens the device
-- Chromium browser PipeWire camera flags are auto-enabled during install
+- Chromium-family browsers are filtered out of the relay's V4L2 node by their own capability check, so the installer enables the PipeWire camera flag for them (browser must be closed; libcamera 0.7+)
 
 For Samsung Book5 models with the OV02E10 sensor, an additional [patched libcamera build](webcam-fix-book5/libcamera-bayer-fix/) is needed to fix the purple/magenta tint caused by bayer pattern mismatch after rotation flip. See the [webcam-fix-book5 README](webcam-fix-book5/) for details.
 

@@ -190,6 +190,14 @@ if getent group camera-relay >/dev/null 2>&1; then
 fi
 echo "  ✓ Udev rules removed"
 
+# Take the Chromium PipeWire camera flag back out. Left behind it would point
+# those browsers at a PipeWire camera that no longer exists.
+_UNINST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -x "$_UNINST_DIR/../camera-relay/chromium-pipewire-camera.sh" ]]; then
+    echo "  Reverting Chromium browser camera flag..."
+    "$_UNINST_DIR/../camera-relay/chromium-pipewire-camera.sh" disable || true
+fi
+
 # [5/8] Remove WirePlumber rules
 echo "[5/8] Removing WirePlumber rules..."
 sudo rm -f /etc/wireplumber/main.lua.d/51-disable-ipu6-v4l2.lua
