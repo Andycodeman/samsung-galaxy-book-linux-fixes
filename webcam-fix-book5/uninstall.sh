@@ -192,6 +192,7 @@ while IFS=: read -r user _ _ _ _ home _; do
 done < <(getent passwd)
 sudo rm -f /usr/local/bin/camera-relay
 sudo rm -f /usr/local/bin/camera-relay-monitor
+sudo rm -f /usr/local/bin/camera-relay-gst
 sudo rm -rf /usr/local/share/camera-relay
 sudo rm -f /usr/share/applications/camera-relay-systray.desktop
 sudo rm -f /etc/xdg/autostart/camera-relay-systray.desktop

@@ -764,8 +764,22 @@ cmd_nudge_wireplumber() {
     # silently and the stale node would survive the whole session. Wait for the
     # monitor, bounded, then compare. (The legacy v4l2-relayd fix papered over
     # the same race with a flat `sleep 2`.)
+    # systemd takes the unit through start-post even when ExecStart has already
+    # failed, so this can be running alongside a relay that is not there. Left
+    # unchecked the wait below burns its full 15s on every restart attempt of a
+    # relay that cannot start — turning a RestartSec=5 recovery loop into 20s a
+    # cycle and filling the journal with a format complaint that is not the
+    # problem. Observed for real against a machine missing camera-relay-gst.
+    #
+    # The grace period covers the opposite race: ExecStartPost can beat
+    # ExecStart to writing the PID file, and treating that as "relay is gone"
+    # would disable the check on every healthy boot.
     local waited=0
     while [[ -z "$(loopback_real_format "$dev")" ]] && (( waited < 15 )); do
+        if (( waited >= 5 )) && ! is_running; then
+            info "Relay is not running — skipping WirePlumber check"
+            return 0
+        fi
         sleep 1
         waited=$((waited + 1))
     done
@@ -1577,12 +1591,23 @@ cmd_enable_persistent() {
     local skip_confirm=false
     [[ "${1:-}" == "--yes" ]] && skip_confirm=true
 
+    # Deliberately does NOT bail out here when persistent mode is already on.
+    # The unit is not static — it carries LIBCAMERA_IPA_MODULE_PATH,
+    # GST_PLUGIN_PATH, LD_LIBRARY_PATH, LIBCAMERA_SOFTISP_MODE,
+    # __EGL_VENDOR_LIBRARY_FILENAMES and the nudge-wireplumber ExecStartPost,
+    # all computed here at install time. Returning early meant a reinstall
+    # refreshed every binary and left the unit at whatever it was first created
+    # with, so fixes that live *in the unit* shipped installed and inert while
+    # the installer reported success: the EGL pin from #76 (black camera) and
+    # the WirePlumber re-probe from v0.3.62 (no camera in Chrome) both landed
+    # that way. The quiet no-op is preserved below by comparing content, not by
+    # skipping the work. (issue #82)
+    local already=false
     if is_persistent; then
-        info "Persistent mode is already enabled"
-        return 0
+        already=true
     fi
 
-    if ! $skip_confirm; then
+    if ! $already && ! $skip_confirm; then
         echo ""
         echo "  ┌──────────────────────────────────────────────────┐"
         echo "  │           On-Demand Camera Relay                 │"
@@ -1695,9 +1720,14 @@ cmd_enable_persistent() {
         info "NVIDIA GPU detected, no iGPU to pin — using CPU debayer"
     fi
 
-    # Create systemd user service
+    # Create systemd user service. Rendered to a temp file first and compared
+    # against what is installed, so an unchanged reinstall stays a genuine
+    # no-op — no daemon-reload, no restart, no camera dropped out from under
+    # whoever is using it.
     mkdir -p "$SERVICE_DIR"
-    cat > "${SERVICE_DIR}/${SERVICE_NAME}" <<EOF
+    local unit_path="${SERVICE_DIR}/${SERVICE_NAME}"
+    local unit_tmp="${unit_path}.new"
+    cat > "$unit_tmp" <<EOF
 [Unit]
 Description=Camera Relay (on-demand libcamera to v4l2loopback)
 After=pipewire.service wireplumber.service
@@ -1730,7 +1760,34 @@ ${egl_vendor:+Environment=__EGL_VENDOR_LIBRARY_FILENAMES=$egl_vendor}
 WantedBy=default.target
 EOF
 
+    local unit_changed=true
+    if [[ -f "$unit_path" ]] && cmp -s "$unit_tmp" "$unit_path"; then
+        unit_changed=false
+    fi
+    if $unit_changed; then
+        mv -f "$unit_tmp" "$unit_path"
+    else
+        rm -f "$unit_tmp"
+    fi
+
+    if $already && ! $unit_changed; then
+        info "Persistent mode is already enabled (service unit is up to date)"
+        return 0
+    fi
+
     systemctl --user daemon-reload
+
+    if $already; then
+        # Already enabled, but the unit content moved. Restart, or the running
+        # relay keeps the old environment until the next login — which is how
+        # the EGL pin stayed inert on machines that had the fix installed.
+        info "Service unit changed — restarting the relay to pick it up"
+        systemctl --user enable "$SERVICE_NAME" >/dev/null 2>&1 || true
+        systemctl --user restart "$SERVICE_NAME"
+        info "On-demand relay updated and restarted"
+        return 0
+    fi
+
     systemctl --user enable --now "$SERVICE_NAME"
 
     info "On-demand relay enabled"

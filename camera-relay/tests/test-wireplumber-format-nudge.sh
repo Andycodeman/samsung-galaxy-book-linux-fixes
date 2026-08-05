@@ -262,6 +262,7 @@ got=$(
         eval "$(extract_fn nudge_wireplumber)"
         eval "$(extract_fn cmd_nudge_wireplumber)"
         info() { :; }
+        is_running() { return 0; }
         detect_loopback_device() { echo /dev/video0; }
         cmd_nudge_wireplumber
         echo "rc=$?"
@@ -290,6 +291,7 @@ start=$SECONDS
     eval "$(extract_fn nudge_wireplumber)"
     eval "$(extract_fn cmd_nudge_wireplumber)"
     info() { :; }
+    is_running() { return 0; }
     detect_loopback_device() { echo /dev/video0; }
     cmd_nudge_wireplumber
 ) > /dev/null 2>&1
@@ -303,6 +305,65 @@ if ! grep -q 'restart' "$env_dir/systemctl.calls" 2>/dev/null; then
     ok "no restart when the format never appears"
 else
     bad "restarted WirePlumber without ever reading a device format"
+fi
+
+# systemd runs ExecStartPost even when ExecStart has already failed — the unit
+# goes through start-post regardless of the main process's fate. So this can be
+# waiting on a format for a relay that is not there, and burning the full 15s
+# every time turns a RestartSec=5 recovery loop into 20s a cycle. Observed on a
+# real machine whose camera-relay-gst was missing.
+env_dir=$(new_env "" 51 "2x1")
+start=$SECONDS
+(
+    set -uo pipefail
+    PATH="$env_dir/bin:$PATH"
+    eval "$(extract_fn loopback_real_format)"
+    eval "$(extract_fn pipewire_node_for)"
+    eval "$(extract_fn nudge_wireplumber)"
+    eval "$(extract_fn cmd_nudge_wireplumber)"
+    info() { :; }
+    is_running() { return 1; }          # ExecStart died
+    detect_loopback_device() { echo /dev/video0; }
+    cmd_nudge_wireplumber
+) > /dev/null 2>&1
+rc=$?
+elapsed=$((SECONDS - start))
+if (( elapsed < 12 )); then
+    ok "dead relay: gives up early (${elapsed}s), not the full wait"
+else
+    bad "dead relay: still waited ${elapsed}s — slows every restart attempt"
+fi
+if [[ $rc -eq 0 ]]; then
+    ok "dead relay: still exits 0"
+else
+    bad "dead relay: exited $rc — would compound the failure"
+fi
+if ! grep -q 'restart' "$env_dir/systemctl.calls" 2>/dev/null; then
+    ok "dead relay: no WirePlumber restart"
+else
+    bad "dead relay: restarted WirePlumber anyway"
+fi
+
+# The grace period matters as much as the check: ExecStartPost can beat
+# ExecStart to writing the PID file, and bailing on that would disable the
+# whole check on every healthy boot.
+env_dir=$(new_env "YUYV 1920x1080" 51 "2x1")
+(
+    set -uo pipefail
+    PATH="$env_dir/bin:$PATH"
+    eval "$(extract_fn loopback_real_format)"
+    eval "$(extract_fn pipewire_node_for)"
+    eval "$(extract_fn nudge_wireplumber)"
+    eval "$(extract_fn cmd_nudge_wireplumber)"
+    info() { :; }
+    is_running() { return 1; }          # PID file not written yet...
+    detect_loopback_device() { echo /dev/video0; }
+    cmd_nudge_wireplumber
+) > /dev/null 2>&1
+if grep -q 'restart' "$env_dir/systemctl.calls" 2>/dev/null; then
+    ok "format already available: acts before the liveness check can bite"
+else
+    bad "liveness check disabled a re-probe the device was ready for"
 fi
 
 # ── 5. Wiring ────────────────────────────────────────────────────────────────

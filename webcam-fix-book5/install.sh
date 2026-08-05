@@ -1110,6 +1110,35 @@ EOF
         fi
     fi
 
+    # Build and install the pipeline launcher (C binary).
+    #
+    # Not optional: since v0.3.59 the relay does not shell out to gst-launch-1.0
+    # itself, it execs this launcher, and camera-relay `die`s at start when the
+    # binary is absent. This installer never built it, so every Book5 install
+    # after v0.3.59 produced a relay that could not start. (issue #85, reported
+    # by @david-bartlett)
+    #
+    # Installed plain 755 here, NOT setgid. The setgid treatment in
+    # webcam-fix-libcamera exists to reach raw MC nodes that its udev rule moves
+    # into the memberless camera-relay group; this installer ships neither that
+    # group nor that rule, so the nodes stay in 'video' and the desktop user
+    # already has them. camera-relay-gst handles egid == gid explicitly and runs
+    # fine. Porting the full setgid + udev hardening across is issue #70 and
+    # wants a Book5 tester, not a same-day patch.
+    if [[ -f "$RELAY_DIR/camera-relay-gst.c" ]]; then
+        echo "  Building pipeline launcher..."
+        if gcc -O2 -Wall -o /tmp/camera-relay-gst "$RELAY_DIR/camera-relay-gst.c"; then
+            sudo install -m 755 /tmp/camera-relay-gst /usr/local/bin/camera-relay-gst
+            rm -f /tmp/camera-relay-gst
+            echo "  ✓ Installed /usr/local/bin/camera-relay-gst"
+        else
+            echo "  ⚠ Failed to build camera-relay-gst (gcc required) — the relay"
+            echo "    will not start. Install gcc and re-run this script."
+        fi
+    else
+        echo "  ⚠ camera-relay-gst.c not found in $RELAY_DIR — the relay will not start"
+    fi
+
     # Install CLI tool
     sudo cp "$RELAY_DIR/camera-relay" /usr/local/bin/camera-relay
     sudo chmod 755 /usr/local/bin/camera-relay
