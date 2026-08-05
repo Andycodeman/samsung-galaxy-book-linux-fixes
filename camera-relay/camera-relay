@@ -1570,8 +1570,12 @@ print("DISABLED" if any(x.endswith("@2") for x in hit) else ("ENABLED" if hit el
             echo "    then fully quit and reopen the browser. Needs libcamera 0.7+"
             echo "    (this machine: $(pkg-config --modversion libcamera 2>/dev/null || echo unknown));"
             echo "    on Ubuntu 24.04/Zorin libcamera 0.2.0 has no IPU6 support and the"
-            echo "    flag makes things worse. Edge has no such flag and cannot be fixed"
-            echo "    this way."
+            echo "    flag makes things worse."
+            echo "    Edge does not expose the entry in edge://flags, so there is nothing"
+            echo "    to write into its profile — launch it with"
+            echo "    --enable-features=WebRtcPipeWireCamera instead. Electron apps hit the"
+            echo "    same V4L2 filter but the switch does not help them: PipeWire camera"
+            echo "    is not wired into Electron (only the screen-share capturer is)."
         fi
     fi
     if command -v flatpak &>/dev/null; then

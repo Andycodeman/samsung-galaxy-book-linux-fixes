@@ -390,7 +390,10 @@ flat_dir=$(make_profile "$env_dir" ".var/app/com.google.Chrome/config/google-chr
 sv_dir=$(make_profile "$env_dir" "snap/vivaldi/current/.config/vivaldi" '{"browser":{}}')
 gx_dir=$(make_profile "$env_dir" ".var/app/com.opera.opera-gx/config/opera-gx" '{"browser":{}}')
 opera_dir=$(make_profile "$env_dir" ".config/opera" '{"browser":{}}')
-# Edge has no such flag — a profile here must be left alone, not half-configured.
+# Edge does not register the entry in edge://flags, so writing it into Edge's
+# Local State would do nothing but litter someone's config. (Edge is still
+# fixable — the Chromium feature is compiled in and the command-line switch
+# works — just not through this file.)
 edge_dir=$(make_profile "$env_dir" ".config/microsoft-edge" '{"browser":{}}')
 # Electron apps keep a Local State but never process about:flags. Writing there
 # leaves dead weight in someone else's config and fixes nothing.
@@ -406,7 +409,7 @@ for pair in "Chrome:$chrome_dir" "Brave:$brave_dir" "snap Chromium:$snap_dir" \
     fi
 done
 if [[ "$(labs_of "$edge_dir")" == "MISSING" ]]; then
-    ok "Edge left alone (no such flag exists there)"
+    ok "Edge left alone (about:flags entry not registered there)"
 else
     bad "Edge profile written with a flag Edge does not have"
 fi
