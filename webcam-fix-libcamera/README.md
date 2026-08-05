@@ -172,8 +172,10 @@ browsers, not optional** — with one version-specific exception. Check with
   libcamera version instead.
 
 Electron apps (Slack, Teams, Discord, VS Code) use the same Chromium capture
-code and are affected the same way. Launch them with
-`--enable-features=WebRTCPipeWireCamera` if they can't see the camera.
+code and are filtered out the same way, but **the command-line switch does not
+rescue them** — PipeWire *camera* support is not wired into Electron at all. See
+[Chromium can't use the V4L2 relay](#chromium-cant-use-the-v4l2-relay) for the
+detail, and for Edge, which the switch *does* fix.
 
 Quick test:
 
