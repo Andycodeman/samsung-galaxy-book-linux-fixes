@@ -1417,6 +1417,19 @@ cmd_doctor() {
         fi
     done
 
+    # Ask the flag tool what it sees, and let that widen the net. Deriving
+    # "is this a Chromium machine?" from `command -v` over a five-binary list
+    # misses Vivaldi-only, Edge-only and flatpak-only installs — machines whose
+    # profiles the installer edited but which would get none of the diagnostics
+    # below. A profile on disk is the better signal.
+    local flag_tool="" flag_status=""
+    if [[ -x /usr/local/bin/chromium-pipewire-camera ]]; then
+        flag_tool=/usr/local/bin/chromium-pipewire-camera
+        flag_status=$("$flag_tool" status 2>/dev/null) || flag_status=""
+        [[ "$flag_status" == *"No Chromium-family"* ]] && flag_status=""
+        [[ -n "$flag_status" ]] && chromium_family=true
+    fi
+
     # Whether Chromium can see the loopback is not a matter of opinion: it
     # applies a fixed capability test in
     # media/capture/video/linux/video_capture_device_factory_v4l2.cc —
@@ -1431,10 +1444,12 @@ cmd_doctor() {
     # enumerateDevices() simply returns no videoinput. Firefox accepts dual caps
     # and reads the node directly, which is the whole reason the two disagree.
     if $chromium_family && [[ -n "$dev" ]] && command -v v4l2-ctl &>/dev/null; then
-        local caps_hex devcaps_hex info visible=1
-        info=$(v4l2-ctl -d "$dev" --info 2>/dev/null) || info=""
-        caps_hex=$(awk '/^\tCapabilities/ { print $3; exit }' <<< "$info")
-        devcaps_hex=$(awk '/^\tDevice Caps/ { print $4; exit }' <<< "$info")
+        # Not named `info`: that is this script's own logging function, and a
+        # local of the same name shadows it for the rest of the block.
+        local caps_hex devcaps_hex caps_info visible=1
+        caps_info=$(v4l2-ctl -d "$dev" --info 2>/dev/null) || caps_info=""
+        caps_hex=$(awk '/^\tCapabilities/ { print $3; exit }' <<< "$caps_info")
+        devcaps_hex=$(awk '/^\tDevice Caps/ { print $4; exit }' <<< "$caps_info")
         if [[ -n "$caps_hex" ]]; then
             local caps=$((caps_hex)) devcaps=0
             [[ -n "$devcaps_hex" ]] && devcaps=$((devcaps_hex))
@@ -1512,6 +1527,17 @@ for obj in data:
         # Per profile, what the flag actually is. "Consider enabling it" is not
         # a diagnostic; whether it is set is.
         local prof label dir state needs_flag=0
+
+        # Prefer the installed tool over re-deriving this. It already knows all
+        # ten profile locations — Chrome Beta/Unstable and the three flatpaks
+        # included — and a second hand-maintained list here is a list that
+        # drifts out of step with it.
+        if [[ -n "$flag_status" ]]; then
+            sed 's/^ */  /' <<< "$flag_status"
+            if grep -qvE 'ENABLED[[:space:]]*$' <<< "$flag_status"; then
+                needs_flag=1
+            fi
+        else
         for prof in \
             "Chrome|$HOME/.config/google-chrome" \
             "Chromium|$HOME/.config/chromium" \
@@ -1543,6 +1569,7 @@ print("DISABLED" if any(x.endswith("@2") for x in hit) else ("ENABLED" if hit el
             echo "  $label PipeWire flag: $state"
             [[ "$state" == "ENABLED" ]] || needs_flag=1
         done
+        fi
 
         # Only explain the fix when something still needs it. A doctor that
         # prints the same remedy whether or not it applies trains people to
@@ -1550,17 +1577,19 @@ print("DISABLED" if any(x.endswith("@2") for x in hit) else ("ENABLED" if hit el
         if (( needs_flag )); then
             # Prefer the installed copy: the source tree it was run from during
             # install is usually gone by the time anyone reads this.
-            local flag_tool="camera-relay/chromium-pipewire-camera.sh"
-            if [[ -x /usr/local/bin/chromium-pipewire-camera ]]; then
-                flag_tool="chromium-pipewire-camera"
-            fi
-            echo "    Set it with: $flag_tool"
+            local flag_hint="camera-relay/chromium-pipewire-camera.sh"
+            [[ -n "$flag_tool" ]] && flag_hint="chromium-pipewire-camera"
+            echo "    Set it with: $flag_hint"
             echo "    or by hand at chrome://flags/#enable-webrtc-pipewire-camera,"
             echo "    then fully quit and reopen the browser. Needs libcamera 0.7+"
             echo "    (this machine: $(pkg-config --modversion libcamera 2>/dev/null || echo unknown));"
             echo "    on Ubuntu 24.04/Zorin libcamera 0.2.0 has no IPU6 support and the"
-            echo "    flag makes things worse. Edge has no such flag and cannot be fixed"
-            echo "    this way."
+            echo "    flag makes things worse."
+            echo "    Edge does not expose the entry in edge://flags, so there is nothing"
+            echo "    to write into its profile — launch it with"
+            echo "    --enable-features=WebRtcPipeWireCamera instead. Electron apps hit the"
+            echo "    same V4L2 filter but the switch does not help them: PipeWire camera"
+            echo "    is not wired into Electron (only the screen-share capturer is)."
         fi
     fi
     if command -v flatpak &>/dev/null; then

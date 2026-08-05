@@ -153,7 +153,7 @@ configuration — see [Chromium can't use the V4L2 relay](#chromium-cant-use-the
 | **Chrome** | Working | **Only** via PipeWire — the installer enables the flag for you |
 | **Chromium** | Working | Same as Chrome |
 | **Brave** | Working | Same as Chrome |
-| **Edge** | Not working | Same V4L2 filter as Chrome, but no PipeWire flag exists to work around it |
+| **Edge** | Works, but not automatically | Same V4L2 filter as Chrome. `edge://flags` does not expose the entry, so the installer cannot set it — launch with `--enable-features=WebRtcPipeWireCamera` instead |
 | **Zoom** | Working | Uses V4L2 camera relay |
 | **OBS Studio** | Working | Uses V4L2 camera relay |
 | **VLC** | Working | Uses V4L2 camera relay |
@@ -438,7 +438,20 @@ camera-relay nudge-wireplumber
 
 Two things this does **not** fix:
 
-- **Edge** has no such flag. It stays blind to the relay.
+- **Edge** does not expose the entry in `edge://flags`, so there is nothing for
+  the installer to write into its profile. The underlying Chromium feature is
+  still compiled in, so the command-line switch works — edit the `Exec=` line of
+  `microsoft-edge.desktop`, or launch it as:
+
+  ```bash
+  microsoft-edge --enable-features=WebRtcPipeWireCamera
+  ```
+
+- **Electron apps** (Slack, Discord, Teams, VS Code) are a different case: they
+  hit the same V4L2 filter, but the switch does **not** help, because PipeWire
+  *camera* support is not wired into Electron — only the screen-share capturer
+  is ([electron#45058](https://github.com/electron/electron/issues/45058) is a
+  closed, unimplemented request). Nothing in this repo fixes them today.
 - **libcamera 0.2.0** (Ubuntu 24.04 Noble / Zorin) has no IPU6 support, so the
   PipeWire path produces no frames either. The script refuses to enable the flag
   below 0.7 for that reason.

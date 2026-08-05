@@ -106,22 +106,60 @@ resolve_target_user() {
 #
 # Edge is deliberately absent: it ships no enable-webrtc-pipewire-camera flag,
 # so there is nothing to write. It stays blind to the relay.
+# Browser config directory names, matched against three packaging roots rather
+# than written out as full paths. Spelling out every combination is what left
+# the previous list with native Vivaldi but not the snap, and no Opera at all:
+# each new browser needed three entries and nobody adds all three.
+#
+# Deliberately absent:
+#   Edge     — ships no enable-webrtc-pipewire-camera flag; nothing to write.
+#   Electron — Slack, Discord, VS Code and friends keep a Local State too, but
+#              they never process about:flags, so an entry there is dead weight
+#              in someone else's config file. They need
+#              --enable-features=WebRTCPipeWireCamera on the command line.
 chromium_profile_dirs() {
-    local home="$1" d
-    local -a candidates=(
-        "Chrome|$home/.config/google-chrome"
-        "Chrome Beta|$home/.config/google-chrome-beta"
-        "Chrome Unstable|$home/.config/google-chrome-unstable"
-        "Chromium|$home/.config/chromium"
-        "Chromium (snap)|$home/snap/chromium/current/.config/chromium"
-        "Brave|$home/.config/BraveSoftware/Brave-Browser"
-        "Vivaldi|$home/.config/vivaldi"
-        "Chrome (flatpak)|$home/.var/app/com.google.Chrome/config/google-chrome"
-        "Chromium (flatpak)|$home/.var/app/org.chromium.Chromium/config/chromium"
-        "Brave (flatpak)|$home/.var/app/com.brave.Browser/config/BraveSoftware/Brave-Browser"
+    local home="$1" root name dir label kind
+    local -a names=(
+        google-chrome google-chrome-beta google-chrome-unstable
+        chromium
+        BraveSoftware/Brave-Browser
+        vivaldi
+        opera opera-beta opera-developer opera-gx
     )
-    for d in "${candidates[@]}"; do
-        [[ -f "${d#*|}/Local State" ]] && printf '%s\t%s\n' "${d%%|*}" "${d#*|}"
+    local -a seen=()
+
+    # "$home/.config" plus every snap and flatpak private home. The globs are
+    # guarded because an unmatched glob stays literal under bash.
+    for root in "$home/.config" "$home"/snap/*/current/.config "$home"/.var/app/*/config; do
+        [[ -d "$root" ]] || continue
+        case "$root" in
+            "$home"/snap/*)   kind=" (snap)" ;;
+            "$home"/.var/app/*) kind=" (flatpak)" ;;
+            *)                kind="" ;;
+        esac
+        for name in "${names[@]}"; do
+            dir="$root/$name"
+            [[ -f "$dir/Local State" ]] || continue
+            # A snap's "current" is a symlink to a revision; without this the
+            # same profile can be reported twice under two paths.
+            dir=$(cd "$dir" 2>/dev/null && pwd -P) || continue
+            [[ " ${seen[*]-} " == *" $dir "* ]] && continue
+            seen+=("$dir")
+            case "$name" in
+                google-chrome)              label="Chrome" ;;
+                google-chrome-beta)         label="Chrome Beta" ;;
+                google-chrome-unstable)     label="Chrome Unstable" ;;
+                chromium)                   label="Chromium" ;;
+                BraveSoftware/Brave-Browser) label="Brave" ;;
+                vivaldi)                    label="Vivaldi" ;;
+                opera)                      label="Opera" ;;
+                opera-beta)                 label="Opera Beta" ;;
+                opera-developer)            label="Opera Developer" ;;
+                opera-gx)                   label="Opera GX" ;;
+                *)                          label="$name" ;;
+            esac
+            printf '%s\t%s\n' "$label$kind" "$dir"
+        done
     done
     return 0
 }
@@ -133,7 +171,30 @@ chromium_profile_dirs() {
 # names — those get truncated to 15 chars in comm and "chrome" appears in our
 # own argv besides.
 browser_running() {
-    local dir="$1" target pid
+    local dir="$1" target pid appid
+
+    # A flatpak browser records its *sandbox* PID in SingletonLock, which on the
+    # host is an unrelated process — for a freshly started app, a low PID like 2,
+    # i.e. a root-owned kernel thread. `kill -0` on that fails with EPERM, which
+    # reads identically to "no such process", so the PID check below concludes
+    # "not running" and we write into a live profile. That is the dangerous
+    # direction: the write looks successful and the browser discards it on exit.
+    # Ask flatpak, which knows what it is running.
+    if [[ "$dir" == */.var/app/* ]]; then
+        appid=${dir#*/.var/app/}
+        appid=${appid%%/*}
+        if command -v flatpak >/dev/null 2>&1; then
+            if flatpak ps --columns=application 2>/dev/null | grep -qxF "$appid"; then
+                return 0
+            fi
+            return 1
+        fi
+        # No flatpak CLI to ask: the lock's PID is meaningless here, so treat a
+        # present lock as "running" and skip rather than risk a silent no-op.
+        [[ -L "$dir/SingletonLock" ]] && return 0
+        return 1
+    fi
+
     local lock="$dir/SingletonLock"
     [[ -L "$lock" ]] || return 1
     target=$(readlink "$lock" 2>/dev/null) || return 1
@@ -171,10 +232,17 @@ if not isinstance(labs, list):
     labs = []
 
 kept = [x for x in labs if not (isinstance(x, str) and pattern.match(x))]
-had = len(kept) != len(labs)
+hit = [x for x in labs if isinstance(x, str) and pattern.match(x)]
+had = len(hit) > 0
 
+# "@2" is Chromium for "the user explicitly chose Disabled". Anything else that
+# matches — "@1", or the bare flag name — means enabled.
+was_disabled = any(x.endswith("@2") for x in hit)
+
+# Same three words `camera-relay doctor` prints. One fact should not have two
+# vocabularies depending on which tool you happen to ask.
 if action == "status":
-    print("enabled" if entry in labs else ("other" if had else "absent"))
+    print("DISABLED" if was_disabled else ("ENABLED" if hit else "not set"))
     sys.exit(0)
 
 if action == "enable":
@@ -212,7 +280,9 @@ except OSError as exc:
     print("unwritable: %s" % exc, file=sys.stderr)
     sys.exit(4)
 
-print("changed")
+# Distinguished from a plain "changed" so the caller can own up to overriding a
+# deliberate choice rather than reporting it as routine.
+print("reversed" if (action == "enable" and was_disabled) else "changed")
 '
 
 flag_state() {
@@ -301,11 +371,27 @@ main() {
                 else
                     echo "  ✓ $label: PipeWire camera flag removed"
                 fi ;;
+            0:reversed)
+                # The profile said Disabled on purpose — quite possibly following
+                # this project's own earlier "leave it OFF" advice, which was
+                # right for libcamera 0.2.0 and wrong here. Overriding it is
+                # correct on 0.7+, but doing so silently is not.
+                echo "  ✓ $label: PipeWire camera flag enabled"
+                echo "    (it was explicitly set to Disabled — that preference has been"
+                echo "     reversed; the original is saved as 'Local State$BACKUP_SUFFIX')" ;;
             0:unchanged)
                 echo "  ✓ $label: already correct" ;;
             *)
                 echo "  ⚠ $label: could not update profile (${out:-unknown error})" ;;
         esac
+
+        # The backup exists to undo *our* edit. Once the flag is back out, it is
+        # a stale copy of the user's browser config sitting in their profile
+        # directory forever — so clear it on the way out, but only after a
+        # disable that actually succeeded.
+        if [[ "$ACTION" == "disable" && "$rc" == "0" ]]; then
+            rm -f "$dir/Local State$BACKUP_SUFFIX"
+        fi
     done
 
     if [[ "$ACTION" == "enable" ]]; then
