@@ -73,7 +73,17 @@ EOF
         printf '#!/bin/sh\nexit 127\n' > "$env_dir/bin/pkg-config"
     fi
 
-    chmod +x "$env_dir/bin/getent" "$env_dir/bin/pkg-config"
+    # `flatpak ps` is the only trustworthy "is it running?" for a sandboxed
+    # browser — its SingletonLock holds a sandbox PID that means nothing on the
+    # host. Reports whatever the test wrote to flatpak.running.
+    cat > "$env_dir/bin/flatpak" << EOF
+#!/bin/sh
+[ "\$1" = ps ] || exit 0
+cat "$env_dir/flatpak.running" 2>/dev/null
+exit 0
+EOF
+
+    chmod +x "$env_dir/bin/getent" "$env_dir/bin/pkg-config" "$env_dir/bin/flatpak"
     printf '%s\n' "$env_dir"
 }
 
@@ -315,6 +325,42 @@ else
     ok "live SingletonLock: no stray backup"
 fi
 
+# Flatpak profiles are the dangerous case. SingletonLock records the *sandbox*
+# PID — for a freshly started app that is a low number like 2, which on the host
+# is a root-owned kernel thread. `kill -0` on it fails with EPERM, which is
+# indistinguishable from "no such process", so a PID-based guard concludes "not
+# running" and writes into a live profile. The write then looks successful and
+# the browser discards it on exit: a silent no-op, the one outcome worse than
+# refusing. Ask flatpak instead.
+fp_env=$(new_env)
+fp_dir=$(make_profile "$fp_env" ".var/app/com.opera.opera-gx/config/opera-gx" '{"browser":{}}')
+ln -s "testhost-2" "$fp_dir/SingletonLock"          # PID 2 = kthreadd on the host
+echo "com.opera.opera-gx" > "$fp_env/flatpak.running"
+fp_out=$(run_script "$fp_env" enable)
+if [[ "$(labs_of "$fp_dir")" == "MISSING" ]]; then
+    ok "flatpak: running app detected via flatpak ps, profile untouched"
+else
+    bad "flatpak: wrote into a running sandboxed browser — discarded on exit"
+fi
+if grep -q "is running" <<< "$fp_out"; then
+    ok "flatpak: says which browser is in the way"
+else
+    bad "flatpak: refused without saying why: $fp_out"
+fi
+
+# Same stale lock, but the app is not running: must proceed, or the flag can
+# never be set for that browser at all.
+fp_env=$(new_env)
+fp_dir=$(make_profile "$fp_env" ".var/app/com.opera.opera-gx/config/opera-gx" '{"browser":{}}')
+ln -s "testhost-2" "$fp_dir/SingletonLock"
+: > "$fp_env/flatpak.running"
+run_script "$fp_env" enable > /dev/null
+if [[ "$(labs_of "$fp_dir")" == "[\"$FLAG_ENTRY\"]" ]]; then
+    ok "flatpak: not running → proceeds despite the leftover lock"
+else
+    bad "flatpak: stale lock blocked it forever"
+fi
+
 # A crash leaves the lock behind. Refusing forever on a dead PID would strand
 # the user with no camera and no obvious reason.
 dead=$(bash -c 'echo $$')          # exited by the time we read it
@@ -338,10 +384,21 @@ chrome_dir=$(make_profile "$env_dir" ".config/google-chrome" '{"browser":{}}')
 brave_dir=$(make_profile "$env_dir" ".config/BraveSoftware/Brave-Browser" '{"browser":{}}')
 snap_dir=$(make_profile "$env_dir" "snap/chromium/current/.config/chromium" '{"browser":{}}')
 flat_dir=$(make_profile "$env_dir" ".var/app/com.google.Chrome/config/google-chrome" '{"browser":{}}')
+# The three the old full-path list missed. Writing every browser out once per
+# packaging is what let these slip: native Vivaldi was listed, the snap was not,
+# and Opera was absent in all three forms.
+sv_dir=$(make_profile "$env_dir" "snap/vivaldi/current/.config/vivaldi" '{"browser":{}}')
+gx_dir=$(make_profile "$env_dir" ".var/app/com.opera.opera-gx/config/opera-gx" '{"browser":{}}')
+opera_dir=$(make_profile "$env_dir" ".config/opera" '{"browser":{}}')
 # Edge has no such flag — a profile here must be left alone, not half-configured.
 edge_dir=$(make_profile "$env_dir" ".config/microsoft-edge" '{"browser":{}}')
+# Electron apps keep a Local State but never process about:flags. Writing there
+# leaves dead weight in someone else's config and fixes nothing.
+slack_dir=$(make_profile "$env_dir" ".config/Slack" '{"browser":{}}')
 run_script "$env_dir" enable > /dev/null
-for pair in "Chrome:$chrome_dir" "Brave:$brave_dir" "snap Chromium:$snap_dir" "flatpak Chrome:$flat_dir"; do
+for pair in "Chrome:$chrome_dir" "Brave:$brave_dir" "snap Chromium:$snap_dir" \
+            "flatpak Chrome:$flat_dir" "snap Vivaldi:$sv_dir" \
+            "flatpak Opera GX:$gx_dir" "Opera:$opera_dir"; do
     if [[ "$(labs_of "${pair#*:}")" == "[\"$FLAG_ENTRY\"]" ]]; then
         ok "${pair%%:*} profile updated"
     else
@@ -352,6 +409,27 @@ if [[ "$(labs_of "$edge_dir")" == "MISSING" ]]; then
     ok "Edge left alone (no such flag exists there)"
 else
     bad "Edge profile written with a flag Edge does not have"
+fi
+if [[ "$(labs_of "$slack_dir")" == "MISSING" ]]; then
+    ok "Electron app left alone (does not read about:flags)"
+else
+    bad "wrote the flag into an Electron app's config"
+fi
+
+# Labels have to say which packaging, or two Vivaldis are indistinguishable in
+# doctor's output — and one of them may be the one that is broken.
+out=$(run_script "$env_dir" status)
+if grep -q 'Vivaldi (snap)' <<< "$out" && grep -q 'Opera GX (flatpak)' <<< "$out"; then
+    ok "labels name the packaging"
+else
+    bad "labels do not distinguish packaging: $out"
+fi
+# A snap's "current" is a symlink to a revision; resolving it must not make the
+# same profile show up twice.
+if [[ "$(grep -c 'Vivaldi' <<< "$out")" == "1" ]]; then
+    ok "no duplicate report for a symlinked snap profile"
+else
+    bad "reported the same profile more than once: $out"
 fi
 
 env_dir=$(new_env)
