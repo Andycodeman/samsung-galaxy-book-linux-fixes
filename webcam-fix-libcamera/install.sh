@@ -41,17 +41,22 @@ FORCE_LIBCAMERA_REBUILD=false
 # ship it under a consolidated module name; the in-tree detection below already
 # handles the common cases, but this flag is the escape hatch when it doesn't.
 SKIP_MODULE_CHECK=false
+NO_RESTART=false
 for arg in "$@"; do
     case "$arg" in
         --force-libcamera-rebuild) FORCE_LIBCAMERA_REBUILD=true ;;
         --skip-module-check) SKIP_MODULE_CHECK=true ;;
+        --no-restart) NO_RESTART=true ;;
         -h|--help)
-            echo "Usage: $0 [--force-libcamera-rebuild] [--skip-module-check]"
+            echo "Usage: $0 [--force-libcamera-rebuild] [--skip-module-check] [--no-restart]"
             echo "  --force-libcamera-rebuild  Always build the patched libcamera from source"
             echo "                             (use if your packaged libcamera's OV02C10 helper"
             echo "                             doesn't register at runtime, e.g. Arch/CachyOS)"
             echo "  --skip-module-check        Continue even if the IVSC/IPU6 kernel modules"
             echo "                             can't be found by name (built-in or renamed)"
+            echo "  --no-restart               Never restart PipeWire. The camera will not be"
+            echo "                             verified at the end; reboot and run"
+            echo "                             'camera-relay doctor' instead"
             exit 0
             ;;
         *) echo "WARNING: unknown argument '$arg' (ignored)" ;;
@@ -2045,9 +2050,58 @@ fi
 echo ""
 echo "[14/14] Restarting PipeWire and verifying camera..."
 
-# Restart PipeWire so it picks up the libcamera SPA plugin
-systemctl --user restart pipewire wireplumber 2>/dev/null || true
-sleep 3
+# Restarting PipeWire is not cosmetic: every application holding a stream loses
+# it, and most do not reconnect — browsers and Spotify in particular go silent
+# until restarted. Running a *camera* script and losing your speakers points
+# nowhere near its cause; during #80 testing it read as "the uninstall broke my
+# audio" and took a speaker-test to rule out. (issue #81)
+#
+# The restart is still load-bearing here, so this asks rather than dropping it:
+# the libcamera SPA plugin is loaded by the pipewire daemon itself, so bouncing
+# only wireplumber would not pick up a freshly built libcamera and the check
+# below would report a false negative. Skipping is safe — it degrades into the
+# "PipeWire hasn't picked it up yet, reboot" branch, which is already correct.
+pipewire_stream_apps() {
+    command -v pactl &>/dev/null || return 1
+    # One type per call. `pactl list sink-inputs source-outputs` exits 0 and
+    # prints NOTHING — it takes a single type and silently ignores the rest — so
+    # the combined form looks like "no streams are active" on every machine.
+    { pactl list sink-inputs 2>/dev/null
+      pactl list source-outputs 2>/dev/null
+    } | sed -n 's/^[[:space:]]*application\.name = "\(.*\)"/\1/p' | sort -u
+}
+
+PIPEWIRE_RESTARTED=false
+_RESTART=true
+if [[ "$NO_RESTART" == true ]]; then
+    echo "  – Skipping PipeWire restart (--no-restart)."
+    _RESTART=false
+else
+    _IN_USE=$(pipewire_stream_apps || true)
+    if [[ -n "$_IN_USE" ]]; then
+        echo "  ⚠ A PipeWire restart drops the audio/video streams these apps hold,"
+        echo "    and most will not reconnect on their own:"
+        sed 's/^/      /' <<< "$_IN_USE"
+        echo ""
+        echo "    Skipping is safe — a reboot (which this script recommends anyway)"
+        echo "    achieves the same thing. It only defers the camera check below."
+        # `|| _ans=""` because this script runs under `set -e` and read returns 1
+        # on EOF, which would otherwise kill the install for a piped stdin.
+        read -rp "  Restart PipeWire now and interrupt them? [y/N] " _ans || _ans=""
+        case "$_ans" in
+            [yY]|[yY][eE][sS]) ;;
+            *) echo "  – Skipped. Reboot to finish, then check: camera-relay doctor"
+               _RESTART=false ;;
+        esac
+    fi
+fi
+
+if [[ "$_RESTART" == true ]]; then
+    # Restart PipeWire so it picks up the libcamera SPA plugin
+    systemctl --user restart pipewire wireplumber 2>/dev/null || true
+    sleep 3
+    PIPEWIRE_RESTARTED=true
+fi
 
 # Check if PipeWire sees the camera via libcamera
 CAMERA_FOUND=false
@@ -2108,6 +2162,10 @@ if $CAMERA_FOUND; then
     echo "         log out and back in for udev rules to take effect."
 elif $CAPTURE_OK; then
     echo "  libcamera detects the camera but PipeWire hasn't picked it up yet."
+    if ! $PIPEWIRE_RESTARTED; then
+        echo "  (expected — the PipeWire restart was skipped, so it has not"
+        echo "   reloaded the libcamera plugin yet.)"
+    fi
     echo ""
     echo "  This is normal on first install. Please:"
     echo "    1. Log out and back in (or reboot)"
