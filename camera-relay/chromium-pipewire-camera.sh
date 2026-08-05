@@ -171,10 +171,17 @@ if not isinstance(labs, list):
     labs = []
 
 kept = [x for x in labs if not (isinstance(x, str) and pattern.match(x))]
-had = len(kept) != len(labs)
+hit = [x for x in labs if isinstance(x, str) and pattern.match(x)]
+had = len(hit) > 0
 
+# "@2" is Chromium for "the user explicitly chose Disabled". Anything else that
+# matches — "@1", or the bare flag name — means enabled.
+was_disabled = any(x.endswith("@2") for x in hit)
+
+# Same three words `camera-relay doctor` prints. One fact should not have two
+# vocabularies depending on which tool you happen to ask.
 if action == "status":
-    print("enabled" if entry in labs else ("other" if had else "absent"))
+    print("DISABLED" if was_disabled else ("ENABLED" if hit else "not set"))
     sys.exit(0)
 
 if action == "enable":
@@ -212,7 +219,9 @@ except OSError as exc:
     print("unwritable: %s" % exc, file=sys.stderr)
     sys.exit(4)
 
-print("changed")
+# Distinguished from a plain "changed" so the caller can own up to overriding a
+# deliberate choice rather than reporting it as routine.
+print("reversed" if (action == "enable" and was_disabled) else "changed")
 '
 
 flag_state() {
@@ -301,11 +310,27 @@ main() {
                 else
                     echo "  ✓ $label: PipeWire camera flag removed"
                 fi ;;
+            0:reversed)
+                # The profile said Disabled on purpose — quite possibly following
+                # this project's own earlier "leave it OFF" advice, which was
+                # right for libcamera 0.2.0 and wrong here. Overriding it is
+                # correct on 0.7+, but doing so silently is not.
+                echo "  ✓ $label: PipeWire camera flag enabled"
+                echo "    (it was explicitly set to Disabled — that preference has been"
+                echo "     reversed; the original is saved as 'Local State$BACKUP_SUFFIX')" ;;
             0:unchanged)
                 echo "  ✓ $label: already correct" ;;
             *)
                 echo "  ⚠ $label: could not update profile (${out:-unknown error})" ;;
         esac
+
+        # The backup exists to undo *our* edit. Once the flag is back out, it is
+        # a stale copy of the user's browser config sitting in their profile
+        # directory forever — so clear it on the way out, but only after a
+        # disable that actually succeeded.
+        if [[ "$ACTION" == "disable" && "$rc" == "0" ]]; then
+            rm -f "$dir/Local State$BACKUP_SUFFIX"
+        fi
     done
 
     if [[ "$ACTION" == "enable" ]]; then

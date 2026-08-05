@@ -25,6 +25,7 @@ set -uo pipefail
 
 SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/chromium-pipewire-camera.sh"
 FLAG_ENTRY="enable-webrtc-pipewire-camera@1"
+BACKUP_NAME="Local State.camera-relay.bak"
 PASS=0
 FAIL=0
 
@@ -150,7 +151,10 @@ enable_case "empty labs array"      "[\"$FLAG_ENTRY\"]" '{"browser":{"enabled_la
 enable_case "already enabled"       "[\"$FLAG_ENTRY\"]" "{\"browser\":{\"enabled_labs_experiments\":[\"$FLAG_ENTRY\"]}}"
 # Bare (no @suffix) also means enabled; normalising to @1 keeps one spelling.
 enable_case "bare, no @suffix"      "[\"$FLAG_ENTRY\"]" '{"browser":{"enabled_labs_experiments":["enable-webrtc-pipewire-camera"]}}'
-# @2 is "Disabled" — the user (or an older docs pass) turned it off explicitly.
+# @2 is "Disabled" — the user turned it off explicitly, quite possibly following
+# this project's own earlier "leave it OFF" advice. Reversing that is correct on
+# libcamera 0.7+, but see the reporting assertion below: the end state is only
+# half of what matters here.
 enable_case "explicitly disabled"   "[\"$FLAG_ENTRY\"]" '{"browser":{"enabled_labs_experiments":["enable-webrtc-pipewire-camera@2"]}}'
 # Other people's flags must survive, and in order.
 enable_case "alongside other flags" "[\"ozone-platform-hint@1\",\"vulkan\",\"$FLAG_ENTRY\"]" \
@@ -196,6 +200,41 @@ if cmp -s "$TMP/idem-before" "$dir/Local State"; then
     ok "second run is byte-identical (idempotent)"
 else
     bad "second run rewrote the file"
+fi
+
+# ── 2b. Owning up to reversing a deliberate choice ───────────────────────────
+# Rewriting @2 to @1 is the right end state on libcamera 0.7+, and the backup is
+# taken first. Saying nothing about it is the problem: the user set Disabled on
+# purpose, and "✓ flag enabled" reads like it was simply missing.
+echo
+echo "reversing an explicit Disabled"
+
+# Distinct variable names: the backup section further down still asserts against
+# the `dir`/`env_dir` set up in section 2.
+rev_env=$(new_env)
+make_profile "$rev_env" ".config/google-chrome" \
+    '{"browser":{"enabled_labs_experiments":["enable-webrtc-pipewire-camera@2"]}}' > /dev/null
+rev_out=$(run_script "$rev_env" enable)
+if grep -qi 'disabled' <<< "$rev_out" && grep -qi 'revers' <<< "$rev_out"; then
+    ok "says the preference was reversed, not just 'enabled'"
+else
+    bad "silently overrode an explicit Disabled: $rev_out"
+fi
+if grep -q "$BACKUP_NAME" <<< "$rev_out"; then
+    ok "points at the backup holding the original"
+else
+    bad "reversed a deliberate choice without naming the backup: $rev_out"
+fi
+
+# A profile that merely lacked the flag must NOT get the reversal wording —
+# otherwise the warning is noise on every fresh install and stops being read.
+rev_env=$(new_env)
+make_profile "$rev_env" ".config/google-chrome" '{"browser":{}}' > /dev/null
+rev_out=$(run_script "$rev_env" enable)
+if grep -qi 'revers' <<< "$rev_out"; then
+    bad "claimed a reversal on a profile that had no preference: $rev_out"
+else
+    ok "no reversal wording when the flag was simply absent"
 fi
 
 # ── 3. Backup ────────────────────────────────────────────────────────────────
@@ -348,13 +387,51 @@ else
     bad "disable left an empty array behind: $(labs_of "$dir")"
 fi
 
+# The backup exists to undo our edit. Once the flag is out, leaving it behind
+# parks a stale copy of the user's browser config in their profile forever.
+env_dir=$(new_env)
+dir=$(make_profile "$env_dir" ".config/google-chrome" '{"browser":{},"keep":1}')
+run_script "$env_dir" enable > /dev/null
+[[ -f "$dir/$BACKUP_NAME" ]] || bad "enable did not create the backup (setup failed)"
+run_script "$env_dir" disable > /dev/null
+if [[ -f "$dir/$BACKUP_NAME" ]]; then
+    bad "disable left the backup behind in the user's profile"
+else
+    ok "disable cleans up its backup"
+fi
+# ...but only after a disable that actually ran. A profile skipped because the
+# browser is open still needs its backup.
 env_dir=$(new_env)
 dir=$(make_profile "$env_dir" ".config/google-chrome" '{"browser":{}}')
-out=$(run_script "$env_dir" status)
-grep -q "absent" <<< "$out" && ok "status: absent" || bad "status: expected absent, got: $out"
 run_script "$env_dir" enable > /dev/null
-out=$(run_script "$env_dir" status)
-grep -q "enabled" <<< "$out" && ok "status: enabled" || bad "status: expected enabled, got: $out"
+ln -s "testhost-$$" "$dir/SingletonLock"
+run_script "$env_dir" disable > /dev/null
+if [[ -f "$dir/$BACKUP_NAME" ]]; then
+    ok "backup kept when disable was skipped (browser running)"
+else
+    bad "removed the backup for a profile it never disabled"
+fi
+
+# The words must be the ones `camera-relay doctor` prints. One fact reported in
+# two vocabularies — `other` here, `DISABLED` there — is worse than either word
+# on its own, because it hides that they are the same state.
+status_case() {
+    local desc="$1" want="$2" json="$3"
+    local env_dir out
+    env_dir=$(new_env)
+    make_profile "$env_dir" ".config/google-chrome" "$json" > /dev/null
+    out=$(run_script "$env_dir" status)
+    if grep -qE "[[:space:]]$want\$" <<< "$out"; then
+        ok "$(printf 'status: %-22s %s' "$desc" "$want")"
+    else
+        bad "$(printf 'status: %-22s expected %s, got: %s' "$desc" "$want" "$out")"
+    fi
+}
+
+status_case "no flag"            "not set"  '{"browser":{}}'
+status_case "enabled @1"         "ENABLED"  "{\"browser\":{\"enabled_labs_experiments\":[\"$FLAG_ENTRY\"]}}"
+status_case "bare, no @suffix"   "ENABLED"  '{"browser":{"enabled_labs_experiments":["enable-webrtc-pipewire-camera"]}}'
+status_case "explicitly @2"      "DISABLED" '{"browser":{"enabled_labs_experiments":["enable-webrtc-pipewire-camera@2"]}}'
 # status must never write.
 cp -p "$dir/Local State" "$TMP/status-before"
 run_script "$env_dir" status > /dev/null
@@ -393,6 +470,42 @@ if [[ "$(cat "$dir/Local State")" == '[1,2,3]' ]]; then
     ok "non-object JSON left intact"
 else
     bad "non-object JSON was overwritten"
+fi
+
+# ── 9. doctor delegates instead of keeping its own list ──────────────────────
+# `camera-relay doctor` used to carry a hand-written 5-profile list while this
+# script knew 10, so a Vivaldi-only, Chrome-Beta-only or flatpak-only machine
+# got no flag diagnostics at all — even though the installer had edited exactly
+# those profiles. Delegating removes the second list; this checks it stayed
+# removed, because the failure mode is silence, not an error.
+echo
+echo "doctor delegation"
+
+RELAY="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/camera-relay"
+stub_dir="$TMP/doctor-stub"
+mkdir -p "$stub_dir/bin"
+cat > "$stub_dir/bin/chromium-pipewire-camera" << 'EOF'
+#!/bin/sh
+[ "$1" = status ] || exit 0
+printf '  %-20s %s\n' "Vivaldi:" "not set"
+printf '  %-20s %s\n' "Brave (flatpak):" "DISABLED"
+EOF
+chmod +x "$stub_dir/bin/chromium-pipewire-camera"
+sed "s#/usr/local/bin/chromium-pipewire-camera#$stub_dir/bin/chromium-pipewire-camera#g" \
+    "$RELAY" > "$stub_dir/camera-relay"
+chmod +x "$stub_dir/camera-relay"
+
+doctor_out=$("$stub_dir/camera-relay" doctor 2>&1) || true
+if grep -q 'Vivaldi:' <<< "$doctor_out" && grep -q 'Brave (flatpak):' <<< "$doctor_out"; then
+    ok "doctor reports profiles only the flag tool knows about"
+else
+    bad "doctor ignored the flag tool's profile list"
+fi
+# A DISABLED profile still needs the remedy printed.
+if grep -q 'Set it with' <<< "$doctor_out"; then
+    ok "doctor still prints the remedy when a delegated profile is not ENABLED"
+else
+    bad "doctor swallowed the remedy for a non-ENABLED profile"
 fi
 
 echo

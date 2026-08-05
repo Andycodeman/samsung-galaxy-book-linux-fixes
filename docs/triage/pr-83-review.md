@@ -298,3 +298,30 @@ Nothing outside the camera-relay browser story is touched: no
 `linux-6.17/sound/`, no `speaker-fix*/`, no `mic-fix/`, no sensor tuning YAML, no
 `nixos/`. The duplicate-tuning-file hazard (`ov02c10.yaml` in two trees,
 `ov02e10.yaml` vs `ov02e10-0.5.2.yaml`) does not apply to this diff.
+
+---
+
+# Correction — the quoted Chromium snippet *is* verbatim (2026-08-05)
+
+The "Tiny" non-blocking item above says today's upstream second branch has no
+`cap.capabilities & V4L2_CAP_DEVICE_CAPS` guard and that the PR adds one. It
+does not. Fetched and decoded from `refs/heads/main`:
+
+```
+$ curl -s '…/media/capture/video/linux/video_capture_device_factory_v4l2.cc?format=TEXT' | base64 -d
+184:    if ((DoIoctl(fd.get(), VIDIOC_QUERYCAP, &cap) == 0) &&
+185-        ((cap.capabilities & V4L2_CAP_VIDEO_CAPTURE &&
+186-          !(cap.capabilities & V4L2_CAP_VIDEO_OUTPUT)) ||
+187-         (cap.capabilities & V4L2_CAP_DEVICE_CAPS &&
+188-          cap.device_caps & V4L2_CAP_VIDEO_CAPTURE &&
+189-          !(cap.device_caps & V4L2_CAP_VIDEO_OUTPUT))) &&
+190-        HasUsableFormats(fd.get(), cap.capabilities)) {
+```
+
+Line 187 is the guard. The only difference between the quoted snippet and the
+source is `fd.get()` → `fd`, dropped because the quotes elide the surrounding
+`base::ScopedFD` plumbing.
+
+So no change is needed in the four places that quote it, nor in `doctor`'s
+evaluator — which mirrors the same two branches, guard included. The rest of the
+non-blocking list is addressed in the follow-up PR.
