@@ -589,6 +589,35 @@ else
     bad "doctor swallowed the remedy for a non-ENABLED profile"
 fi
 
+# ── 10. The feature name we tell people to type ──────────────────────────────
+# Chromium feature names are case-sensitive and --enable-features silently
+# ignores one it does not recognise, so a wrong spelling looks exactly like a
+# right one and simply does nothing. The name is fixed by
+#   BASE_FEATURE(kWebRtcPipeWireCamera, ...)   media/capture/capture_switches.cc
+# and "WebRTCPipeWireCamera" is the plausible-looking wrong version that shipped
+# twice before anyone tried it. Checks every use site, not just this file.
+echo
+echo "documented feature name"
+
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+bad_uses=$(grep -rn -- '--enable-features=[A-Za-z]*[Pp]ipe[Ww]ire[Cc]amera' "$REPO" \
+    --exclude-dir=.git 2>/dev/null \
+    | grep -v -- '--enable-features=WebRtcPipeWireCamera' || true)
+if [[ -z "$bad_uses" ]]; then
+    ok "every --enable-features= use site spells it WebRtcPipeWireCamera"
+else
+    bad "misspelled feature name — silently ignored by Chromium:"
+    sed 's/^/      /' <<< "$bad_uses"
+fi
+
+# The flag id in the chrome://flags URL is a separate string from the feature
+# name and is lowercase-with-dashes. Mixing the two up is the other easy error.
+if grep -rq 'chrome://flags/#enable-webrtc-pipewire-camera' "$REPO" --exclude-dir=.git 2>/dev/null; then
+    ok "chrome://flags URL uses the flag id, not the feature name"
+else
+    bad "no chrome://flags/#enable-webrtc-pipewire-camera reference found"
+fi
+
 echo
 echo "  $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]

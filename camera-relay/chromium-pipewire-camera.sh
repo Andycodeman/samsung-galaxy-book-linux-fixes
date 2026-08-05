@@ -112,11 +112,21 @@ resolve_target_user() {
 # each new browser needed three entries and nobody adds all three.
 #
 # Deliberately absent:
-#   Edge     — ships no enable-webrtc-pipewire-camera flag; nothing to write.
+#   Edge     — does not register the entry in edge://flags, so there is nothing
+#              to write into its Local State. The underlying Chromium feature is
+#              compiled in, so `microsoft-edge --enable-features=WebRtcPipeWireCamera`
+#              does work — just not through this file.
 #   Electron — Slack, Discord, VS Code and friends keep a Local State too, but
 #              they never process about:flags, so an entry there is dead weight
-#              in someone else's config file. They need
-#              --enable-features=WebRTCPipeWireCamera on the command line.
+#              in someone else's config file. The command-line switch does not
+#              help them either: PipeWire *camera* support is not wired into
+#              Electron, only the screen-share capturer. electron#45058 asked
+#              for it and was closed unimplemented.
+#
+# The feature name is `WebRtcPipeWireCamera` — BASE_FEATURE(kWebRtcPipeWireCamera)
+# in media/capture/capture_switches.cc. It is case-sensitive, and
+# --enable-features silently ignores a name it does not recognise, so
+# "WebRTCPipeWireCamera" looks right and does nothing.
 chromium_profile_dirs() {
     local home="$1" root name dir label kind
     local -a names=(
@@ -184,9 +194,16 @@ browser_running() {
         appid=${dir#*/.var/app/}
         appid=${appid%%/*}
         if command -v flatpak >/dev/null 2>&1; then
-            if flatpak ps --columns=application 2>/dev/null | grep -qxF "$appid"; then
-                return 0
-            fi
+            # Buffered, not piped straight into grep -q. Under `set -o pipefail`
+            # a reader that exits on first match SIGPIPEs the writer and the
+            # pipeline reports 141 — the same trap documented above
+            # loopback_real_format in camera-relay. `flatpak ps` output is small
+            # enough that it never fires today, but the failure lands on
+            # "return 1" = not running = write into a live profile, which is the
+            # one direction this whole function exists to prevent.
+            local running
+            running=$(flatpak ps --columns=application 2>/dev/null) || running=""
+            grep -qxF "$appid" <<< "$running" && return 0
             return 1
         fi
         # No flatpak CLI to ask: the lock's PID is meaningless here, so treat a
