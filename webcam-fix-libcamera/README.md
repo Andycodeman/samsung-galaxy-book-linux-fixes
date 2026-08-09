@@ -286,6 +286,76 @@ Some Galaxy Book3/Book4 models have a 26 MHz external clock instead of the expec
 cd ov02c10-26mhz-fix && sudo ./install.sh
 ```
 
+### "Additional Drivers" offers `intel-ipu6-dkms` — don't install it
+
+Ubuntu's **Additional Drivers** panel (`software-properties-gtk`) lists the IPU
+as *"Intel Corporation: Meteor Lake IPU — This device is not working"* and
+offers *"Using Intel Integrated Image Processing Unit 6 (IPU6) driver from
+intel-ipu6-dkms (open source)"*. Leave it on **"Do not use the device"**.
+
+The "not working" label is a false positive. `ubuntu-drivers` matches hardware
+by modalias, and the only modalias `intel-ipu6-dkms` declares is for
+`intel-ipu6-psys` — the PSYS function, which the mainline driver does not
+expose. No installed package claims that modalias, so the panel reports the
+device as unclaimed even while the in-tree driver is bound and streaming:
+
+```bash
+lspci -nnk -d 8086:7d19    # Meteor Lake; use 8086:a75d on Raptor Lake
+```
+
+That prints `Kernel driver in use: intel-ipu6` on a working system.
+
+Installing the offered driver can break the camera. `intel-ipu6-dkms` is the
+out-of-tree Intel stack ([`intel/ipu6-drivers`](https://github.com/intel/ipu6-drivers),
+what the legacy [`webcam-fix/`](../webcam-fix/) is built around), and its
+`dkms.conf` builds **`ov02c10` unconditionally** into `/updates` — the same
+module name and the same directory as the [26 MHz fix](../ov02c10-26mhz-fix/).
+Intel's copy does not carry the 26 MHz patch, so on an affected board the camera
+goes back to `external clock 26000000 is not supported`.
+
+There is nothing to gain in exchange. On any kernel 6.10 or newer, `intel-ipu6`
+and `intel-ipu6-isys` are not built at all (the `dkms.conf` gates them on older
+kernels, because the in-tree drivers took over). What remains is
+`intel-ipu6-psys`, which is only useful to the proprietary camera HAL —
+and `libcamhal0`, `intel-ipu6-camera-hal` and `gstreamer1.0-icamera` have no
+installation candidate on Ubuntu 26.04.
+
+### Camera stopped working after installing `intel-ipu6-dkms`
+
+**Symptom.** The camera worked, you accepted the Additional Drivers offer above,
+and now `camera-relay status` fails or dmesg is back to
+`external clock 26000000 is not supported`.
+
+Check which `ov02c10` the kernel resolves, and who owns it:
+
+```bash
+modinfo -n ov02c10
+dkms status | grep -E 'ov02c10|ipu6'
+```
+
+Remove the Intel stack and reinstate the patched driver:
+
+```bash
+sudo apt purge intel-ipu6-dkms
+sudo dkms install ov02c10/1.0 -k "$(uname -r)"
+sudo depmod -a
+sudo update-initramfs -u
+```
+
+Reboot, then verify. The path must land under `updates/dkms`, not
+`kernel/drivers`, and the clock line must be the patched driver's:
+
+```bash
+modinfo -n ov02c10
+journalctl -k -b -g '26000000Hz clock'
+```
+
+If `modinfo` still points at `kernel/drivers` after the reboot, the DKMS build
+either failed or was rejected. With Secure Boot enabled an unsigned module is
+rejected in silence and the kernel falls back to the in-tree driver — which
+rejects 26 MHz too. See
+[Secure Boot](../ov02c10-26mhz-fix/README.md#secure-boot) in the 26 MHz fix.
+
 ### Too many "ipu6" entries in camera list
 
 Log out and back in for the udev rules and WirePlumber config to take effect, then check with:
@@ -491,6 +561,11 @@ disables and masks `v4l2-relayd.service` and moves the OEM
 `/etc/modprobe.d/v4l2loopback.conf` aside (restored by `uninstall.sh`). Just
 re-run `sudo bash install.sh` and reboot. The change is fully reversible:
 `uninstall.sh` restores the OEM file and re-enables the service.
+
+The kernel-side half of the same OEM stack is `intel-ipu6-dkms`, which Ubuntu's
+Additional Drivers panel offers on these machines — see
+["Additional Drivers" offers `intel-ipu6-dkms`](#additional-drivers-offers-intel-ipu6-dkms--dont-install-it)
+above. Don't install it.
 
 ### LED on but black image, on laptops with a dedicated GPU
 
