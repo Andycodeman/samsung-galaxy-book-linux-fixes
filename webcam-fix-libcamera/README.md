@@ -316,9 +316,13 @@ goes back to `external clock 26000000 is not supported`.
 There is nothing to gain in exchange. On any kernel 6.10 or newer, `intel-ipu6`
 and `intel-ipu6-isys` are not built at all (the `dkms.conf` gates them on older
 kernels, because the in-tree drivers took over). What remains is
-`intel-ipu6-psys`, which is only useful to the proprietary camera HAL —
-and `libcamhal0`, `intel-ipu6-camera-hal` and `gstreamer1.0-icamera` have no
-installation candidate on Ubuntu 26.04.
+`intel-ipu6-psys`, which is only useful to the proprietary camera HAL — the
+[legacy stack](../webcam-fix/) this fix replaces. That HAL is not in the Ubuntu
+archive on any release: `libcamhal-ipu6epmtl` and `gstreamer1.0-icamera` are
+published only in the `ppa:oem-solutions-group/intel-ipu6` OEM PPA, which is not
+enabled on a stock install. So out of the box `intel-ipu6-psys` has nothing to
+feed — and if you *do* enable that PPA, you are setting up the legacy stack
+deliberately, which is a different decision from repairing this one.
 
 ### Camera stopped working after installing `intel-ipu6-dkms`
 
@@ -333,27 +337,36 @@ modinfo -n ov02c10
 dkms status | grep -E 'ov02c10|ipu6'
 ```
 
-Remove the Intel stack and reinstate the patched driver:
+Remove the Intel stack, then re-run the 26 MHz installer to rebuild and
+reinstate the patched driver:
 
 ```bash
 sudo apt purge intel-ipu6-dkms
-sudo dkms install ov02c10/1.0 -k "$(uname -r)"
-sudo depmod -a
-sudo update-initramfs -u
+cd ov02c10-26mhz-fix && sudo ./install.sh
 ```
 
-Reboot, then verify. The path must land under `updates/dkms`, not
-`kernel/drivers`, and the clock line must be the patched driver's:
+Don't reach for `dkms install ov02c10/1.0` directly. Purging the Intel package
+clears *its* DKMS state, not ours — the `ov02c10/1.0` "installed" marker for the
+running kernel survives, and DKMS checks that marker first, so the command exits
+with *"This module/version combo is already installed for kernel …"* and changes
+nothing. [`install.sh`](../ov02c10-26mhz-fix/install.sh) does the full
+`dkms remove --all` → `add` → `build` → `install` cycle, re-signs the module for
+Secure Boot, and refreshes `depmod` and the initramfs (with `dracut` /
+`mkinitcpio` fallbacks off Ubuntu).
+
+Reboot, then verify:
 
 ```bash
-modinfo -n ov02c10
+modinfo -n ov02c10                 # must be under updates/dkms
+modinfo ov02c10 | grep -i '^sig'   # no output = unsigned
 journalctl -k -b -g '26000000Hz clock'
 ```
 
-If `modinfo` still points at `kernel/drivers` after the reboot, the DKMS build
-either failed or was rejected. With Secure Boot enabled an unsigned module is
-rejected in silence and the kernel falls back to the in-tree driver — which
-rejects 26 MHz too. See
+A path under `kernel/drivers` means the DKMS build or install failed. The right
+path with no `sig*` fields means the module was built but is unsigned, so under
+Secure Boot it is rejected at load time and the in-tree driver wins — which
+rejects 26 MHz too. `modinfo -n` reads the path out of `modules.dep` and cannot
+see that rejection, which is why the signature needs its own check. See
 [Secure Boot](../ov02c10-26mhz-fix/README.md#secure-boot) in the 26 MHz fix.
 
 ### Too many "ipu6" entries in camera list
