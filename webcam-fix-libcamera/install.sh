@@ -94,28 +94,70 @@ fi
 # ──────────────────────────────────────────────
 # [2/14] Distro detection
 # ──────────────────────────────────────────────
-echo "[2/14] Detecting distro..."
-if command -v pacman >/dev/null 2>&1; then
-    DISTRO="arch"
-    DISTRO_LABEL="Arch-based"
-elif command -v dnf >/dev/null 2>&1; then
-    DISTRO="fedora"
-    DISTRO_LABEL="Fedora/DNF-based"
-elif command -v apt >/dev/null 2>&1; then
-    if [[ -f /etc/os-release ]] && grep -qiE '^ID=(ubuntu|pop|linuxmint)' /etc/os-release; then
-        DISTRO="ubuntu"
-        DISTRO_LABEL="Ubuntu/Ubuntu-based"
-    elif [[ -f /etc/os-release ]] && grep -qiE '^ID_LIKE=.*ubuntu' /etc/os-release; then
-        DISTRO="ubuntu"
-        DISTRO_LABEL="Ubuntu-based ($(grep '^PRETTY_NAME=' /etc/os-release | cut -d= -f2 | tr -d '"'))"
-    else
-        DISTRO="debian"
-        DISTRO_LABEL="Debian-based"
+# Identify the distro from os-release (ID first, then ID_LIKE) and only fall
+# back to probing for a package manager when os-release gives no answer. The
+# binary probe alone is not trustworthy: Fedora ships a real `pacman` package,
+# so a Fedora host with it installed used to be detected as Arch and step
+# [9/14] then tried to install Arch package names with pacman.
+# Takes an optional os-release path (default /etc/os-release) so tests can
+# feed it fixture files. Sets DISTRO and DISTRO_LABEL.
+detect_distro() {
+    local os_release="${1:-/etc/os-release}"
+    local id="" id_like="" pretty_name="" key value
+
+    if [[ -r "$os_release" ]]; then
+        while IFS='=' read -r key value; do
+            value="${value%\"}"; value="${value#\"}"
+            value="${value%\'}"; value="${value#\'}"
+            case "$key" in
+                ID)          id="${value,,}" ;;
+                ID_LIKE)     id_like="${value,,}" ;;
+                PRETTY_NAME) pretty_name="$value" ;;
+            esac
+        done < "$os_release"
     fi
-else
-    echo "ERROR: Unsupported distro. This script requires pacman (Arch), dnf (Fedora), or apt (Ubuntu)."
-    exit 1
-fi
+
+    case "$id" in
+        arch)                 DISTRO="arch";   DISTRO_LABEL="Arch-based" ;;
+        fedora)               DISTRO="fedora"; DISTRO_LABEL="Fedora/DNF-based" ;;
+        ubuntu|pop|linuxmint) DISTRO="ubuntu"; DISTRO_LABEL="Ubuntu/Ubuntu-based" ;;
+        debian)               DISTRO="debian"; DISTRO_LABEL="Debian-based" ;;
+    esac
+
+    # ID_LIKE is a space-separated ancestry list, e.g. EndeavourOS has
+    # ID=endeavouros ID_LIKE=arch and Pop!_OS has ID_LIKE="ubuntu debian".
+    # Ubuntu is checked before Debian so Ubuntu descendants keep apt PPAs.
+    if [[ -z "$DISTRO" ]]; then
+        case " $id_like " in
+            *" arch "*)   DISTRO="arch";   DISTRO_LABEL="Arch-based (${pretty_name:-$id})" ;;
+            *" fedora "*) DISTRO="fedora"; DISTRO_LABEL="Fedora/DNF-based (${pretty_name:-$id})" ;;
+            *" ubuntu "*) DISTRO="ubuntu"; DISTRO_LABEL="Ubuntu-based (${pretty_name:-$id})" ;;
+            *" debian "*) DISTRO="debian"; DISTRO_LABEL="Debian-based (${pretty_name:-$id})" ;;
+        esac
+    fi
+
+    # Last resort for systems without a usable os-release: probe package
+    # managers and accept the ambiguity that has on hybrid systems.
+    if [[ -z "$DISTRO" ]]; then
+        if command -v pacman >/dev/null 2>&1; then
+            DISTRO="arch";   DISTRO_LABEL="Arch-based"
+        elif command -v dnf >/dev/null 2>&1; then
+            DISTRO="fedora"; DISTRO_LABEL="Fedora/DNF-based"
+        elif command -v apt >/dev/null 2>&1; then
+            DISTRO="debian"; DISTRO_LABEL="Debian-based"
+        fi
+    fi
+
+    if [[ -z "$DISTRO" ]]; then
+        echo "ERROR: Unsupported distro. This script supports Arch, Fedora, and Ubuntu/Debian (and derivatives)."
+        exit 1
+    fi
+}
+
+echo "[2/14] Detecting distro..."
+DISTRO=""
+DISTRO_LABEL=""
+detect_distro
 echo "  ✓ $DISTRO_LABEL detected"
 
 # ──────────────────────────────────────────────
