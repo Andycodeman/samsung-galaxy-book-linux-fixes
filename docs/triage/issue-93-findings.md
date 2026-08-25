@@ -7,6 +7,10 @@ Hardware: Galaxy Book5 Pro 360, NP960QHA-KG2DE (Lunar Lake), Arch/Omarchy,
 kernel 7.1.8-arch1-3, ALC298 + 4x MAX98390 (0x38/0x39 woofers, 0x3c/0x3d
 tweeters) — squarely inside `speaker-fix/`'s coverage, not `speaker-fix-940xfg/`.
 
+**Round 1 hypothesis was WRONG — see [Round 2](#round-2--the-blob-fix-changed-nothing) below.**
+The blob corruption was real and worth fixing on its own merits, but it is not
+what silences the woofers on this machine.
+
 **Status:** fix committed as
 [`1194a83`](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/commit/1194a83);
 reply **posted** 2026-08-25 with maintainer sign-off —
@@ -191,3 +195,126 @@ also a poor match for the enclosure".
 **Recommendation: keep #93 open** until the reporter confirms. It found a real
 bug; closing it as expected behaviour would have buried both the misalignment
 and the out-of-bounds read.
+
+
+---
+
+# Round 2 — the blob fix changed nothing
+
+[@Elias02345 confirmed](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/93#issuecomment-5414289413)
+scenario 3: reinstalled from `1194a83`, verified the corrected source was in
+`/usr/src` before rebooting, verified the module was rebuilt and loaded, and the
+woofers are still silent. Probe log identical to the original report — all four
+amps enumerate, no I2C/regmap errors.
+
+So the round 1 conclusion was wrong. What round 1 actually fixed is still worth
+having — an 80-byte out-of-bounds read in kernel space is a bug regardless of
+whether it was audible — but it was not the cause, and the triage record above
+overstates the case. Corrected in the README too: the Troubleshooting entry no
+longer claims the corruption *caused* the silent woofers.
+
+## The wording that shifted
+
+Original report: "Woofers produce **no audible bass whatsoever** ... consistent
+with only the tweeter band being reproduced."
+
+Update: "Woofers are still **silent**, tweeters still carry the whole signal."
+
+Those are different claims and they point at different mechanisms. "No bass but
+still reproducing mids" is a filter or limiter problem. "Silent" is an amp that
+isn't producing output at all. We have been reasoning from the first and the
+reporter may be describing the second — this needs to be pinned down before any
+more code changes.
+
+## What actually differs between the working pair and the silent pair
+
+Between the tweeters (`0x3c`/`0x3d`, working) and the woofers (`0x38`/`0x39`,
+silent), our driver does exactly two things differently:
+
+1. loads a different DSM blob
+2. writes `0x23BA` = `0xA0` (woofer) vs `0x8d` (tweeter)
+
+`0x2021` (PCM channel select) is 0/1 within *each* pair identically, so it does
+not separate them. Everything in `max98390_hda_init()` is identical for all four.
+
+That is the entire differential. And round 1 replaced the blob *content* without
+changing the symptom.
+
+## Leading hypothesis: the blob assignment is inverted on this board
+
+Diffing the two corrected blobs against each other, they differ in 246
+registers, almost all of them in `0x2101`–`0x228F` in 3-byte groups on a 4-byte
+stride — 24-bit DSM filter coefficients. The blob *is* the crossover: the
+"tweeter" blob high-passes, the "woofer" blob runs full-range.
+
+If the physical woofers on the NP960QHA are wired to `0x3c`/`0x3d` and the
+tweeters to `0x38`/`0x39` — the opposite of the Redrix/Book4 layout this code
+assumes — then the physical woofers get the high-pass blob and the physical
+tweeters get the full-range blob. Symptom: woofers produce no low end, tweeters
+carry the whole signal. **Exactly what the reporter describes**, and completely
+unaffected by correcting the blob *contents*, which is why round 1 was a null
+result.
+
+The address→speaker map in `max98390_configure_filters()` is hardcoded and has
+never been verified on anything but the boards it was written for.
+
+## The measurement that settles it
+
+`i2ctransfer` (i2c-tools, already an Arch prerequisite) can talk to the amps
+directly with 16-bit register addressing, without touching the driver.
+
+**A. Did the writes land, and which blob is in which amp?**
+
+```bash
+sudo i2cdetect -y 2        # all four should show UU (driver-bound)
+for a in 0x38 0x39 0x3c 0x3d; do
+  printf "%s 0x23E0=" "$a"; sudo i2ctransfer -y -f 2 w2@$a 0x23 0xe0 r1
+  printf "%s 0x2101=" "$a"; sudo i2ctransfer -y -f 2 w2@$a 0x21 0x01 r1
+done
+```
+
+Expected if the driver did what it thinks: `0x38`/`0x39` → `0x23E0`=`0x21`,
+`0x2101`=`0xD0`; `0x3c`/`0x3d` → `0x23E0`=`0x20`, `0x2101`=`0x00`.
+
+**B. Which physical speaker is at which address?** With a sustained bass line
+playing, mute one amp at a time:
+
+```bash
+sudo i2ctransfer -y -f 2 w3@0x38 0x20 0x3a 0x80   # mute  (AMP_EN 0x203A)
+sudo i2ctransfer -y -f 2 w3@0x38 0x20 0x3a 0x81   # unmute
+```
+
+**C. Fault flags** (`INT_RAW1..3` at `0x2002`–`0x2004`):
+
+```bash
+for a in 0x38 0x39 0x3c 0x3d; do
+  printf "%s INT_RAW=" "$a"; sudo i2ctransfer -y -f 2 w2@$a 0x20 0x02 r3
+done
+```
+
+Reading the outcome of B:
+
+| Result | Meaning |
+| --- | --- |
+| muting `0x3c`/`0x3d` kills the bass | **assignment inverted** — the physical woofers are at `0x3c`/`0x3d`. One-line fix in `max98390_configure_filters()`. |
+| muting `0x38`/`0x39` changes nothing audible | those amps produce no output at all — not a filter problem. Look at boost/PVDD, `0x203D SPK_GAIN`, or wiring. |
+| muting `0x38`/`0x39` thins the mids | the woofers *are* being driven, so it's the crossover or the DSM limiter — back to a tuning problem, and the Redrix mismatch is live again. |
+
+## Registers we never write
+
+`0x2039 AMP_DSP_CFG` and `0x203D SPK_GAIN` are below the blob's `0x2050` start
+and are not in `max98390_hda_init()`, so they keep power-on defaults. This is
+symmetric across all four amps so it is not the differential here, but it is a
+gap worth closing at some point — mainline's ASoC driver exposes `SPK_GAIN` as a
+mixer control and does not rely on the default.
+
+## Not yet ruled out
+
+- That this is not reporter-specific at all. The README's blanket "audio will
+  sound thinner and lack bass" has been the documented expectation for every
+  user of this package. If the woofers are mis-assigned or under-driven
+  generally, the "known limitation" may partly *be* this bug. Would need a
+  second Book4/Book5 owner to run test B to know.
+- The reporter's Windows-side `lnl_dsm_lib.bin` lead. Still a compiled Intel SST
+  DSP module, still not droppable in, but if test B says the woofers are driven
+  and merely mistuned, it becomes the interesting thread again.

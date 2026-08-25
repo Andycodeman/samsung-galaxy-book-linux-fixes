@@ -321,13 +321,15 @@ dmesg | grep -i max98390
 
 All four amps probe fine, the tweeters play, but there is no low end — and boosting bass in EasyEffects or any other PipeWire-side EQ changes nothing. That last part is the tell: an EQ that does nothing means the attenuation is happening inside the amp, downstream of everything the host controls.
 
-This was caused by a transcription error in the DSM firmware blobs shipped by this package ([#93](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/93)). The woofer blob had 16 stray bytes in the middle of it and the tweeter blob was missing 80, so every DSM parameter past register `0x2380` (woofer) / `0x2330` (tweeter) landed in the wrong register — including the excursion-limiter settings that decide how much low-frequency output the amp allows. Both blobs now match upstream PR #5616 byte for byte, and a build-time size check keeps them that way.
+**Under investigation — see [#93](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/93).** One contributing bug has been fixed: the DSM firmware blobs shipped by this package were transcribed from upstream PR #5616 with two rows wrong, so every DSM parameter past register `0x2380` (woofer) / `0x2330` (tweeter) landed in the wrong register, and the short tweeter blob made the driver read past the end of its array. Both blobs now match upstream byte for byte, with a build-time size check.
 
-If you installed before this was fixed, reinstall and reboot:
+That fix did **not** resolve the silent woofers on the machine that reported it (Book5 Pro 360, Lunar Lake), so the root cause is still open. If you hit this, please reinstall first — you want the corrected blobs before anything else is worth measuring:
 
 ```bash
 sudo ./install.sh && sudo reboot
 ```
+
+If the woofers are still silent afterwards, please say so on [#93](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/93) with your exact model and whether muting each amp individually changes what you hear — that's the measurement that will narrow it down.
 
 **Modules not loading with Secure Boot? ("required key not loaded")**
 
