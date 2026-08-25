@@ -88,7 +88,7 @@ The internal speakers use 4x Maxim MAX98390 I2C amplifiers that have no kernel d
 - Loads DSM firmware with separate woofer/tweeter configurations
 - Auto-detects and removes itself when native kernel support lands
 
-> **Sound Quality:** Audio will sound thinner and lack bass compared to Windows. This is because Windows uses Samsung's DSP audio processing (Dolby Atmos, bass enhancement, EQ) which Linux doesn't have. See [Sound Quality & EQ](speaker-fix/README.md#sound-quality--eq) for details and a workaround using EasyEffects.
+> **Sound Quality:** Audio will sound thinner and have less bass than Windows. This is because Windows uses Samsung's DSP audio processing (Dolby Atmos, bass enhancement, EQ) which Linux doesn't have. See [Sound Quality & EQ](speaker-fix/README.md#sound-quality--eq) for details and a workaround using EasyEffects. If the woofers produce **no** bass at all and an EQ makes no difference, that's a separate problem — see [Troubleshooting](speaker-fix/README.md#troubleshooting).
 
 > **Battery Impact:** The speaker amps are enabled when the driver probes and stay on — they are **not** powered down when idle. The driver implements an HDA playback hook for on-demand power, but it never fires: it needs an in-kernel alc269 quirk that doesn't exist for these boards, so the HDA component never binds. Enabling the amps at probe is what makes the speakers work at all. See [`speaker-fix/README.md`](speaker-fix/README.md#power-management) for the full explanation.
 

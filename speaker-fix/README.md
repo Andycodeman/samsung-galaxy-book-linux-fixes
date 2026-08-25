@@ -238,6 +238,8 @@ speaker-fix/
 
 The speakers will sound noticeably **thinner and quieter** compared to Windows. This is expected — it's not a bug in the driver.
 
+> **Not the same as "the woofers are silent".** Expected-thin still has audible bass, and boosting the low end in an EQ still changes what you hear. If the woofers produce *no* bass at all and EQ has **zero** effect, that's a different problem — see **"Woofers produce no bass at all"** under [Troubleshooting](#troubleshooting).
+
 ### Why it sounds different from Windows
 
 On Windows, Samsung's audio stack applies multiple layers of DSP (Digital Signal Processing) before audio reaches the speakers:
@@ -313,6 +315,18 @@ systemctl status max98390-hda-i2c-setup.service
 
 # Check kernel log for driver messages
 dmesg | grep -i max98390
+```
+
+**Woofers produce no bass at all (tweeters work, EQ has no effect)?**
+
+All four amps probe fine, the tweeters play, but there is no low end — and boosting bass in EasyEffects or any other PipeWire-side EQ changes nothing. That last part is the tell: an EQ that does nothing means the attenuation is happening inside the amp, downstream of everything the host controls.
+
+This was caused by a transcription error in the DSM firmware blobs shipped by this package ([#93](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/93)). The woofer blob had 16 stray bytes in the middle of it and the tweeter blob was missing 80, so every DSM parameter past register `0x2380` (woofer) / `0x2330` (tweeter) landed in the wrong register — including the excursion-limiter settings that decide how much low-frequency output the amp allows. Both blobs now match upstream PR #5616 byte for byte, and a build-time size check keeps them that way.
+
+If you installed before this was fixed, reinstall and reboot:
+
+```bash
+sudo ./install.sh && sudo reboot
 ```
 
 **Modules not loading with Secure Boot? ("required key not loaded")**
