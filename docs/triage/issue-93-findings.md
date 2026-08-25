@@ -7,8 +7,12 @@ Hardware: Galaxy Book5 Pro 360, NP960QHA-KG2DE (Lunar Lake), Arch/Omarchy,
 kernel 7.1.8-arch1-3, ALC298 + 4x MAX98390 (0x38/0x39 woofers, 0x3c/0x3d
 tweeters) — squarely inside `speaker-fix/`'s coverage, not `speaker-fix-940xfg/`.
 
-**Nothing has been posted to the issue.** The reply below is a draft for
-maintainer review.
+**Status:** fix committed as
+[`1194a83`](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/commit/1194a83);
+reply **posted** 2026-08-25 with maintainer sign-off —
+[comment-5413748371](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/93#issuecomment-5413748371).
+Issue deliberately left **open** pending the reporter's confirmation. Release to
+be cut once they confirm.
 
 ---
 
@@ -125,7 +129,16 @@ MAX98390 register blob. Not actionable here; worth keeping on file.
 
 ---
 
-## Draft reply — NOT POSTED, needs maintainer sign-off
+## Reply as posted
+
+Posted verbatim as
+[comment-5413748371](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/93#issuecomment-5413748371),
+expanded from the draft below with the reinstall commands, the
+`grep '/* 0x2380 */' /usr/src/max98390-hda-1.0/src/max98390_hda_filters.c`
+check that tells the reporter whether they actually picked up the corrected
+source, and a three-way ask (bass back / better but weak / no change) so the
+answer distinguishes "corruption was the whole story" from "Redrix tuning is
+also a poor match for the enclosure".
 
 > Thanks for this — the detail here is what made it findable, and you were
 > closer than you thought.
