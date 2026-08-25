@@ -172,7 +172,7 @@ configuration — see [Chromium can't use the V4L2 relay](#chromium-cant-use-the
 
 | App | Status | Notes |
 |-----|--------|-------|
-| **Firefox** | Working | Reads the V4L2 relay directly; also works via PipeWire. No flags needed |
+| **Firefox** | Working | Reads the V4L2 relay directly on Ubuntu — no flags. On Fedora the PipeWire pref is required ([#37](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/37)) |
 | **Chrome / Chromium / Brave** | Working | **Only** via PipeWire — the installer enables the flag for you |
 | **Edge** | Works, but not automatically | Same V4L2 filter as Chrome. `edge://flags` does not expose the entry, so the installer cannot set it — launch with `--enable-features=WebRtcPipeWireCamera` instead |
 | **Zoom / OBS / VLC** | Working | Uses V4L2 camera relay |
@@ -239,9 +239,23 @@ busctl call --user org.freedesktop.impl.portal.PermissionStore \
 Restart Firefox; it will prompt for camera access on the next request and grant it normally. No
 restart of xdg-desktop-portal is needed.
 
-*Note:* if you don't specifically need the PipeWire path, setting
-`media.webrtc.camera.allow-pipewire = false` also avoids this entirely — Firefox will then use the
-V4L2 camera relay, which needs no flags. Thanks to
+*Note:* turning the pref back off is **not** a general way around this, and the earlier
+revision of this section that suggested it was wrong. Firefox can read the relay node directly,
+but on Fedora 44 the reporter measured that it does not:
+
+| `media.webrtc.camera.allow-pipewire` | Result |
+| --- | --- |
+| `true` | both **Camera Relay** and **Built-in Front Camera** work |
+| `false` | no camera works — `NotReadableError: Starting videoinput failed` |
+
+`NotReadableError` means Firefox found a node and could not start it — a different failure from
+the `NotAllowedError` above, and one this installer has an outstanding suspect for: unlike
+`webcam-fix-libcamera`, it ships neither the `camera-relay` group nor the
+`74-camera-relay-mc-nodes.rules` udev rule, so the raw IPU7 media-controller nodes stay openable
+by your user and Firefox can pick one that will never stream. That is
+[#70](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/70), still unconfirmed.
+
+So on Fedora: delete the stale PermissionStore entry and leave the pref **on**. Thanks to
 [@david-bartlett](https://github.com/david-bartlett) ([#37](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/37)).
 
 **Chrome / Chromium / Brave:** see the next section — these need the PipeWire

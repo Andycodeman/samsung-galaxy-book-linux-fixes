@@ -634,6 +634,26 @@ stop_pipeline() {
     fi
 }
 
+# What media.webrtc.camera.allow-pipewire is set to in one Firefox profile.
+#
+# prefs.js only records prefs that differ from the build's default, so an absent
+# entry is not the same as "false" — distributions have shipped patched defaults
+# both ways. Report that as unknown rather than inventing a value.
+#
+# Parsed with sed rather than sourced: prefs.js is JavaScript, and Firefox
+# rewrites the file wholesale on exit, so the last assignment is the live one.
+firefox_pipewire_pref_state() {
+    local prefs="$1" val
+    [[ -r "$prefs" ]] || return 1
+    val=$(sed -n 's/^[[:space:]]*user_pref("media\.webrtc\.camera\.allow-pipewire",[[:space:]]*\(true\|false\)).*/\1/p' \
+          "$prefs" | tail -1)
+    case "$val" in
+        true)  echo "ENABLED" ;;
+        false) echo "DISABLED" ;;
+        *)     echo "not set (build default)" ;;
+    esac
+}
+
 # nudge_wireplumber — make WirePlumber re-read the loopback's formats.
 #
 # This was removed once, on the grounds that exclusive_caps=0 always advertises
@@ -1416,6 +1436,42 @@ cmd_doctor() {
             echo "  $b: $bpath"
         fi
     done
+
+    # Firefox, reported the same way the Chromium flag is below. The install
+    # summary promises "the flag state per browser" and this half of it was
+    # missing entirely: on a Firefox-only machine the whole browser section
+    # below is skipped, so doctor said nothing about browsers at all.
+    #
+    # Which value is correct is not ours to assert. Firefox reads the relay node
+    # directly and normally needs no pref, but on Fedora 44 the camera has only
+    # been made to work with it ENABLED (issue #37), so this reports and points
+    # at the README instead of prescribing.
+    local ff_root ff_prefs ff_kind ff_state ff_seen=false
+    for ff_root in "$HOME/.mozilla/firefox" \
+                   "$HOME"/snap/firefox/common/.mozilla/firefox \
+                   "$HOME"/.var/app/org.mozilla.firefox/.mozilla/firefox; do
+        [[ -d "$ff_root" ]] || continue
+        case "$ff_root" in
+            "$HOME"/snap/*)     ff_kind=" (snap)" ;;
+            "$HOME"/.var/app/*) ff_kind=" (flatpak)" ;;
+            *)                  ff_kind="" ;;
+        esac
+        # An unmatched glob stays literal under bash, hence the -f guard.
+        for ff_prefs in "$ff_root"/*/prefs.js; do
+            [[ -f "$ff_prefs" ]] || continue
+            ff_state=$(firefox_pipewire_pref_state "$ff_prefs") || continue
+            ff_seen=true
+            ff_prefs=${ff_prefs%/prefs.js}
+            echo "  Firefox${ff_kind} PipeWire pref: $ff_state  [${ff_prefs##*/}]"
+        done
+    done
+    if $ff_seen; then
+        echo "    about:config → media.webrtc.camera.allow-pipewire. Firefox rewrites"
+        echo "    prefs.js on exit, so edit it there, not in the file."
+        echo "    No single right value: Firefox reads the relay node directly and"
+        echo "    usually needs no pref, but on Fedora the camera has only been made"
+        echo "    to work with it enabled — see issue #37 in the README."
+    fi
 
     # Ask the flag tool what it sees, and let that widen the net. Deriving
     # "is this a Chromium machine?" from `command -v` over a five-binary list

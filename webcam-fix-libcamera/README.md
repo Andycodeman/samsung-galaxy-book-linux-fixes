@@ -149,7 +149,7 @@ configuration — see [Chromium can't use the V4L2 relay](#chromium-cant-use-the
 
 | App | Status | Notes |
 |-----|--------|-------|
-| **Firefox** | Working | Reads the V4L2 relay directly; also works via PipeWire. No flags needed |
+| **Firefox** | Working | Reads the V4L2 relay directly on Ubuntu — no flags. On Fedora the PipeWire pref is required ([#37](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/37)) |
 | **Chrome** | Working | **Only** via PipeWire — the installer enables the flag for you |
 | **Chromium** | Working | Same as Chrome |
 | **Brave** | Working | Same as Chrome |
@@ -420,9 +420,18 @@ busctl call --user org.freedesktop.impl.portal.PermissionStore \
   DeletePermission sss "devices" "camera" "org.mozilla.firefox"
 ```
 
-If you don't specifically need the PipeWire path, setting
-`media.webrtc.camera.allow-pipewire = false` avoids this entirely — Firefox then uses the V4L2
-camera relay, which needs no flags. Thanks to
+Turning the pref back off is **not** a general way around this, and the earlier revision of
+this section that suggested it was wrong. On Book4 under Ubuntu, Firefox does fall back to
+reading the relay node directly and needs no flag. On Fedora 44 the reporter measured the
+opposite and it is worth quoting exactly:
+
+| `media.webrtc.camera.allow-pipewire` | Result |
+| --- | --- |
+| `true` | both **Camera Relay** and **Built-in Front Camera** work |
+| `false` | no camera works — `NotReadableError: Starting videoinput failed` |
+
+So on Fedora: delete the stale PermissionStore entry and leave the pref **on**. Do not trade a
+stale denial for a camera that cannot start at all. Thanks to
 [@david-bartlett](https://github.com/david-bartlett) ([#37](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/37)).
 
 ### Chromium can't use the V4L2 relay

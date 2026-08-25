@@ -2255,7 +2255,10 @@ if [[ -f /usr/local/bin/camera-relay ]]; then
 fi
 echo ""
 echo "  Browser setup:"
-echo "    Firefox:  Works out of the box (no flags needed)"
+echo "    Firefox:  Usually needs no flags — it reads the relay node directly."
+echo "              Reported not to on Fedora, where the camera only works with"
+echo "              about:config → media.webrtc.camera.allow-pipewire = true"
+echo "              (issue #37). Check yours with: camera-relay doctor"
 echo "    Chrome/Chromium/Brave: cannot see the V4L2 relay at all — they only"
 echo "      accept a device that reports capture WITHOUT output, and the relay"
 echo "      reports both. They go through PipeWire instead, which is what the"
