@@ -258,6 +258,12 @@ result.
 The address→speaker map in `max98390_configure_filters()` is hardcoded and has
 never been verified on anything but the boards it was written for.
 
+## Round 2 reply — POSTED
+
+[comment-5418945969](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/93#issuecomment-5418945969),
+posted 2026-08-25. Carries the wording ambiguity, the inverted-map hypothesis,
+and the three tests below verbatim.
+
 ## The measurement that settles it
 
 `i2ctransfer` (i2c-tools, already an Arch prerequisite) can talk to the amps
