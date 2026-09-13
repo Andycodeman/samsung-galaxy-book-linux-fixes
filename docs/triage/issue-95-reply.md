@@ -26,7 +26,7 @@
 3. **There were no import instructions anywhere**, which is the other half of
    their question.
 
-## What was changed (uncommitted, awaiting review)
+## What was changed (commit `cc2e173`)
 
 - `nixos/speaker-fix-940xfg.nix` — new module. Packages the shipped
   `speaker-fix-940xfg/alc298-amp-init.sh` verbatim (so the bash installer and
@@ -62,9 +62,11 @@ than by hearing speakers:
 
 ## Posting
 
-The reply tells them to clone the repo and import files, so it goes out only
-once these changes are on `main`. Status: **pending** (latest release at time of
-drafting: v0.3.68).
+Posted 2026-09-13 after the change landed on `main` as `cc2e173`:
+https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/95#issuecomment-5654745834
+
+Latest release at time of writing: v0.3.68. No release cut for this change —
+the reply points at `main`.
 
 ---
 
