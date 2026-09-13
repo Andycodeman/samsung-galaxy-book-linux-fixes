@@ -249,7 +249,15 @@ Thanks to the following users for their contributions and testing:
 
 ## NixOS
 
-NixOS users can use the declarative Nix modules in [`nixos/`](nixos/) instead of the install scripts. Import `nixos/samsung-speaker-fix.nix` for the speaker fix, `nixos/webcam-fix-libcamera.nix` for the Book3/Book4 webcam fix, and `nixos/webcam-fix-book5.nix` for the Book5 webcam fix, then run `nixos-rebuild switch`. The speaker module builds the kernel modules from source, loads them at boot, and sets up I2C amplifier detection via systemd. The webcam modules load the camera stack early, install the relay or IPU7 module configuration, hide raw V4L2 nodes in WirePlumber, and start the camera services. See the module files for details. Contributed by [@pagliarinilucas](https://github.com/pagliarinilucas) (speaker/Book3) and [@ang3lo-azevedo](https://github.com/ang3lo-azevedo) (Book5).
+NixOS users can use the declarative Nix modules in [`nixos/`](nixos/) instead of the install scripts. See [`nixos/README.md`](nixos/README.md) for import instructions (both `configuration.nix` and flakes) and for how to tell which module matches your board.
+
+| Module | Hardware |
+|---|---|
+| `nixos/speaker-fix-940xfg.nix` | Book3 Pro 14" (NP940XFG, ALC298) — silent internal speakers |
+| `nixos/samsung-speaker-fix.nix` | Book4 Pro/Ultra, Book5 Pro (MAX98390 amps) — silent internal speakers |
+| `nixos/webcam-fix-book5.nix` | Book5 (IPU7, OV02C10/OV02E10) — camera |
+
+The MAX98390 speaker module builds the kernel modules from source, loads them at boot, and sets up I2C amplifier detection via systemd. The 940XFG module is userspace-only (`hda-verb` COEF init via udev + a resume hook). The Book5 webcam module loads the camera stack early, installs the relay and IPU7 module configuration, hides raw V4L2 nodes in WirePlumber, and starts the camera services. There is no Nix module for the Book3/Book4 IPU6 webcam fix ([`webcam-fix-libcamera/`](webcam-fix-libcamera/)) or the [`mic-fix/`](mic-fix/) yet — use the install scripts for those. Contributed by [@pagliarinilucas](https://github.com/pagliarinilucas) (speaker) and [@ang3lo-azevedo](https://github.com/ang3lo-azevedo) (Book5).
 
 If your camera image comes out upside-down on a Galaxy Book 360 / convertible (e.g. NP960QHA, NP960QFG, NP960QGK) — i.e. the bundled `ipu-bridge` kernel module override didn't engage — set `hardware.samsungGalaxyBook.webcamFixBook5.videoFlip = true;` in your NixOS configuration to flip the camera-relay output in userspace.
 

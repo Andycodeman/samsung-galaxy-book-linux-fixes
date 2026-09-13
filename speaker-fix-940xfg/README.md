@@ -15,6 +15,11 @@ curl -sL https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/archive/
 
 To uninstall: `sudo ./uninstall.sh`
 
+**On NixOS?** Don't run the installer — use the declarative module
+[`../nixos/speaker-fix-940xfg.nix`](../nixos/speaker-fix-940xfg.nix) and set
+`hardware.samsungGalaxyBook.speakerFix940xfg.enable = true;`. See
+[`../nixos/README.md`](../nixos/README.md).
+
 > **Wrong board?** This fix is specifically for the **14" Book3 Pro (NP940XFG, DMI `940XFG`, ALC298 SSID `0x144dc882`)**. The installer DMI-checks before running and refuses on anything else. If you have a Book4 Pro/Ultra or Book5 Pro (MAX98390 amps), use [`../speaker-fix/`](../speaker-fix/) instead. The 16" Book3 Pro (NP964XFG) already works upstream via `V2_4_AMPS` and needs no fix.
 
 ---
