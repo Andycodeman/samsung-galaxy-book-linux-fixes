@@ -101,4 +101,7 @@ failed on his machine for a reason having nothing to do with it. Re-split:
 
 ## Status
 
-Posted 2026-09-13. Issues #96 and #97 opened.
+Posted 2026-09-13 as comment 5656056173. Module shipped on `main`.
+Issues #96 (this) and #97 (libcamera module, blocked on #96) opened.
+No release cut yet — awaiting @hayden-xyz's test result, since the fix is
+unverified on affected hardware.
