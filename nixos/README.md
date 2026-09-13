@@ -9,6 +9,7 @@ Declarative equivalents of the install scripts, for NixOS users.
 | [`speaker-fix-940xfg.nix`](speaker-fix-940xfg.nix) | Galaxy Book3 Pro 14" (NP940XFG, ALC298, SSID `0x144dc882`) | Silent internal speakers |
 | [`samsung-speaker-fix.nix`](samsung-speaker-fix.nix) | Galaxy Book4 Pro/Ultra, Book5 Pro (MAX98390 amps) | Silent internal speakers |
 | [`webcam-fix-book5.nix`](webcam-fix-book5.nix) | Galaxy Book5 (IPU7, OV02C10/OV02E10) | Camera not detected, purple tint, upside-down image |
+| [`ov02c10-26mhz-fix.nix`](ov02c10-26mhz-fix.nix) | Any Book3/Book4 whose OV02C10 rejects a 26 MHz clock | Sensor never probes at all |
 
 Not sure which speaker fix applies? Run:
 
@@ -21,9 +22,11 @@ If `MAX98390:*` ACPI devices exist, use `samsung-speaker-fix.nix`. If
 `product_name` is `940XFG` and that second command prints nothing, use
 `speaker-fix-940xfg.nix`.
 
-There is no Nix module for the Book3/Book4 IPU6 webcam fix
+There is no Nix module for the Book3/Book4 IPU6 webcam *stack*
 ([`../webcam-fix-libcamera/`](../webcam-fix-libcamera/)) or the mic fix
-([`../mic-fix/`](../mic-fix/)) yet — use the install scripts for those.
+([`../mic-fix/`](../mic-fix/)) yet — use the install scripts for those. The
+sensor-level `ov02c10-26mhz-fix.nix` below is separate from, and a prerequisite
+for, any camera stack.
 
 ## Importing the modules
 
@@ -147,6 +150,43 @@ checkout instead:
 ```nix
 hardware.samsungGalaxyBook.speakerFix.source = "local";
 ```
+
+## `ov02c10-26mhz-fix.nix`
+
+**Check this before blaming any camera software.** Some Book3/Book4 boards clock
+the OV02C10 at 26 MHz while the in-tree driver only accepts 19.2 MHz:
+
+```bash
+dmesg | grep -i 'external clock'
+# ov02c10 i2c-OVTI02C1:00: error -EINVAL: external clock 26000000 is not supported
+# ov02c10 i2c-OVTI02C1:00: probe with driver ov02c10 failed with error -22
+```
+
+If you see that, the sensor never probes and **no camera stack can work** —
+not libcamera, not `hardware.ipu6`. You will get IPU6 video nodes that produce
+nothing, which looks like broken camera software but isn't.
+
+```nix
+hardware.samsungGalaxyBook.ov02c10ClockFix.enable = true;
+```
+
+The 26 MHz clock is a **per-board** property. Two machines with the same model
+number can disagree, so decide by the dmesg line, never by model — that is why
+this is opt-in rather than auto-detected.
+
+After a rebuild and reboot, confirm the *patched* driver is the one that loaded:
+
+```bash
+modinfo ov02c10 | grep -E 'filename|description'
+# filename:    /run/current-system/kernel-modules/lib/modules/<ver>/updates/ov02c10.ko
+# description: OmniVision OV02C10 sensor driver (patched: 26 MHz clock support)
+```
+
+If `description` lacks "patched", the in-tree driver loaded instead — report
+that, it would mean something is overriding the normal module search order.
+(NixOS merges the kernel and every `boot.extraModulePackages` into one tree and
+re-runs `depmod`; `updates/` takes precedence over the in-tree `kernel/` tree,
+so the patched copy is the one that should load.)
 
 ## `webcam-fix-book5.nix`
 

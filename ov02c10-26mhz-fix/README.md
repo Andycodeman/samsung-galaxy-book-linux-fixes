@@ -21,6 +21,8 @@ up on both Raptor Lake and Meteor Lake IPU6. Confirmed affected models:
 
 - Galaxy Book4 Pro **940XGK** — Raptor Lake, subsystem ID `0x144dca07`
 - Galaxy Book4 Ultra **NP960XGL-XG1BR** — Meteor Lake IPU6 `8086:7d19`
+- Galaxy Book3 Pro 14" **940XFG** — Raptor Lake IPU6 `8086:a75d`, NixOS,
+  kernel 7.2.4 ([#95](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/95))
 - Book3/Book4 Ultra Raptor Lake variants
 
 **It is not even model-determined.** Note the full SKU on the Book4 Ultra entry
