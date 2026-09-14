@@ -101,7 +101,23 @@ failed on his machine for a reason having nothing to do with it. Re-split:
 
 ## Status
 
-Posted 2026-09-13 as comment 5656056173. Module shipped on `main`.
-Issues #96 (this) and #97 (libcamera module, blocked on #96) opened.
-No release cut yet — awaiting @hayden-xyz's test result, since the fix is
-unverified on affected hardware.
+**#96 CLOSED — confirmed on hardware, shipped as v0.3.70 (2026-09-14).**
+
+@hayden-xyz's 940XFG on kernel 7.2.4-cachyos: patched driver loads from
+`updates/`, clock rejection gone, `probe ... failed` gone, driver reaches
+`init_controls()` and logs the 26 MHz compensation. Sensor probes.
+
+Resolved: module precedence (confirmed on real hardware too), kernel
+ceiling raised 7.0 -> 7.2.4, third confirmed board / first 940XFG.
+
+He read the result as a failure because the *camera* still doesn't work —
+worth remembering that "sensor probes" and "camera works" need spelling
+out separately for testers. Reply 5667114301 explains it and asks him to
+retry `hardware.ipu6.enable` now that there is a sensor behind it, since
+his earlier test of that route was meaningless.
+
+**Still open:** #97 (libcamera module). Notable: still NO `mei-vsc` /
+`ivsc-*` anywhere in his logs, yet the sensor probed — if this board has
+no IVSC in the path, the IVSC firmware-path unknown blocking #97
+disappears. Asked him to confirm rather than inferring it from an empty
+grep.
