@@ -22,7 +22,8 @@ up on both Raptor Lake and Meteor Lake IPU6. Confirmed affected models:
 - Galaxy Book4 Pro **940XGK** — Raptor Lake, subsystem ID `0x144dca07`
 - Galaxy Book4 Ultra **NP960XGL-XG1BR** — Meteor Lake IPU6 `8086:7d19`
 - Galaxy Book3 Pro 14" **940XFG** — Raptor Lake IPU6 `8086:a75d`, NixOS,
-  kernel 7.2.4 ([#95](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/95))
+  kernel 7.2.4-cachyos — **fix confirmed working**
+  ([#95](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/95))
 - Book3/Book4 Ultra Raptor Lake variants
 
 **It is not even model-determined.** Note the full SKU on the Book4 Ultra entry
@@ -39,7 +40,7 @@ generation or model the board is.
 
 ## Requirements
 
-- Linux kernel with in-tree `ov02c10` driver (kernel 6.8+, tested up to 7.0)
+- Linux kernel with in-tree `ov02c10` driver (kernel 6.8+, tested up to 7.2.4)
 - `dkms` and kernel headers (the install script will try to install these)
 - Samsung Galaxy Book with IPU6 + OV02C10 sensor rejecting the 26 MHz clock
   (Raptor Lake or Meteor Lake — confirm in `dmesg`, see above)
@@ -63,6 +64,11 @@ If you see `ov02c10: unknown parameter 'clk_freq' ignored` in `dmesg`, that is
 `clk_freq` module parameter. It comes from a stale
 `/etc/modprobe.d/*.conf` left over from an older community workaround.
 `install.sh` automatically comments it out (with a `.bak` backup).
+
+**On NixOS?** Don't run the installer — use
+[`../nixos/ov02c10-26mhz-fix.nix`](../nixos/ov02c10-26mhz-fix.nix) and set
+`hardware.samsungGalaxyBook.ov02c10ClockFix.enable = true;`. See
+[`../nixos/README.md`](../nixos/README.md).
 
 ## Install
 
