@@ -108,7 +108,19 @@ amp NIDs via the `hda-verb` userspace tool. The sequence matches what the
 Realtek Windows driver does on the same hardware, derived from `RtHDDump`
 codec-state snapshots captured during issue #44 diagnosis.
 
-Per amp:
+Every amp is muted first, matching the order upstream's
+`alc298_samsung_v2_init_amps()` uses — the init writes retune the DSM excursion,
+boost and limiter parameters, and those must not land on an amp whose output
+stage is live (which it will be on the resume hook, or on any re-run while audio
+is playing):
+
+```
+COEF[0x22] = <amp_nid>            # select each amp in turn
+write_pack(0x23ff, 0x0000)         # GLOBAL_EN off
+write_pack(0x203a, 0x0080)         # AMP_EN off
+```
+
+Then, per amp:
 
 ```
 COEF[0x22] = <amp_nid>            # select internal amp (0x38, 0x39, 0x3C, 0x3D)
