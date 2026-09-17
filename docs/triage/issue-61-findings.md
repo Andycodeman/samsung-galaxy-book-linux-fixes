@@ -389,3 +389,211 @@ Posted verbatim as
 >   to leave unseated, and a codec that doesn't respond at all is more consistent
 >   with that than with anything in software. If you can get into Windows or even
 >   just the BIOS setup screen, do you get any sound there?
+
+---
+
+# Round 2 — it is the right *tweeter*, and round 1's suspect was wrong
+
+[@GiulioMicheletti ran all four tests](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/61#issuecomment-5716787172)
+and the result inverts round 1. Round 1 named `0x39` (right woofer) as the
+suspect on the reasoning that "no bass + distorted highs" means a dead woofer
+with the tweeter carrying the band. Wrong. His isolation test has `0x39` playing
+the right channel **cleanly on its own**, and the buzzing disappearing the moment
+`0x3d` is muted. The right woofer is fine; **the right tweeter is the fault.**
+
+What he measured:
+
+| Test | Result |
+| --- | --- |
+| dyndbg amp init | all four — `0x38`, `0x39`, `0x3c`, `0x3d` — `Initialized speaker amp` |
+| mute `0x3d`, music playing | distortion gone; `0x39` alone plays the right channel clean |
+| mute `0x39`, keep `0x3d` | low/mid through `0x3d` → heavy scratching/buzzing |
+| 120 Hz sine | left clean; right heavy buzzing/rattling |
+| 4000 Hz sine | **both sides clean** |
+| 500→2000 Hz sweep | severe rattle below ~1600 Hz; stops at ~1620–1630 Hz; above that clean but `0x3d` noticeably quieter than `0x3c` |
+
+## The software is symmetric — verified register by register
+
+Re-reading `alc298_samsung_v2_amp_desc_tbl[]` (`alc269.c:1709`) for the two
+tweeters: the configuration written to `0x3c` and `0x3d` is **byte-identical**
+across all fifteen writes except the channel-select group. Specifically
+`0x203d SPK_GAIN = 0x05` and `0x23ba DSM_VOL_CTRL = 0x8d` on both (register
+names confirmed against upstream `sound/soc/codecs/max98390.h`:
+`MAX98390_R203D_SPK_GAIN`, `DSM_VOL_CTRL`).
+
+And no DSM filter blob is loaded on **either** tweeter. This path writes 15
+individual registers; nothing in the `0x2101`–`0x228F` coefficient range that
+`docs/triage/issue-93-findings.md` identified as the actual crossover. `0x2050`
+is written once as `MAX98390_PWR_GATE_CTL` (upstream `max98390.h:79`), not as a
+913-byte blob start — `speaker-fix/`'s `MAX98390_DSM_START_ADDR 0x2050` is the
+same address used as a bulk-write origin, which is a separate thing.
+
+The decisive comparison is not left-vs-right, though. **`0x39` and `0x3d` both
+carry `0x2021 PCM_CH_SRC_1 = 1`** — they receive the same signal. One reproduces
+it cleanly, the other rattles. Identical configuration, identical input,
+different behaviour: the difference is physical.
+
+## The ~1620 Hz number is the tweeter's resonance
+
+Below resonance a driver sits at maximum excursion for a given drive voltage;
+above it, excursion falls off steeply. A defect that only shows where excursion
+peaks — a rubbing voice coil, a torn or partly detached diaphragm — buzzes below
+Fs and goes quiet above it. That is exactly the shape of his sweep, and ~1620 Hz
+is a plausible Fs for a laptop micro-tweeter.
+
+Two details corroborate:
+
+- The ~0.5 s transient buzz at the threshold is the tone's onset still exciting
+  the resonance before it decays.
+- **`0x3d` is quieter than `0x3c` above 1630 Hz at identical `SPK_GAIN` and
+  `DSM_VOL_CTRL`.** It cannot be a gain difference — the register values are the
+  same. Reduced output at identical drive is what partial voice-coil damage
+  looks like.
+
+## The counter-hypothesis that is still live
+
+Linux loads no crossover on this path, so both tweeters run full-range on the
+amp's power-on defaults. Windows very likely high-passes them in its DSP. If so,
+on Linux both tweeters are fed bass, the left tolerates it and the right does
+not — making `0x3d` *marginal* rather than broken, and making a Linux-side
+crossover a real fix rather than a non-issue.
+
+This matters beyond one machine: if it holds, every V2_4 Samsung on Linux is
+feeding its tweeters full-range, which is a slow-damage mechanism, not just a
+fidelity gap. Unproven — do not act on it before the tests below come back.
+
+Two tests discriminate, and they went out in the round 2 reply:
+
+**A. Channel swap** (Linux-only, safe, two writes). `chan(){ sel $1; pack 0x2021 $2; }`,
+then mute the woofers, set `0x3c` to channel 1 and `0x3d` to channel 0. With
+`speaker-test` alternating, the *left* burst now drives `0x3d` and the *right*
+burst drives `0x3c`. Buzz follows `0x3d` → the fault is that amp/driver. Buzz
+stays on the right burst → something upstream feeds the right side differently.
+Helper dry-run verified against a recording stub: emits select-amp then
+`pack {0x2021, val}`, matching the init path's own write.
+
+**B. Windows.** Rattles there too → hardware, repair not patch. Clean there →
+Windows filters where we do not, and it becomes ours to fix.
+
+## Practical note that saves the reporter a wasted afternoon
+
+Muting `0x3d` does not persist. `alc298_samsung_v2_init_amps()` registers
+`spec->gen.pcm_playback_hook = alc298_samsung_v2_playback_hook`, and that hook
+calls `alc298_samsung_v2_enable_amps()` on every `HDA_GEN_PCM_ACT_OPEN`, which
+loops all four amps. So a hand mute survives only until the next application
+opens a stream. There is no simple boot-time way to hold one amp down.
+
+The one persistent lever is the 2-amp fixup: `num_speaker_amps = 2` means the
+enable loop never reaches `0x3c`/`0x3d`, so neither tweeter is ever enabled.
+Clean, but dull on both sides. Needs the legacy HDA path because `model=` is a
+`snd-hda-intel` parameter and he is on SOF — and he has already confirmed
+`dsp_driver=1` behaves identically on his machine. Offered as an untested
+experiment, labelled as such:
+
+```
+options snd-intel-dspcfg dsp_driver=1
+options snd-hda-intel model=alc298-samsung-amp-v2-2-amps
+```
+
+Model string verified against `alc269.c:7365`.
+
+## If the counter-hypothesis wins
+
+The avenue would be pushing a real high-pass tuning into the tweeter amps
+through the same COEF pack path — `speaker-fix/src/max98390_hda_filters.c`
+already carries a 913-byte tweeter blob. 913 packs is ~5,500 `hda-verb`
+invocations, and per [[issue-93]] the blob-to-speaker assignment is itself under
+suspicion, so this is speculative and needs care. Not to be attempted before
+test B says Windows is clean.
+
+## Aside, noted not acted on
+
+Upstream names `0x239e` as `THERMAL_COILTEMP_RD_BACK_BYTE1` (`max98390.h:564`).
+That is the address `speaker-fix-940xfg/alc298-amp-init.sh` writes `0x0004` to as
+its "SKU-specific enable delta". It is confirmed working on #44 so nothing should
+change on that basis alone, but the naming is worth understanding before that
+sequence is reused anywhere else.
+
+## Round 2 reply — POSTED
+
+Posted verbatim as
+[comment-5717005002](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/61#issuecomment-5717005002).
+
+> Thanks — this is the kind of testing that actually settles things, and it turns my last answer on its head.
+>
+> I said the suspect was `0x39`, your right woofer. That was wrong. Your isolation test has `0x39` playing the right channel cleanly on its own, and the buzzing vanishing the moment you mute `0x3d`. The right woofer is fine. **It's the right tweeter.**
+>
+> ## What your data proves
+>
+> I went back through the V2_4 table the kernel applies. The configuration written to `0x3c` and `0x3d` is **byte-identical** — the same fifteen register writes, the same `0x203d SPK_GAIN = 0x05`, the same `0x23ba DSM_VOL_CTRL = 0x8d`. No DSM filter blob is loaded on either one; this path writes a handful of individual registers, not the 913-byte tuning blob the Book4/Book5 package pushes over I2C. The only thing that differs between the two tweeters is `0x2021 PCM_CH_SRC_1`, which picks the channel.
+>
+> And here's the part that does the real work: **`0x39` and `0x3d` both have `0x2021 = 1`.** They receive the same signal. One reproduces it cleanly, the other rattles.
+>
+> Identical configuration, identical input, different behaviour. That difference has to be physical.
+>
+> Your sweep then says what kind of physical:
+>
+> - **Rattle below ~1620 Hz, clean above.** Below its resonance a driver sits at maximum excursion for a given drive voltage; above resonance, excursion falls off steeply. ~1620 Hz is very likely that tweeter's resonant frequency — and a defect that only shows where excursion peaks is the classic signature of a rubbing voice coil or a torn/partly detached diaphragm.
+> - **The ~0.5 s transient buzz right at the threshold** — the onset of the tone still excites the resonance, then it decays. Fits.
+> - **Quieter than `0x3c` above 1630 Hz.** This is the one I find most telling. `SPK_GAIN` and `DSM_VOL_CTRL` are the *same register values* on both tweeters, so it cannot be a gain difference. Reduced output at identical drive is what partial voice-coil damage looks like.
+>
+> ## The honest counter-argument
+>
+> Linux loads no crossover here — both tweeters run full-range on the amplifier's power-on defaults. Windows almost certainly high-passes them in its DSP. If that's the case, then on Linux both your tweeters are being fed bass, your left one tolerates it and your right one doesn't — which would make the right tweeter *marginal* rather than broken, and would mean a Linux-side crossover could rescue it.
+>
+> That's the difference between "your hardware needs repair" and "our software has a gap", so it's worth two more tests.
+>
+> ## Test A — swap the channels
+>
+> Safe, two extra writes, and it separates "the signal reaching the right side is different" from "the hardware on the right side is different". Add one helper to the set you already have:
+>
+> ```bash
+> chan(){ sel $1; pack 0x2021 $2; }   # 0x0000 = left channel, 0x0001 = right
+> ```
+>
+> Start the audio *first* — the kernel re-enables all four amps whenever a stream opens, so anything you mute beforehand gets undone:
+>
+> ```bash
+> speaker-test -D plughw:0,0 -c 2 -t sine -f 120 &
+> sleep 2
+> ampoff 0x38; ampoff 0x39        # woofers out of the way, tweeters only
+> chan 0x3c 0x0001                # left tweeter now plays the RIGHT channel
+> chan 0x3d 0x0000                # right tweeter now plays the LEFT channel
+> ```
+>
+> `speaker-test` alternates left burst, then right burst. With the swap in place the **left** burst drives `0x3d` and the **right** burst drives `0x3c`. So:
+>
+> - buzz now on the **left** burst → it followed `0x3d`, and the fault is that amp/driver
+> - buzz still on the **right** burst → it stayed with the channel, and something upstream is feeding the right side differently
+>
+> If `plughw:0,0` reports the device busy, `-D default` is fine — we're only comparing within one run. To undo: `chan 0x3c 0x0000; chan 0x3d 0x0001`, or just reboot.
+>
+> ## Test B — Windows, if you still have it
+>
+> Does the right side rattle on bass-heavy material there? Rattles too → hardware, and it's a repair/warranty conversation rather than a patch. Clean in Windows → Windows is filtering where we aren't, and it becomes our problem to fix.
+>
+> ## One thing that will save you an afternoon
+>
+> Muting `0x3d` by hand won't stick. The kernel registers a playback hook that re-enables **all four** amps every time a PCM stream opens, so your mute survives only until the next app starts audio. There's no simple boot-time way to hold one amp down.
+>
+> The one persistent lever is to have the kernel bring up only two amps instead of four, which leaves both tweeters out of the picture entirely — no buzz, but duller on both sides, since you'd lose all treble rather than just the right. It needs the legacy HDA path, because `model=` is a `snd-hda-intel` parameter and you're on SOF:
+>
+> ```
+> # /etc/modprobe.d/alc298-2amp.conf
+> options snd-intel-dspcfg dsp_driver=1
+> options snd-hda-intel model=alc298-samsung-amp-v2-2-amps
+> ```
+>
+> I haven't tested that combination, so treat it as an experiment — but you've already confirmed `dsp_driver=1` behaves the same on your machine, and if it works it's a usable stopgap. Worth knowing either way.
+>
+> ## Where this goes
+>
+> If test A says the fault follows `0x3d` and Windows rattles too, I'd call it a damaged tweeter and stop there — that's a repair, not something we can patch around.
+>
+> If Windows is clean, that's a lot more interesting. It would mean we're feeding the tweeters full-range where Windows doesn't, and the next thing to try would be pushing a proper high-pass tuning into the tweeter amps through the same COEF path you've been using. That's new ground and I'd want to be careful with it, but your testing has got us close enough that it's a real option.
+>
+> Either way — thank you for the sweep. The frequency threshold is what made this diagnosable at all.
+
+**Recommendation: keep #61 open.** Still no release cut — nothing here changes
+shipped code, and the 940XFG mute fix (`3b966ef`) is already on `main`, which is
+what the installers pull.
