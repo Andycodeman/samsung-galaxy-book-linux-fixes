@@ -464,7 +464,10 @@ fidelity gap. Unproven — do not act on it before the tests below come back.
 
 Two tests discriminate, and they went out in the round 2 reply:
 
-**A. Channel swap** (Linux-only, safe, two writes). `chan(){ sel $1; pack 0x2021 $2; }`,
+**A. Channel swap** — **RETRACTED in [round 3](#round-3--windows-is-clean-my-test-broke-his-codec-and-the-init-never-re-runs):
+writing `0x2021` on a live stream froze the reporter's codec. Do not reuse this
+test.** It was described here as "Linux-only, safe, two writes"; it was not safe.
+`chan(){ sel $1; pack 0x2021 $2; }`,
 then mute the woofers, set `0x3c` to channel 1 and `0x3d` to channel 0. With
 `speaker-test` alternating, the *left* burst now drives `0x3d` and the *right*
 burst drives `0x3c`. Buzz follows `0x3d` → the fault is that amp/driver. Buzz
@@ -597,3 +600,189 @@ Posted verbatim as
 **Recommendation: keep #61 open.** Still no release cut — nothing here changes
 shipped code, and the 940XFG mute fix (`3b966ef`) is already on `main`, which is
 what the installers pull.
+
+---
+
+# Round 3 — Windows is clean, my test broke his codec, and the init never re-runs
+
+[@GiulioMicheletti's round 3 report](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/61#issuecomment-5723092090).
+Mixed round: one decisive result, one self-inflicted wound, and a code-level
+finding that came out of a remark he made in passing.
+
+## My round 2 test A was wrong and has been retracted
+
+I told him writing `0x2021 PCM_CH_SRC_1` on a live stream was "safe, two extra
+writes". It froze the codec into silence. `PCM_CH_SRC_1` is the amp's
+channel-source select and changing it under a running stream wedges it. The
+channel-swap result is void, and **everything measured after that point is from a
+confounded machine** — post-freeze, post-`systemctl --user restart pipewire
+wireplumber`, with arbitrary COEF writes already applied and no reboot in
+between. Retracted in the round 3 reply; he was told not to repeat it.
+
+## The decisive result: Windows 11 is clean
+
+Clean audio, all volumes, all frequencies. Frame it narrowly — in Windows he
+cannot isolate amps, and Windows very likely high-passes the tweeters in DSP, so
+a marginal driver would never be excited there. But gross mechanical damage is
+now unlikely, and **the round 2 counter-hypothesis is now the leading one: this
+is a Linux-side fault, not his hardware.**
+
+## Two of his conclusions that do not hold
+
+**"Aggressive, continuous power-save cycling on all four nodes."** Almost
+certainly `alc298_samsung_v2_playback_hook` — `enable_amps` on every
+`HDA_GEN_PCM_ACT_OPEN`, `disable_amps` on every close, one `codec_dbg` line per
+amp. He only sees them because round 2 told him to set `dyndbg=+p`. PipeWire
+opens and closes streams constantly, so continuous churn is the expected output.
+Asked him to confirm the lines read `Enabled`/`Disabled speaker amp`.
+
+Checked against Andy's own Book4 (`sof-hda-dsp`, same SOF path): the HDA codec
+device reports `runtime_status = unsupported`, i.e. codec runtime PM is not
+active on this driver path at all. `snd_hda_intel.power_save = 1` is set but the
+module is loaded with refcount 0 and is not bound to the card. So the
+power-management reading does not survive contact with the hardware either.
+
+**"The driver fails to independently drive or route signals to the tweeter
+amps."** Not supported — his evidence is that the `0x3c`/`0x3d` toggles produce
+no audible change, but those same toggles were audible and decisive in round 2.
+Far more likely that his COEF writes stopped landing after the freeze. He flagged
+the uncertainty himself, which is why this is a redirect and not a correction.
+
+## The finding: the V2 amp init is never re-applied on resume
+
+`alc298_fixup_samsung_amp_v2_4_amps()` (`alc269.c:1824`) runs
+`alc298_samsung_v2_init_amps()` only on `HDA_FIXUP_ACT_PROBE`, which fires once
+at codec probe.
+
+The resume path is `alc_resume()` (`realtek.c:859`) → `snd_hda_codec_init()` →
+`alc_init()` (`realtek.c:806`), which ends with
+`snd_hda_apply_fixup(codec, HDA_FIXUP_ACT_INIT)` (`realtek.c:823`). Many other
+fixups in that file handle `ACT_INIT`; this one does not, so on resume it is a
+no-op.
+
+**After any codec resume the four amps are never re-tuned**, and
+`pcm_playback_hook` then enables them on the next PCM open — enabled but
+untuned.
+
+Independent corroboration from inside this repo: `speaker-fix-940xfg` ships
+`/lib/systemd/system-sleep/alc298-amp-init` to re-run the whole sequence after
+resume. That hook only needs to exist because amp COEF state does **not** survive
+suspend on this hardware. The kernel carries the same gap on every board where
+the fixup does fire.
+
+This also explains the intermittency: whether the buzz is present depends on
+whether the codec has been through a resume since boot.
+
+## The test that settles it
+
+Back to stock (remove the `dsp_driver=1` modprobe.d file), keep `dyndbg=+p`,
+then two listens with no register writes at all: cold boot, then suspend/resume.
+Either way, `sudo dmesg | grep alc298_samsung_v2 | tail -30`.
+
+If the buzz appears after resume and the log shows `Enabled`/`Disabled` lines
+after the resume but **no new `Initialized speaker amp` lines**, that is the init
+failing to re-apply, directly observed.
+
+## If it confirms
+
+- **Workaround:** a resume hook re-running the init, the same shape as the one
+  already shipped for the 940XFG. Not built yet — deliberately, until the
+  mechanism is confirmed.
+- **Upstream patch:** have the fixup handle `HDA_FIXUP_ACT_INIT` as well as
+  `ACT_PROBE`. Blast radius is every board on this fixup: Book2 Pro
+  `0xc870`/`0xc872`, Book3 Pro 16" `0xc886`, Book3 Pro 360 `0xc1ca`, Book3 Ultra
+  `0xc1cc`, and LG gram 16/17 `0x1854:0x0488`/`0x0489`/`0x048a`.
+
+## Still unexplained
+
+An untuned amp should affect both tweeters, not just the right one. Unit
+variation in how much abuse each driver tolerates is the hand-waving answer and
+it is not good enough. Confirm the mechanism first; do not build an explanation
+for the asymmetry before then.
+
+## Round 3 reply — POSTED
+
+Posted verbatim as
+[comment-5733123455](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/61#issuecomment-5733123455).
+
+> Thanks for pushing through all of that — and first, an apology.
+>
+> ## The `0x2021` test was my mistake
+>
+> I called it "safe, two extra writes." It isn't. `PCM_CH_SRC_1` is the amplifier's channel-source select, and changing it underneath a running stream is exactly what wedged your codec into silence. That's on me. **Please don't repeat that test**, and I've struck it from my notes.
+>
+> It also means I'd treat everything you measured *after* the freeze as unreliable — not because you did anything wrong, but because the machine had been hung and had PipeWire restarted under it. We should get back to a clean baseline before drawing conclusions from it. More on that below.
+>
+> ## The Windows result is the important one
+>
+> That was the test that mattered, and it came back unambiguous. Clean audio at all volumes and frequencies under Windows 11.
+>
+> I'd frame the conclusion slightly more narrowly than you did — in Windows you can't isolate individual amps, and Windows almost certainly high-passes the tweeters in its DSP, so a marginal driver would never be pushed hard enough to complain there. But it does make serious mechanical damage unlikely, and it moves the weight firmly onto the hypothesis I flagged last time: **this is a Linux-side problem, not your hardware.**
+>
+> ## Two things in your report I read differently
+>
+> **The "aggressive power-save cycling" is almost certainly not power management.** I think you're seeing `alc298_samsung_v2_playback_hook`, which calls `enable_amps` every time a PCM stream opens and `disable_amps` every time one closes — one log line per amp, four amps, every open and close. PipeWire opens and closes streams constantly, so continuous churn is exactly what that looks like. You're only seeing it because I had you turn on `dyndbg=+p`. It's the driver working as designed, not a fault.
+>
+> If you want to check me on that: are the lines you're seeing `Enabled speaker amp` / `Disabled speaker amp`? If so, that's the hook.
+>
+> **"The driver fails to independently drive or route signals to the tweeters"** — I don't think your data supports that yet, and you flagged the uncertainty yourself, which is the right instinct. In round 2 those same `0x3c`/`0x3d` toggles worked perfectly and were audible. The more likely explanation for them going silent is that your COEF writes stopped landing after the freeze, not that the routing is broken.
+>
+> ## What chasing your power-save remark actually turned up
+>
+> This is the useful part, and it came out of your observation, so thank you for it.
+>
+> The amp initialisation runs **once**, at codec probe, and is never re-applied:
+>
+> ```c
+> static void alc298_fixup_samsung_amp_v2_4_amps(struct hda_codec *codec,
+>                 const struct hda_fixup *fix, int action)
+> {
+>         if (action == HDA_FIXUP_ACT_PROBE)     /* <-- PROBE only */
+>                 alc298_samsung_v2_init_amps(codec, 4);
+> }
+> ```
+>
+> Meanwhile the resume path is `alc_resume()` → `snd_hda_codec_init()` → `alc_init()`, and `alc_init()` ends with `snd_hda_apply_fixup(codec, HDA_FIXUP_ACT_INIT)` (`sound/hda/codecs/realtek/realtek.c`). Plenty of other fixups in that file handle `ACT_INIT`. **This one doesn't** — so on resume it does nothing at all.
+>
+> The result: after a codec resume, your four amps are never re-tuned. The playback hook then dutifully *enables* them on the next stream open — enabled, but untuned.
+>
+> And there's a strong hint this is real. This repo already ships a suspend/resume hook for the Book3 Pro 14" speaker fix, re-running the whole init sequence after every resume. That hook only needed to exist because **amp COEF state doesn't survive suspend on this hardware.** The kernel has the same gap on every board where the fixup does fire — including yours.
+>
+> That would also explain why this has felt intermittent: whether the buzz is present depends on whether the codec has been through a resume since boot.
+>
+> ## The test — two listens, no register writes at all
+>
+> First, get back to stock: remove any `/etc/modprobe.d/` files you added during this (including the `dsp_driver=1` one), and reboot. Keep the `dyndbg=+p` — it's harmless and we want its output.
+>
+> **1. Cold boot, touch nothing.** Then:
+>
+> ```bash
+> speaker-test -D plughw:0,0 -c 2 -t sine -f 120 -l 2
+> ```
+>
+> Is the right side clean or buzzing?
+>
+> **2. Suspend, resume, listen again.** Close the lid or `systemctl suspend`, wake it, run the same command.
+>
+> Then, whatever the answer:
+>
+> ```bash
+> sudo dmesg | grep alc298_samsung_v2 | tail -30
+> ```
+>
+> This is the bit that nails it. If the buzz appears after resume, and the log shows `Enabled`/`Disabled` lines after the resume but **no new `Initialized speaker amp` lines**, that's the init failing to re-apply, directly observed. That's the whole case in one paste.
+>
+> ## Where this goes if it confirms
+>
+> Two outcomes, both good for you:
+>
+> - **A workaround you can have immediately** — a resume hook that re-runs the init sequence, the same approach already shipped here for the Book3 Pro 14". I'd rather build that once we know it's the right fix than guess at it now.
+> - **A proper kernel patch** — make the fixup handle `HDA_FIXUP_ACT_INIT` as well as `ACT_PROBE`. That's a small change with a wide reach: the same fixup covers the Book2 Pro, Book3 Pro 16", Book3 Pro 360, your Book3 Ultra, and the LG gram 16/17. If this is the bug, it isn't just your machine.
+>
+> One honest caveat: this doesn't yet explain why only the *right* tweeter complains — an untuned amp should affect both sides. Some of that may just be unit variation in how much abuse each driver tolerates. I'd rather confirm the mechanism first than talk myself into an explanation for that now.
+>
+> Take your time with it, and sorry again about the codec freeze.
+
+**Recommendation: keep #61 open.** Still no release cut and still no code change
+from this round — the candidate fix is a kernel patch, and it is unconfirmed.
+
