@@ -5,7 +5,7 @@ the ALC298). Distro: Arch, kernel 7.2.6-arch2-1.
 
 **Status:** fix `4bae1c2` released as **v0.3.71** —
 https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/releases/tag/v0.3.71. Reply posted — [comment-5810736173](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/98#issuecomment-5810736173), 2026-09-24.
-Issue left **open** until the reporter confirms after a real hibernate cycle.
+Reporter confirmed on 2026-09-24 that v0.3.71 fixes it on their Book4 Pro 360 (NP960QGK, kernel 7.2.6-arch2-1) after a real hibernate cycle; issue **closed**.
 
 ---
 
