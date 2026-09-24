@@ -177,6 +177,12 @@ time (`DSP_GLOBAL_EN`, `SPK_EN`, `EN` → 1) instead: if it waited for the playb
 be no sound at all. The trade-off is deliberate — working speakers, at the cost of idle power
 management.
 
+**Suspend / hibernate:** hibernation powers the amps off, wiping every register the driver wrote
+at probe — including the DSM speaker tuning. The driver now re-runs its full init (reset, PCM
+config, DSM blobs, amp enable) on resume from suspend and hibernate, so the speakers come back
+without reloading the modules. See
+[#98](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/98).
+
 **Battery impact:** the MAX98390 draws ~10μA per chip only in its *disabled* state, which this
 package never reaches. The real idle draw is that of four enabled class-D amps. If you want them
 genuinely powered down when you're not playing audio, use [@MatiDegli's speaker-on/off helper
