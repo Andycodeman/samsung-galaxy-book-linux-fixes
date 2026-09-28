@@ -234,6 +234,10 @@
         pkgs.procps
         pkgs.systemd
         pkgs.util-linux
+        # nudge-wireplumber: v4l2-ctl, pw-dump and python3
+        pkgs.v4l-utils
+        pkgs.pipewire
+        pkgs.python3
         libcamera-book5
         pkgs.gst_all_1.gstreamer
         pkgs.gst_all_1.gst-plugins-base
@@ -352,9 +356,9 @@ in {
       # sensor helpers and tuning yamls but is referenced only by the relay,
       # so system pipewire/ffmpeg stay stock and cached.
       #
-      # Tradeoff: direct PipeWire-SPA libcamera consumers (GNOME Snapshot,
-      # Firefox PipeWire camera) use stock libcamera. Relay/v4l2loopback
-      # consumers (browsers, Equibop/Discord, Zoom) get the fix.
+      # WirePlumber's libcamera monitor is disabled below so PipeWire
+      # consumers (Chromium, Electron, Firefox PipeWire camera) only see the
+      # relay node instead of a stock-libcamera one with the wrong bayer order.
 
       boot = {
         initrd.kernelModules = [
@@ -422,6 +426,11 @@ in {
           };
       };
 
+      # Also keeps PipeWire from holding the sensor the relay needs.
+      services.pipewire.wireplumber.extraConfig."51-disable-libcamera-monitor" = {
+        "wireplumber.profiles".main."monitor.libcamera" = "disabled";
+      };
+
       # Launcher hardcodes this as HOME, GST_REGISTRY and the Mesa shader cache.
       systemd.tmpfiles.rules = ["d /var/cache/camera-relay 1777 root root -"];
 
@@ -433,6 +442,9 @@ in {
           serviceConfig = {
             Type = "simple";
             ExecStart = "${cameraRelay}/bin/camera-relay start --on-demand";
+            # WirePlumber probes the loopback before the monitor pins YUYV and
+            # caches the catch-all range, which WebRTC cannot use.
+            ExecStartPost = "-${cameraRelay}/bin/camera-relay nudge-wireplumber";
             ExecStop = "${cameraRelay}/bin/camera-relay stop";
             Restart = "on-failure";
             RestartSec = 5;
