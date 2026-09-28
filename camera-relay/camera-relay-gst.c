@@ -240,11 +240,13 @@ static int append_color_filter(char **argv, int argc, char *spec)
 		if (argc >= MAX_ARGS - TAIL_SLOTS)
 			die("color filter too long");
 
+		/* The element branch below emits the "!" in front of each stage,
+		 * so a separator only switches state here; copying it too would
+		 * produce "a ! ! b". */
 		if (!strcmp(tok, "!")) {
 			if (expect_element)
 				die("color filter has an empty stage");
 			expect_element = 1;
-			argv[argc++] = tok;
 			continue;
 		}
 
