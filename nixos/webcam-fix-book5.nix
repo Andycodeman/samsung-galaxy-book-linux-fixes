@@ -334,6 +334,18 @@ in {
       '';
     };
 
+    loopbackVideoNr = lib.mkOption {
+      type = lib.types.nullOr lib.types.ints.unsigned;
+      default = null;
+      example = 50;
+      description = ''
+        Fixed /dev/videoN number for the relay loopback. By default it takes
+        whichever number is free when the module loads, which races the IPU7
+        nodes. Pin it for consumers that need a stable path, such as face
+        authentication daemons that open the node directly.
+      '';
+    };
+
     relayColorFilter = lib.mkOption {
       type = lib.types.str;
       default = "";
@@ -418,7 +430,7 @@ in {
             '';
 
             "modprobe.d/99-camera-relay-loopback.conf".text = ''
-              options v4l2loopback devices=1 exclusive_caps=0 card_label="Built-in Front Camera"
+              options v4l2loopback devices=1 exclusive_caps=0 card_label="Built-in Front Camera"${lib.optionalString (cfg.loopbackVideoNr != null) " video_nr=${toString cfg.loopbackVideoNr}"}
             '';
           }
           // lib.optionalAttrs wireplumberUsesConf {
