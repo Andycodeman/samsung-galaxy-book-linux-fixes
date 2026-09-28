@@ -302,6 +302,9 @@
         actions = {
           update-props = {
             device.disabled = true
+            # api.v4l2.cap.card only reaches the node props, where
+            # device.disabled is ignored.
+            node.disabled = true
           }
         }
       }
