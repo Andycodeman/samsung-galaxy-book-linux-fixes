@@ -155,6 +155,53 @@
     '';
   };
 
+  relayGstPlugins = [
+    pkgs.gst_all_1.gstreamer
+    pkgs.gst_all_1.gst-plugins-base
+    pkgs.gst_all_1.gst-plugins-good
+    pkgs.gst_all_1.gst-plugins-bad
+    libcamera-book5
+  ];
+
+  # The launcher execs gst-launch with a fresh environment and only trusts
+  # FHS paths, so point it at the store. It is not installed setgid here:
+  # the ISYS nodes are not restricted to a camera-relay group on NixOS.
+  cameraRelayGst = pkgs.stdenv.mkDerivation {
+    pname = "camera-relay-gst";
+    version = "1.0";
+
+    src = ../camera-relay;
+
+    dontConfigure = true;
+
+    postPatch = ''
+      substituteInPlace camera-relay-gst.c \
+        --replace-fail '"/usr/bin/gst-launch-1.0", "/usr/local/bin/gst-launch-1.0"' \
+                       '"${pkgs.gst_all_1.gstreamer.bin}/bin/gst-launch-1.0"' \
+        --replace-fail '"/usr/local/bin/cam", "/usr/bin/cam"' \
+                       '"${libcamera-book5}/bin/cam"' \
+        --replace-fail '"/usr/lib/", "/usr/lib64/", "/usr/share/",' \
+                       '"/nix/store/", "/usr/lib/", "/usr/lib64/", "/usr/share/",' \
+        --replace-fail '"/etc/glvnd/egl_vendor.d/", "/usr/share/glvnd/egl_vendor.d/",' \
+                       '"/run/opengl-driver/share/glvnd/egl_vendor.d/", "/etc/glvnd/egl_vendor.d/", "/usr/share/glvnd/egl_vendor.d/",'
+    ''
+    # The fresh environment would drop the rotation override, and without it
+    # the bayer-fix patch decodes the grid wrong (purple/green tint).
+    + lib.optionalString cfg.videoFlip ''
+      substituteInPlace camera-relay-gst.c \
+        --replace-fail 'env[n++] = "MESA_SHADER_CACHE_DIR=" CACHE_DIR "/mesa";' \
+                       'env[n++] = "MESA_SHADER_CACHE_DIR=" CACHE_DIR "/mesa"; env[n++] = "LIBCAMERA_FORCE_OV02E10_ROTATION=180";'
+    '';
+
+    buildPhase = ''
+      $CC -O2 -Wall -o camera-relay-gst camera-relay-gst.c
+    '';
+
+    installPhase = ''
+      install -Dm755 camera-relay-gst $out/bin/camera-relay-gst
+    '';
+  };
+
   cameraRelay = pkgs.stdenvNoCC.mkDerivation {
     pname = "camera-relay";
     version = "1.0";
@@ -171,6 +218,7 @@
 
       substituteInPlace $out/share/camera-relay/camera-relay \
         --replace "/usr/local/bin/camera-relay-monitor" "${cameraRelayMonitor}/bin/camera-relay-monitor" \
+        --replace "/usr/local/bin/camera-relay-gst" "${cameraRelayGst}/bin/camera-relay-gst" \
         --replace "/usr/local/bin/camera-relay" "$out/bin/camera-relay"
 
       mkdir -p $out/bin
@@ -212,7 +260,9 @@
       pkgs.gst_all_1.gst-plugins-good
       pkgs.gst_all_1.gst-plugins-bad
     ]);
-    GST_PLUGIN_PATH = lib.makeSearchPath "lib/gstreamer-1.0" [libcamera-book5];
+    # The launcher drops GST_PLUGIN_SYSTEM_PATH_1_0, so every plugin the
+    # pipeline needs has to be on GST_PLUGIN_PATH.
+    GST_PLUGIN_PATH = lib.makeSearchPath "lib/gstreamer-1.0" (map lib.getLib relayGstPlugins);
     LD_LIBRARY_PATH = lib.makeLibraryPath [libcamera-book5];
   };
 
@@ -371,6 +421,9 @@ in {
             "wireplumber/main.lua.d/51-disable-ipu7-v4l2.lua".text = wireplumberLuaRule;
           };
       };
+
+      # Launcher hardcodes this as HOME, GST_REGISTRY and the Mesa shader cache.
+      systemd.tmpfiles.rules = ["d /var/cache/camera-relay 1777 root root -"];
 
       systemd.user.services = {
         camera-relay = {
