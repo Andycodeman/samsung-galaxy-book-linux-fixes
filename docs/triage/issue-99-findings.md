@@ -11,10 +11,10 @@ Fedora Workstation (fresh install), kernel `7.2.6-200.fc44.x86_64`, Secure Boot
 **off**, card `sof-hda-dsp` with Realtek ALC298, 4x MAX98390 at
 `0x38`/`0x39`/`0x3c`/`0x3d` on **I2C bus 2**.
 
-**Status:** triage only. Nothing posted to GitHub, no driver code changed, and
-no reply drafted. The reply should be written from the
-[diagnostic plan](#diagnostic-plan-for-the-reporter), with the write-safety
-wording kept intact.
+**Status:** reply posted 2026-09-27 as
+[comment-5863742135](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/99#issuecomment-5863742135)
+(see [Reply posted](#reply-posted)). No driver code changed. Issue stays
+**open**, awaiting the reporter's results.
 
 ---
 
@@ -479,3 +479,169 @@ implement write checking with a per-amp error count in the log.
   actually is.
 - **Suspend/resume as a test.** It re-runs the same symmetric init, so it
   can't separate any of H1–H4.
+
+---
+
+## Reply posted
+
+Posted verbatim to @Bruzado1975 on 2026-09-27 as
+[comment-5863742135](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/99#issuecomment-5863742135).
+Issue left **open**, with no labels and no driver change.
+
+How it differs from the plan above:
+
+- **Step 0 dropped.** Their dmesg already shows bus 2, so `BUS=2` is set
+  directly.
+- **Added `sudo dnf install i2c-tools && sudo modprobe i2c-dev`.** `i2ctransfer`
+  needs `/dev/i2c-2`, and Fedora doesn't necessarily autoload `i2c-dev`.
+- **Step 1 trimmed** to `dmidecode`, the codec `Subsystem Id`, the dmesg grep and
+  `alsa-info.sh`.
+- **#98 isn't called a stereo confirmation.** The reply says another NP960QGK
+  owner on 7.2.6 has the driver working "with no left/right complaint", not
+  that it plays both sides, because nobody asked #98 about left vs right (see
+  [above](#issue-98-is-weaker-evidence-than-it-looks)).
+- **Suspend/resume isn't given as a revert path.** Only a reboot is, because
+  resume re-init needs v0.3.71+ and their install version is unknown.
+- The helpers `rd`/`wr`/`table`/`idle`/`chan`, the S0/S1/S2 commands and the
+  outcome table are verbatim from steps 3 and 4. `chan 0x39 0x00` was re-checked
+  against a stub `i2ctransfer` before posting and emits the same five writes
+  plus read-back.
+
+> Thanks for such a thorough report. Your triage was good: you checked the mixer balance, you tested headphones and the external speakers, and you narrowed it to the right-side amps (`0x39` woofer, `0x3d` tweeter). That saved a whole round.
+>
+> ## What the driver does per side
+>
+> All four amps get the same setup. The only per-side difference is one register, `0x2021`, the amp's channel select. The left amps (`0x38`/`0x3c`) are set to PCM channel 0, and the right amps (`0x39`/`0x3d`) to channel 1. Another Book4 Pro 360 (NP960QGK) owner on the same 7.2.6 kernel has this driver working, with no left/right complaint. Both of your right amps share exactly one thing: they listen to channel 1. So the likely causes are either the codec not putting right-channel data on the link to the amps on this unit, or something physical on the right side (amps, speakers or cable). The tests below should tell us which.
+>
+> One small correction first. On Fedora, ALSA's `default` device *is* PipeWire (that's what `pipewire-alsa` sets up), so your `speaker-test` still went through it. The `plughw` form below really does bypass it.
+>
+> Everything up to step 3 only reads. Step 4 writes amp registers, so please read its note first.
+>
+> ## 1. Model, BIOS and codec state (read-only)
+>
+> ```bash
+> sudo dmidecode -s system-product-name
+> sudo dmidecode -s system-sku-number
+> sudo dmidecode -s bios-version
+> sudo dmidecode -s bios-release-date
+> grep -m1 'Subsystem Id' /proc/asound/card*/codec#0
+> sudo dmesg | grep -iE 'picked fixup|max98390|component bound'
+> alsa-info.sh --no-upload        # attach the file it writes
+> # if alsa-info.sh isn't installed:  cat /proc/asound/card*/codec#0 > codec0.txt
+> ```
+>
+> This gives the exact model/SKU and BIOS version. A Book4 Pro 360 is expected to show `Subsystem Id: 0x144dc892`. A different value would be a lead in itself.
+>
+> ## 2. Speaker test that really bypasses PipeWire
+>
+> Close everything that plays audio, wait about 10 seconds, then:
+>
+> ```bash
+> aplay -l                                              # sof-hda-dsp should show as [sofhdadsp]
+> speaker-test -D plughw:sofhdadsp,0 -c 2 -t wav -l 1   # says "Front Left", then "Front Right"
+> ```
+>
+> If `aplay -l` shows a different ID in brackets, use that everywhere below. If it says "device busy", wait and retry rather than falling back to `default`.
+>
+> - **Right speakers play "Front Right" here:** it's a PipeWire volume/route setting, not hardware. Stop and send `pactl list sinks`.
+> - **Still silent on the right:** carry on.
+>
+> ## 3. Amp register read-back (read-only)
+>
+> You'll need `i2c-tools` and the `i2c-dev` module. Then paste these helpers into one terminal (run `sudo -v` first so the password prompt doesn't land mid-table):
+>
+> ```bash
+> sudo dnf install i2c-tools && sudo modprobe i2c-dev
+> sudo -v
+>
+> BUS=2
+> rd(){ sudo i2ctransfer -y -f "$BUS" w2@"$1" $(printf '0x%02x 0x%02x' $(( $2 >> 8 )) $(( $2 & 0xff ))) r1; }
+> wr(){ sudo i2ctransfer -y -f "$BUS" w3@"$1" $(printf '0x%02x 0x%02x' $(( $2 >> 8 )) $(( $2 & 0xff ))) "$3"; }
+> table(){ printf '%-8s %-6s %-6s %-6s %-6s\n' reg 0x38 0x39 0x3c 0x3d
+>          for r in "$@"; do printf '%-8s' "$r"
+>            for a in 0x38 0x39 0x3c 0x3d; do printf ' %-6s' "$(rd $a $r)"; done; echo; done; }
+> idle(){ s=$(cat /proc/asound/card*/pcm*p/sub*/status 2>/dev/null)
+>         if [ -z "$s" ] || grep -qv '^closed$' <<<"$s"; then
+>           echo 'NOT IDLE - audio is still open. Stop it, wait 10 s, retry.'; return 1; fi
+>         echo 'idle - OK'; }
+> chan(){ wr $1 0x23ff 0x00 && wr $1 0x203a 0x80 &&
+>         wr $1 0x2021 $2 &&
+>         wr $1 0x203a 0x81 && wr $1 0x23ff 0x01 &&
+>         echo "$1 0x2021 now $(rd $1 0x2021)"; }
+> ```
+>
+> `-f` is needed because the driver owns these devices. It's safe for reads because the driver doesn't talk to the amps after boot.
+>
+> **3a. Configuration**, with nothing playing:
+>
+> ```bash
+> table 0x2021 0x201b 0x2024 0x2025 0x2026 0x2027 0x2012 0x2014 \
+>       0x203a 0x23e1 0x23ff 0x23ba 0x23e0 0x2039 0x203c 0x203d 0x24ff
+> ```
+>
+> The woofers (`0x38` vs `0x39`) should match each other, and so should the tweeters (`0x3c` vs `0x3d`). The only expected difference within a pair is `0x2021` (`0x00` left, `0x01` right). A right amp that differs from its left partner anywhere else points at the driver.
+>
+> **3b. Status**, once idle and once while a tone plays in a second terminal (reads are safe during playback):
+>
+> ```bash
+> table 0x2002 0x2003 0x2004 0x2005 0x2006 0x2007 0x2008 0x2009 0x200a 0x2051 0x2054 0x207b
+> # second terminal:  speaker-test -D plughw:sofhdadsp,0 -c 2 -t sine -f 440   (Ctrl-C afterwards)
+> ```
+>
+> Please paste both tables. I can only read these comparatively, so a right amp that doesn't change between idle and playing while its left partner does would be the interesting part.
+>
+> ## 4. Channel-swap tests (these write registers)
+>
+> > ⚠️ **Only do this with nothing playing.** Close media apps and browser tabs, and don't press the volume keys (the feedback sound opens a stream). **Never write amp registers while audio is playing.** In issue #61 a similar channel-select write on a live stream froze another reporter's codec. These writes go straight to the amp rather than through the codec like that one did, but I don't know how the amp reacts to a mid-stream change, and I'd rather not find out on your machine.
+> >
+> > The `idle` helper refuses unless every playback stream is closed, and each write line starts with `idle &&`, so it stops rather than writes if anything is open. Every change here is **temporary**: a reboot restores the driver's settings. Revert lines are included anyway. Let each `speaker-test` finish before running the next line.
+>
+> **S0: re-enable the right amps, channel unchanged.**
+>
+> ```bash
+> idle && chan 0x39 0x01 && chan 0x3d 0x01
+> speaker-test -D plughw:sofhdadsp,0 -c 2 -t wav -l 1
+> ```
+>
+> If the right side now works, stop here and tell me. That would point at the driver.
+>
+> **S1: right amps play the LEFT channel.**
+>
+> ```bash
+> idle && chan 0x39 0x00 && chan 0x3d 0x00
+> speaker-test -D plughw:sofhdadsp,0 -c 2 -t wav -l 1     # which side says "Front Left"?
+> idle && chan 0x39 0x01 && chan 0x3d 0x01                # revert
+> ```
+>
+> **S2: left amps play the RIGHT channel.**
+>
+> ```bash
+> idle && chan 0x38 0x01 && chan 0x3c 0x01
+> speaker-test -D plughw:sofhdadsp,0 -c 2 -t wav -l 1     # does "Front Right" come out on the left?
+> idle && chan 0x38 0x00 && chan 0x3c 0x00                # revert
+> ```
+>
+> | S1: right amps on ch 0 | S2: left amps on ch 1 | What it means |
+> | --- | --- | --- |
+> | right side says "Front Left" | left side silent throughout | **Channel 1 is empty on the codec→amp link.** Your right amps and speakers are fine. |
+> | right side still silent | left side says "Front Right" | **Channel 1 is there. The fault is on the right side** (amp state, or speaker/cable). Step 3 decides which. |
+> | right side still silent | left side silent throughout | Check the `0x2021 now …` lines first. The writes may not have landed. |
+> | right side says "Front Left" | left side says "Front Right" | Contradicts the symptom. S0 or the step 3 table should explain it. |
+>
+> Please paste the full terminal output, including the `0x2021 now …` lines, along with what you heard.
+>
+> ## 5. A few questions
+>
+> - Exact model number/SKU and BIOS version (step 1 covers it, but a sticker or box label helps too).
+> - If Windows was ever on this machine, factory image included: did the right speakers play there?
+> - Has the bottom cover ever been off, for example for an SSD swap?
+>
+> ## Where this stands
+>
+> To be upfront: there's no code fix yet, because nothing in the driver treats the two sides differently apart from that channel select. What happens next depends on the results:
+>
+> - **Step 3 shows a right amp that doesn't match its partner, or S0 fixes it:** that's a driver bug, and I'll fix it (the init currently doesn't check most of its writes).
+> - **S1 and S2 say channel 1 is empty:** the real problem is on the codec side, and your BIOS version and codec dump are what I'd compare against a working unit. An opt-in workaround (e.g. feeding the right amps the left channel) is possible, but I'd only build it after S2 proves this.
+> - **S1 silent, registers clean, and Windows silent on the right too:** that's hardware, and a repair/warranty route rather than code.
+>
+> I'll leave the issue open until you've had a chance to run these. Thanks again!
