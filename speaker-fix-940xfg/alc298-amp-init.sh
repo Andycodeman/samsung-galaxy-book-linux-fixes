@@ -132,9 +132,28 @@ enable_amp() {
     write_pack 0x239e 0x0004
 }
 
+# Disable: the exact inverse, matching upstream alc298_samsung_v2_disable_amps().
+# Upstream runs this across every amp *before* writing any init sequence — see
+# the "Disable speaker amps before init to prevent any physical damage" comment
+# in alc298_samsung_v2_init_amps() — because the init writes retune the DSM
+# excursion, boost and limiter parameters, which must not land on an amp whose
+# output stage is live. Relevant here on the resume hook and on any re-run while
+# audio is playing, where the amps are still enabled from before.
+disable_amp() {
+    select_amp "$1"
+    write_pack 0x23ff 0x0000
+    write_pack 0x203a 0x0080
+}
+
 # ---------------------------------------------------------------------------
 # Apply
 # ---------------------------------------------------------------------------
+# Mute every amp before retuning it (upstream order).
+disable_amp 0x38
+disable_amp 0x39
+disable_amp 0x3C
+disable_amp 0x3D
+
 init_main_left
 init_main_right
 init_sec_left

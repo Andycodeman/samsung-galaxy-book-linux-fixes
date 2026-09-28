@@ -201,7 +201,29 @@ static int max98390_hda_runtime_resume(struct device *dev)
 	return 0;
 }
 
+/*
+ * Hibernate powers the amps off, losing every register written at probe,
+ * including the DSM tuning. REGCACHE_NONE means there is nothing to replay,
+ * so re-run the full init. Covers resume, thaw and restore (issue #98).
+ */
+static int max98390_hda_resume(struct device *dev)
+{
+	struct max98390_hda_priv *priv = dev_get_drvdata(dev);
+	int ret;
+
+	ret = max98390_hda_init(priv);
+	if (ret) {
+		dev_err(dev, "Failed to re-initialise amp on resume: %d\n", ret);
+		return ret;
+	}
+
+	dev_info(dev, "MAX98390 amp re-initialised on resume\n");
+
+	return 0;
+}
+
 const struct dev_pm_ops max98390_hda_pm_ops = {
+	SYSTEM_SLEEP_PM_OPS(NULL, max98390_hda_resume)
 	RUNTIME_PM_OPS(max98390_hda_runtime_suspend, max98390_hda_runtime_resume, NULL)
 };
 EXPORT_SYMBOL_NS_GPL(max98390_hda_pm_ops, "SND_HDA_SCODEC_MAX98390");

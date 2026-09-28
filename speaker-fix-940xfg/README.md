@@ -15,6 +15,11 @@ curl -sL https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/archive/
 
 To uninstall: `sudo ./uninstall.sh`
 
+**On NixOS?** Don't run the installer — use the declarative module
+[`../nixos/speaker-fix-940xfg.nix`](../nixos/speaker-fix-940xfg.nix) and set
+`hardware.samsungGalaxyBook.speakerFix940xfg.enable = true;`. See
+[`../nixos/README.md`](../nixos/README.md).
+
 > **Wrong board?** This fix is specifically for the **14" Book3 Pro (NP940XFG, DMI `940XFG`, ALC298 SSID `0x144dc882`)**. The installer DMI-checks before running and refuses on anything else. If you have a Book4 Pro/Ultra or Book5 Pro (MAX98390 amps), use [`../speaker-fix/`](../speaker-fix/) instead. The 16" Book3 Pro (NP964XFG) already works upstream via `V2_4_AMPS` and needs no fix.
 
 ---
@@ -103,7 +108,19 @@ amp NIDs via the `hda-verb` userspace tool. The sequence matches what the
 Realtek Windows driver does on the same hardware, derived from `RtHDDump`
 codec-state snapshots captured during issue #44 diagnosis.
 
-Per amp:
+Every amp is muted first, matching the order upstream's
+`alc298_samsung_v2_init_amps()` uses — the init writes retune the DSM excursion,
+boost and limiter parameters, and those must not land on an amp whose output
+stage is live (which it will be on the resume hook, or on any re-run while audio
+is playing):
+
+```
+COEF[0x22] = <amp_nid>            # select each amp in turn
+write_pack(0x23ff, 0x0000)         # GLOBAL_EN off
+write_pack(0x203a, 0x0080)         # AMP_EN off
+```
+
+Then, per amp:
 
 ```
 COEF[0x22] = <amp_nid>            # select internal amp (0x38, 0x39, 0x3C, 0x3D)
