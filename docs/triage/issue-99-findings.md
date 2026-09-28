@@ -11,10 +11,12 @@ Fedora Workstation (fresh install), kernel `7.2.6-200.fc44.x86_64`, Secure Boot
 **off**, card `sof-hda-dsp` with Realtek ALC298, 4x MAX98390 at
 `0x38`/`0x39`/`0x3c`/`0x3d` on **I2C bus 2**.
 
-**Status:** reply posted 2026-09-27 as
+**Status:** round-1 reply posted 2026-09-27 as
 [comment-5863742135](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/99#issuecomment-5863742135)
-(see [Reply posted](#reply-posted)). No driver code changed. Issue stays
-**open**, awaiting the reporter's results.
+(see [Reply posted](#reply-posted)). Round-2 reply posted 2026-09-28 as
+[comment-5874275777](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/99#issuecomment-5874275777)
+(see [Round 2 reply posted](#round-2-reply-posted)). No driver code changed.
+Issue stays **open**, awaiting the reporter's results.
 
 ---
 
@@ -652,7 +654,8 @@ How it differs from the plan above:
 
 Reporter's reply:
 [comment-5873965095](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/99#issuecomment-5873965095)
-(2026-09-28). Nothing posted in reply yet, and no driver code changed.
+(2026-09-28). Answered the same day, see [Round 2 reply posted](#round-2-reply-posted).
+No driver code changed.
 
 ### What they sent
 
@@ -1012,3 +1015,174 @@ it" also means a reseat isn't a sure fix, so it shouldn't be the first ask.
 Nothing in this section has been tested on hardware. There's no NP960QGK
 here, so every expected result above comes from reading source and the
 reporter's own tables.
+
+### Round 2 reply posted
+
+Posted verbatim to @Bruzado1975 on 2026-09-28 as
+[comment-5874275777](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/99#issuecomment-5874275777).
+Issue left **open**, with no labels and no driver change.
+
+How it differs from the round-2 plan above:
+
+- **The `plughw` silence is called unexplained.** The reply says the "stopping
+  WirePlumber mutes the speaker" guess doesn't hold up in the source, hedged
+  "as far as I can tell", because Fedora 44's package versions weren't checked.
+  It doesn't offer any of the three untested candidates as an explanation.
+- **The status registers aren't decoded.** `0x2006`/`0x2007` are described
+  only as "interrupt-state registers whose bits aren't publicly documented".
+  The reply says they're identical on all four amps, and that `INT_FLAG1-3`,
+  power-gate and brownout read zero. `DAT_MON` isn't mentioned.
+- **The suspend timeout is "normally about 5 s"**, because the 5 s default for
+  Fedora's WirePlumber 0.5 is from memory, not source.
+- **The swap commands use B (PipeWire, ALSA `default`)**, with the rule
+  "redo the swaps using whichever of A/B played the left side". B also needs
+  `pactl list sinks` to show equal left and right volumes first. The card asked for the
+  `default` form. The plan's preference for `plughw` when A works is kept as
+  "use that same `speaker-test` line".
+- **S0 dropped, S2 listed before S1**, per R2-3 (H4 is out, S2 is decisive).
+  The outcome table is cut to three rows.
+- **The helpers are in a collapsed `<details>` block.** `rd`/`wr`/`idle`/`chan`
+  are byte-identical to round 1 (diffed). `table` is dropped because the redo
+  doesn't use it, and `i2c-tools` install is dropped because they already have it
+  (`sudo modprobe i2c-dev` kept). Re-checked against a stub `i2ctransfer`
+  before posting: `chan 0x38 0x01` emits the same five writes plus read-back,
+  and `idle` refused with a fake `state: RUNNING` substream and with no status
+  files, and passed only when every substream read `closed`.
+- **Older-kernel boot added** to the timeline section, from the "what would
+  separate them" table, since it tests their "kernel update" suspicion
+  directly. It carries the `dkms status` caveat.
+- **`journalctl -k -b`** replaces the refused `sudo dmesg`.
+- **Physical checks are last**, and gated on S2 showing channel 1 reaching the
+  amps, or on the timeline showing the fault comes and goes. The reply says
+  "keep the case closed" until then. The reseat step says battery first, at
+  their own risk, may affect warranty.
+- **Shorter than round 1**: 1450 words vs 1544.
+
+> Thanks for running all of that. The register tables settle one question for good.
+>
+> ## Short answer: software or hardware?
+>
+> I can't tell yet, and your results don't favour either side. Here's what they do and don't show:
+>
+> - **It isn't the speaker-fix driver.** Your 3a table matches what the driver writes on all four amps. The right amps are switched on and identical to their left partners, apart from the intended channel select (`0x2021`). That rules out a bug in how the driver sets them up.
+> - **A software regression is still possible**, but it would have to be upstream of the amps: the codec (ALC298) not putting the right channel on the link that feeds them, or a PipeWire channel setting. For what it's worth, the upstream kernel has no model-specific audio quirk for the NP960QGK, so no kernel update has added or changed one. It would have to be a generic change, or a Fedora-specific patch.
+> - **Hardware is still possible too.** A connector that isn't fully home can work for a while and then lose contact, so "worked after I closed it" doesn't rule it out.
+>
+> The redone swap test (step 3) separates the two. Until then, please keep the case closed.
+>
+> ## What the status registers say
+>
+> `0x2006 = 0x18` and `0x2007 = 0x0f` are interrupt-state registers whose bits aren't publicly documented, so I won't guess. They're **identical on all four amps, including the two that work**, so they don't separate the sides. The latched fault flags (`0x2008`–`0x200a`), power-gate and brownout status are zero on all four: no amp has logged a fault. That table was taken during silence, though, so it can't show whether audio reaches the amps.
+>
+> ## Why the swap tests need redoing
+>
+> Your `plughw` test was silent on **both** sides, including the left, which normally works. **I don't know why yet.** My first guess, that stopping PipeWire/WirePlumber mutes the speaker path, doesn't hold up when I read the PipeWire and ALSA source: as far as I can tell, stopping them doesn't run the step that switches the speaker off.
+>
+> Either way, the swap tests use the working left side as the reference, so with the left silent too they tell us nothing. This time **PipeWire stays running throughout**. `idle` checks the kernel directly, and passes once PipeWire lets go of the device, normally about 5 s after the last sound stops.
+>
+> ## 1. Read-only information (nothing changes)
+>
+> The alsa-info attachment didn't come through. It was written to `/tmp`, which Fedora clears on reboot, so please regenerate it (`alsa-info.sh --no-upload`), or just save the codec dump:
+>
+> ```bash
+> cat /proc/asound/card*/codec#0 > codec0.txt
+> ```
+>
+> To attach it, drag the file into the comment box **and wait for the upload link to appear** before posting. Or paste it inside `<details><summary>codec0.txt</summary>` … `</details>`.
+>
+> Please also paste the output of these:
+>
+> ```bash
+> pactl list sinks                     # per-channel volume on the speaker: a low/zero right channel is a PipeWire setting
+> wpctl status                         # which app, if any, was holding the audio device open
+> grep -rs suspend-timeout ~/.config/wireplumber /etc/wireplumber    # whether PipeWire's idle release is turned off
+> amixer -c sofhdadsp contents | grep -i -A3 -E 'speaker|master'    # the codec's own speaker/master switches and volumes
+> journalctl -k -b | grep -iE 'picked fixup|max98390|component bound|alc298'   # replaces the dmesg that was refused
+> ```
+>
+> The codec dump can show a right-only mute inside the codec that no mixer control exposes.
+>
+> ## 2. Timeline questions
+>
+> - **When did the right side stop**, roughly? And what changed around then:
+>   `sudo dnf history list --reverse | tail -n 20` and `rpm -q --last kernel-core alsa-sof-firmware alsa-ucm pipewire wireplumber`
+> - **Constant or intermittent?** Has it ever come back, even briefly? Does lid angle, or tent/tablet mode, change anything?
+> - **Does a reboot or a suspend/resume ever change it?**
+> - **Your first report said "fresh install".** Did you reinstall Fedora *after* the right side stopped? If so, did it work straight after the reinstall, even briefly?
+> - **When did you install (or reinstall) the speaker fix**, and which release or clone date?
+> - **Was the BIOS updated recently?** Was `P15RHB.470.260103.04` already installed when both sides worked?
+>
+> If it started right after an update, booting the previous kernel from GRUB is a cheap test (check `dkms status` lists `max98390-hda` for it first). If the right side comes back there, it's a kernel regression.
+>
+> ## 3. Baselines, then the swap tests (PipeWire running)
+>
+> First, paste the helpers into one terminal (collapsed below). Then close all audio apps and browser tabs, don't touch the volume keys, and wait 10+ s:
+>
+> ```bash
+> idle                                                   # must print "idle - OK"
+> speaker-test -D plughw:sofhdadsp,0 -c 2 -t wav -l 1    # A: bypasses PipeWire
+> # wait 10+ s
+> speaker-test -c 2 -t wav -l 1                          # B: through PipeWire
+> ```
+>
+> If `idle` keeps saying NOT IDLE, **don't stop PipeWire**; send `wpctl status` instead. Tell me what A and B each did. If **both** are silent on both sides, stop there: the swaps can't help until the left side plays again.
+>
+> If at least one of them plays "Front Left" on the left, redo the swaps using that same `speaker-test` line. The commands below show B, which needs `pactl list sinks` to show equal left and right volumes first. After any test through PipeWire, **wait 10+ s before the next `idle && …` line**.
+>
+> > ⚠️ **Never write amp registers while audio is playing.** In issue #61 a similar write on a live stream froze another reporter's codec. Every write line starts with `idle &&`, so it refuses if anything is open. The check and the write are separate commands, though, so also keep everything closed and leave the volume keys alone. All changes are temporary, and a reboot restores the driver's settings.
+>
+> **S2: left amps play the RIGHT channel.** This is the one that matters.
+>
+> ```bash
+> idle && chan 0x38 0x01 && chan 0x3c 0x01
+> speaker-test -c 2 -t wav -l 1        # does "Front Right" now come out of the LEFT side?
+> # wait 10+ s
+> idle && chan 0x38 0x00 && chan 0x3c 0x00               # revert
+> ```
+>
+> **S1: right amps play the LEFT channel.**
+>
+> ```bash
+> idle && chan 0x39 0x00 && chan 0x3d 0x00
+> speaker-test -c 2 -t wav -l 1        # does "Front Left" now come out of the RIGHT side?
+> # wait 10+ s
+> idle && chan 0x39 0x01 && chan 0x3d 0x01               # revert
+> ```
+>
+> | Result | Meaning |
+> | --- | --- |
+> | S2: left side stays silent on "Front Right" | **Channel 1 never reaches the amps.** Codec/BIOS/software side, and opening the case won't help. |
+> | S2: left side says "Front Right", and S1: right side still silent | **The signal reaches the amps and is lost after them.** That's the right speaker, cable or connector: go to step 4. |
+> | S1: right side says "Front Left" | The right amps and speakers work. It's the channel-1 feed, not the hardware. |
+>
+> Please paste the full terminal output, including the `0x2021 now …` lines, along with what you heard.
+>
+> <details>
+> <summary>Helpers (paste once per terminal)</summary>
+>
+> ```bash
+> sudo modprobe i2c-dev
+> sudo -v
+> BUS=2
+> rd(){ sudo i2ctransfer -y -f "$BUS" w2@"$1" $(printf '0x%02x 0x%02x' $(( $2 >> 8 )) $(( $2 & 0xff ))) r1; }
+> wr(){ sudo i2ctransfer -y -f "$BUS" w3@"$1" $(printf '0x%02x 0x%02x' $(( $2 >> 8 )) $(( $2 & 0xff ))) "$3"; }
+> idle(){ s=$(cat /proc/asound/card*/pcm*p/sub*/status 2>/dev/null)
+>         if [ -z "$s" ] || grep -qv '^closed$' <<<"$s"; then
+>           echo 'NOT IDLE - audio is still open. Stop it, wait 10 s, retry.'; return 1; fi
+>         echo 'idle - OK'; }
+> chan(){ wr $1 0x23ff 0x00 && wr $1 0x203a 0x80 &&
+>         wr $1 0x2021 $2 &&
+>         wr $1 0x203a 0x81 && wr $1 0x23ff 0x01 &&
+>         echo "$1 0x2021 now $(rd $1 0x2021)"; }
+> ```
+>
+> </details>
+>
+> ## 4. Physical checks, last
+>
+> **Only if** step 3 says the signal reaches the amps (S2 left side says "Front Right") but the right side stays silent, or if the timeline says it comes and goes:
+>
+> 1. **Before opening anything:** run `speaker-test -c 2 -t sine -f 440` (it alternates left and right every few seconds until Ctrl-C). During the right-channel turns, press **gently** on the chassis near the right speaker, and slowly move the lid through its range. If any crackle or sound comes back, that's a marginal connection.
+> 2. **Reseat the right speaker connector:** power off, remove the bottom cover, and **disconnect the battery connector first**, then reseat the speaker connector. This is at your own risk, and may affect your warranty.
+>
+> I'll keep the issue open until you've had a chance to run these. Thanks again for your patience!
