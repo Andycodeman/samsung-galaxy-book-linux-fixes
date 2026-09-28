@@ -645,3 +645,370 @@ How it differs from the plan above:
 > - **S1 silent, registers clean, and Windows silent on the right too:** that's hardware, and a repair/warranty route rather than code.
 >
 > I'll leave the issue open until you've had a chance to run these. Thanks again!
+
+---
+
+## Round 2
+
+Reporter's reply:
+[comment-5873965095](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/99#issuecomment-5873965095)
+(2026-09-28). Nothing posted in reply yet, and no driver code changed.
+
+### What they sent
+
+| Item | Result |
+| --- | --- |
+| Identity | `960QGK`, SKU `SCAI-PROT-A5A5-MTLH-PRHB`, BIOS `P15RHB.470.260103.04` (2026-01-03), codec `Subsystem Id: 0x144dc892`. That's the NP960QGK that PR #5616 expects, so [identity](#identity-is-not-yet-pinned-down) is settled. |
+| dmesg | `sudo dmesg` failed (`Operation not permitted`), so only the probe/`new_device` lines came through. No `picked fixup` or `component bound` lines. Probe timing matches round 1 (about 245–265 ms per amp). |
+| `alsa-info.txt` | They say it's attached, but the comment has **no attachment URL**. We don't have it. It was written to `/tmp`, which is tmpfs on Fedora, so it'll be gone after a reboot and needs regenerating. |
+| Step 2 (`plughw`) | **Silent on both sides.** `plughw` was busy, so they stopped PipeWire/WirePlumber to free it. |
+| Step 3a | Fully symmetric within each pair. Every value matches the expected table in step 3. Details below. |
+| Step 3b | Only one table, taken **during the silent `plughw` sine test**. No idle table to compare it with. |
+| Step 4 (S0/S1/S2) | Silent on both sides, every time. |
+| Windows | Both sides worked. |
+| History | **Both sides also worked on Fedora before.** They opened the bottom cover to clean the fans, both sides still worked after closing it, and the right side stopped "later on". |
+| Their question | Could a kernel or package update be the cause, or should they open the case? |
+
+**This contradicts round 1.** The original report said "Fedora Workstation
+(fresh install)". Round 2 says the right side worked on Fedora and failed
+later. The two fit together if they reinstalled Fedora *after* the fault
+appeared, perhaps to try to fix it, or if "fresh install" was loose wording.
+Which one matters (see [timeline](#timeline-questions)): a fault that survived
+a clean reinstall can't be accumulated user config.
+
+### Why the `plughw` test was silent on both sides
+
+**The card's leading explanation doesn't hold up in the source.** The theory
+was that stopping WirePlumber runs the UCM `DisableSequence` for the Speaker
+device, which turns the codec's `Speaker Playback Switch` off, so any `plughw`
+test afterwards is silent. The config half is true. The teardown half isn't.
+
+- **The sequence exists.** This machine's alsa-ucm-conf (Ubuntu 1.2.10,
+  `/usr/share/alsa/ucm2/HDA/HiFi-analog.conf:151-163`) and upstream master
+  (`ucm2/HDA/HiFi-spk.conf:17-29`, where the Speaker device now lives) both
+  give the Speaker device `DisableSequence [ cset "name='Speaker Playback Switch' off" ]`.
+  `sof-hda-dsp` includes it via `Intel/sof-hda-dsp/HiFi.conf`.
+- **Nothing runs it when PipeWire or WirePlumber stops.** In PipeWire's ACP
+  (the ALSA card code WirePlumber loads for each card), `acp_card_destroy()`
+  (`spa/plugins/alsa/acp/acp.c:2196-2216`, master) frees the profiles and ports,
+  then calls `pa_alsa_ucm_free()` (`alsa-ucm.c:2734-2752`), which calls
+  `snd_use_case_mgr_close()`. In alsa-lib that's `uc_mgr_card_close()` plus
+  `uc_mgr_free()` (`src/ucm/main.c:1899-1905`), which unlink the manager from
+  a list and **free** the sequences (`src/ucm/utils.c:608-620`, `829-835`)
+  without executing them.
+- **What does run a Speaker `DisableSequence`:** a verb change, including to
+  `_verb Inactive` (profile "Off"), via `pa_alsa_ucm_set_profile()`
+  (`alsa-ucm.c:1715-1774`); `_disdev` when a profile drops a mapping; and the
+  verb's own `EnableSequence [ disdevall "" ]`
+  (`Intel/sof-hda-dsp/HiFi.conf:5`) whenever the verb is (re)activated, at
+  PipeWire startup for example, before the selected port's device is enabled
+  again. None of these is a plain `systemctl --user stop`.
+
+Confidence: **high** for PipeWire and alsa-lib master as read today. I haven't
+checked Fedora 44's exact package versions, and a Fedora patch that changes
+teardown can't be ruled out. It isn't likely, though. The mechanism also doesn't
+fit what they saw: if stopping PipeWire leaves the mixer as PipeWire last set
+it, the Speaker switch was **on** (the left side had been playing).
+
+**So we don't know why `plughw` was silent.** Candidates, none of them tested:
+
+1. Mixer state at test time: the Speaker or Master switch off, or a volume at
+   zero. We can't check it, because no `amixer` output was captured in that
+   state and the alsa-info attachment is missing.
+2. PipeWire restarting between "stop" and the test (socket activation) and
+   re-running `disdevall` on startup. That would normally leave `plughw` busy,
+   not silent, so it's weaker.
+3. Something specific to opening the PCM directly, as opposed to through PipeWire.
+   Round 2's redo separates this from (1) (see step R2-2).
+
+**Consequence for the results.** Whatever the cause, **step 2, S0, S1 and S2
+are void.** A swap test uses the known-good left side as its control. When the
+left side is also silent, "right silent" and "left on channel 1 silent" carry
+no information. They can't be read as "channel 1 is empty" (H1) or as "right
+side dead" (H3).
+
+**Busy device matters too.** Step 2 said to wait about 10 s for PipeWire to
+release the device. That they still had to stop PipeWire means PipeWire
+**hadn't suspended** the sink. Either a stream was still open (a paused browser
+tab, a media app, an event sound), or suspend is disabled in their config
+(`session.suspend-timeout-seconds = 0` is a common anti-pop tweak). The redo
+has to find out which, rather than stopping PipeWire again.
+
+#### The redo keeps PipeWire running
+
+The `idle` helper (step 3) reads the kernel's view directly:
+`/proc/asound/card*/pcm*p/sub*/status` for every playback substream on every
+card. It passes only if all of them read `closed`. It doesn't ask PipeWire
+anything, so it's correct regardless of which process owned the device.
+
+When a sink goes idle, WirePlumber sends its node a `Suspend` command after
+`session.suspend-timeout-seconds`, default **5 s**, and `0` disables it.
+Verified on this machine's WirePlumber 0.4.17 (`scripts/suspend-node.lua`,
+`main.lua.d/50-alsa-config.lua:154`). Fedora 44 ships WirePlumber 0.5, which
+keeps the same 5 s default and logic, but I only have that from memory, not
+from source. The ALSA sink closes its PCM on suspend, which is the state `idle` reads.
+If it didn't, `idle` would simply refuse, so the helper fails safe either way. So with PipeWire running:
+
+- all sinks suspended → every substream `closed` → `idle` passes → `chan`
+  writes are safe, and `plughw` can open the device, because nobody holds it;
+- anything still open → `idle` refuses, and `plughw` would say busy. Then
+  `wpctl status` (the Streams section) shows what's holding it.
+
+Two new timing rules for the reply. After any `speaker-test` that goes
+**through** PipeWire, wait 10 s or more before the next `idle && chan …` line,
+because PipeWire keeps the device open for the suspend timeout after playback
+ends. And the `idle` check and the writes are separate commands, so a sound
+that starts in the few milliseconds between them isn't caught. The
+"close everything, don't touch the volume keys" rule is what covers that gap.
+
+### Step 3a: symmetric, so H4 is out
+
+| reg | `0x38` | `0x39` | `0x3c` | `0x3d` | expected (step 3) |
+| --- | --- | --- | --- | --- | --- |
+| `0x2021` | `00` | `01` | `00` | `01` | ✓ |
+| `0x201b` | `03` | `03` | `03` | `03` | ✓ |
+| `0x2024`–`0x2027` | `c0 1c 44 08` | same | same | same | ✓ (reset defaults) |
+| `0x2012` CLK_MON | `6f` | `6f` | `6f` | `6f` | ✓ |
+| `0x2014` DAT_MON | `00` | `00` | `00` | `00` | ✓ |
+| `0x203a` AMP_EN | `81` | `81` | `81` | `81` | ✓ |
+| `0x23e1` / `0x23ff` | `01`/`01` | `01`/`01` | `01`/`01` | `01`/`01` | ✓ |
+| `0x23ba` DSM_VOL | `a0` | `a0` | `8d` | `8d` | ✓ per type |
+| `0x23e0` DSMIG_EN | `21` | `21` | `20` | `20` | ✓ per type (blob fix `1194a83` present) |
+| `0x2039` / `0x203c` / `0x203d` | `0f 00 05` | same | same | same | never written, match within pairs |
+| `0x24ff` REV_ID | `42` | `42` | `42` | `42` | same silicon revision |
+
+**This rules out H4 and any driver-side asymmetry.** Both right amps hold
+exactly the configuration the driver wrote, identical to their left partners
+apart from the intended `0x2021`, and they're enabled (`AMP_EN`, `GLOBAL_EN`,
+`DSP_GLOBAL_EN` all set). No write was lost, so the unchecked-write
+[gap](#source-level-gap-found-not-the-cause) didn't bite here. A reinstall
+couldn't have introduced an asymmetry either: `speaker-fix/src` has changed
+twice since the initial release (`1194a83` blob fix, per type; `4bae1c2`
+resume, re-runs the same init). Neither has a per-side branch, and the table
+shows the resulting state is symmetric anyway.
+
+The "latched state that an enable cycle would clear" variant of H4 was meant
+to be tested by S0, which is void. It's still very unlikely: the latched
+`INT_FLAG1-3` registers read zero on all four (next section), and a latch
+wouldn't hit exactly the two amps that share channel 1.
+
+### Step 3b: what `0x2006`/`0x2007` and `0x2014` can and can't say
+
+From upstream `sound/soc/codecs/max98390.h` (torvalds master, fetched
+2026-09-28): `0x2002`–`0x2004` = `INT_RAW1-3`, `0x2005`–`0x2007` =
+`INT_STATE1-3`, `0x2008`–`0x200a` = `INT_FLAG1-3` (each with its own
+`INT_FLAG_CLR1-3` at `0x200e`–`0x2010`), `0x2051` = `PWR_GATE_STATUS`,
+`0x2054` = `BROWNOUT_STATUS`, `0x207b` = `ENV_TRACK_BOOST_VOUT_READ`. The repo
+header (`speaker-fix/src/max98390_regs.h`) names none of these.
+
+- **`0x2006` = `INT_STATE2` = `0x18` (bits 3 and 4), `0x2007` = `INT_STATE3`
+  = `0x0f` (bits 0–3). I can't decode these bits.** Neither the upstream
+  header nor the upstream driver defines bit fields for any `INT_*` register
+  (the driver never reads them). The Analog/Maxim datasheet wasn't reachable
+  from here. Any decoding would be a guess, and it would go into a reply as
+  fact, so there's none here.
+- **What they do say: they're identical on all four amps, including the two
+  known-good left amps.** Whatever they encode, it doesn't separate the silent
+  side from the working side.
+- **They can't show whether the amps see clocks or data.** The table was taken
+  during a test in which all four amps were silent. The idle table asked for
+  in 3b wasn't sent, so there's no idle-vs-playing delta, which was the only
+  way we'd planned to read these registers. And the four amps share the same
+  link clocks, so no clock-derived bit could differ by side anyway.
+- **`INT_FLAG1-3` = `0x00` on all four.** Going by the naming (flag registers
+  with separate clear registers, the latched-flag pattern), there are no
+  latched fault events on any amp. `PWR_GATE_STATUS`, `BROWNOUT_STATUS` and
+  the boost VOUT read-back are also zero on all four.
+- **`0x2014` DAT_MON = `0x00` at idle** is a **configuration** register, not
+  a status one. Upstream's reset default is `0x03`
+  (`max98390.c` `max98390_reg_defaults[]`), and both upstream's
+  `max98390_init_regs()` (`max98390.c:853`) and ours (`max98390_hda.c:107`)
+  write `0x00`. Reading `0x00` only confirms that write landed. It says
+  nothing about data arriving. The bit meanings aren't in the header. By name
+  and default it's the data monitor, and writing `0x00` most likely **disables**
+  it (inference, not verified). If so, it has a consequence: an amp whose slot
+  carries silence, or nothing at all, raises no flag and just plays silence.
+  So **clean status registers on the right amps are expected under H1** and
+  can't count against it.
+
+### Hypotheses, re-ranked
+
+| | Round 1 | Round 2 | Why |
+| --- | --- | --- | --- |
+| **H4** partial init / driver state | 4th | **Ruled out** | 3a table (above). |
+| **H3** right-side physical (cable, connector, speaker) | 3rd | **Joint lead** | Worked in Windows, worked on Fedora, cover opened for fan cleaning, failed *later*. A connector or flex cable that's disturbed but not fully out can keep contact for a while and then drop with heat cycles or with the chassis flexing (it's a 360 convertible, so hinge and lid movement flexes it). Both right drivers going silent together needs one shared right-side element. Whether this chassis has one isn't known. |
+| **H1** channel 1 empty on the codec→amp link | 1st | **Joint lead** | Still the only software mechanism that silences both right amps at once. Any *software regression* has to act through H1 (or H5), because the amps are provably configured correctly. |
+| **H5** PipeWire per-channel volume / route state | 5th | **Moved up, still cheap to exclude** | The main argument against it was "fresh install", and round 2 contradicts that. A per-route balance or channel volume stored in `~/.local/state/wireplumber/` is exactly the kind of change that happens "later" and survives reboots and kernel updates. The balanced ALSA mixer in round 1 (`Speaker 35<>35`) argues against it, but not conclusively: when PipeWire's hardware volume hits its floor it applies the rest in software, and that part isn't visible in `amixer`. |
+| **H2** framing mismatch | 2nd | **Folded into H1** | It needs a per-unit codec difference to exist, and it did stereo on this same unit before. Only worth separating if S2 says channel 1 is empty. |
+
+#### Software regression vs. physical (H1-by-update vs. H3)
+
+The reporter leans towards a kernel or package update. What's actually known:
+
+- **It can't be the amp driver.** See the 3a table, and the source hasn't
+  changed per side.
+- **The upstream kernel has no quirk for this machine.** torvalds master
+  `sound/hda/codecs/realtek/alc269.c` (fetched 2026-09-28) has no
+  `SND_PCI_QUIRK(0x144d, 0xc892, …)`, so no SSID-specific codec fixup was
+  added or changed for NP960QGK in a kernel update. A regression would have to
+  be a generic ALC298/HDA change, or a Fedora-only patch. That's possible, but
+  a generic change that drops only the amp link's right slot, on one unit,
+  while headphones keep stereo, is a narrow target.
+- **SOF firmware/topology** feeds headphones and speakers through the same PCM.
+  Headphone stereo still works, so an SOF regression is unlikely.
+- **BIOS** is the one thing we know programs the ALC298's amp-facing output
+  (round 1, fact 2). Their BIOS is dated 2026-01-03. Whether it was updated
+  near when the fault started is an open question.
+
+What would separate them:
+
+| Evidence | Points to |
+| --- | --- |
+| Started right after a specific update or reboot, and is **constant** since | Software regression (H1 via codec config, or H5). **Booting the previous kernel from GRUB** (Fedora keeps 3) is the cheap test, if `dkms status` shows `max98390-hda` built for it. If the right side comes back there, it's the kernel. |
+| **Intermittent**: comes and goes, changes with lid/hinge position, warmth, or a tap near the right speaker | H3 (marginal connector). A software regression doesn't care about hinge angle. |
+| Constant, survives the older kernel, survived a clean reinstall | H3 or BIOS. The redone S2 decides which. |
+| Redone S2: left amps on channel 1 **play "Front Right"** | Channel 1 is on the link. The fault is on the right side, **after** the amps' input: H3. |
+| Redone S2: left amps on channel 1 **silent** | Channel 1 is empty: H1 (or H5, which is why `pactl` comes first). Physical checks won't help. |
+
+None of this is decided yet, and the reply shouldn't lean either way. Their
+own reasoning ("it worked after I closed it") is fair, but it's only weak
+evidence against H3: marginal contacts often fail later, not straight away.
+
+### Host-side codec check we haven't done yet
+
+Every HDA widget (DAC, mixer, pin) can have its own output and input
+amplifier, with a separate **mute bit and gain per channel**. A right-only
+mute or zero gain on the speaker pin, its mixer or its DAC would cut the right
+channel below PipeWire. It wouldn't show in `alsamixer` if it sits on a node
+that no ALSA control maps to. `alsamixer`'s `Speaker 35<>35` only covers the
+node that control is attached to.
+
+How to read `/proc/asound/card*/codec#0`:
+
+- Each node lists `Amp-Out vals: [0xLL 0xRR]` (and `Amp-In vals:` per input).
+  The first value is left, the second right. **Bit 7 (`0x80`) = mute**, and
+  bits 0–6 = gain step.
+- Find the speaker pin: the node whose `Pin Default` reads
+  `[Fixed] Speaker at Int …`. Follow its `Connection:` list (the `*` marks the
+  selected input) back through any mixer or selector to the `Audio Output` (DAC).
+- **The finding is any node on that chain whose right value differs from its
+  left**, e.g. `[0x57 0xd7]` (right muted) or `[0x57 0x00]` (right at zero).
+  Also check `Pin-ctls` has `OUT` set, and that `Control: name=…` lines show
+  which nodes the `Speaker`/`Master` controls actually drive.
+- **A clean chain doesn't exonerate the codec.** The per-slot setup of the
+  amp link on Realtek parts is in vendor COEFs, which the dump doesn't show,
+  and we don't know which node this board taps for the amp link. A right-only
+  mute is a strong lead if present. Its absence proves little.
+
+Commands (read-only, no `sudo` needed):
+
+```bash
+cat /proc/asound/card*/codec#0 > codec0.txt          # attach it (see note below)
+amixer -c sofhdadsp contents | grep -i -A3 -E 'speaker|master'
+pactl list sinks                                      # H5: "Channel Map" + per-channel "Volume:" on the Speaker port
+wpctl status                                          # default sink, and any stream holding it open
+grep -rs suspend-timeout ~/.config/wireplumber /etc/wireplumber   # suspend disabled?
+```
+
+Attachment note for the reply: drag the file into the GitHub comment box
+**and wait for the upload link to appear** before posting (the last one didn't
+make it), or paste its contents into a
+`<details><summary>codec0.txt</summary>…</details>` block.
+
+### Timeline questions
+
+- **When exactly did the right side stop?** Roughly a date. Then what changed
+  around it:
+  `sudo dnf history list --reverse | tail -n 20`, and
+  `rpm -q --last kernel-core alsa-sof-firmware alsa-ucm pipewire wireplumber`
+  (or `rpm -qa --last | head -n 40` to catch everything).
+- **Constant or intermittent?** Has it ever come back, even briefly? Does lid
+  angle or tent/tablet mode change anything?
+- **Does a reboot or a suspend/resume ever change it?**
+- **The "fresh install":** did they reinstall Fedora after the right side
+  stopped? If so, did it come back straight after reinstalling, even briefly?
+- **The speaker fix:** when was it installed or reinstalled, and which release
+  (tag, or the date they cloned)? The driver hasn't changed per side
+  in any release, but a date lined up against the dnf history helps.
+- **BIOS:** was it updated recently? `P15RHB.470.260103.04` is dated
+  2026-01-03. Was that already installed when both sides worked?
+
+### Is a code change justified now?
+
+**No.** Round 2 removes the only driver-side hypothesis (H4) and adds nothing
+that points at this package. The 3a table shows the driver's state is exactly
+what it intends on all four amps.
+
+What would justify one now:
+
+| Result | Change |
+| --- | --- |
+| Redone S2 shows channel 1 empty (with `pactl` showing balanced volumes) | Still **no amp-driver fix** for the cause. The opt-in module parameter stopgap from round 1 (right amps `0x2021=0x00`, or all four `0x02`), **never** default, becomes justifiable. The real fix is codec-side and needs the codec dump plus a same-model comparison. |
+| Older kernel restores the right side | A kernel regression. Bisect by kernel, and report upstream (alsa-devel / Fedora bugzilla). Not a change to this driver, since its source is identical across kernels. |
+| Redone S2 plays "Front Right" on the left, and physical reseat fixes it | Hardware. No change. |
+
+The unchecked-write gap is still worth a separate hardening card on its own
+merits. It isn't #99's cause.
+
+### Round-2 diagnostic plan (cheapest first)
+
+The order is by **cost and risk**, and each step can end the investigation:
+
+**R2-1. Read-only state: no writes, no stopping anything.** The `pactl`,
+`wpctl` and suspend-timeout commands and the codec dump above, plus
+`sudo dmesg | grep -iE 'picked fixup|max98390|component bound|alc298'`
+(or `journalctl -k -b | grep …` if `sudo dmesg` is refused), and the timeline
+answers. This alone can close H5 (a right-channel volume of 0 in
+`pactl list sinks`) or open a codec lead (a right-only mute bit). It costs
+nothing and can't make anything worse.
+
+**R2-2. Baselines, with PipeWire running. No register writes.**
+
+```bash
+# close all audio apps and tabs, don't touch the volume keys, wait 10+ s
+idle                                               # must print "idle - OK"; if not: send `wpctl status`, don't stop PipeWire
+speaker-test -D plughw:sofhdadsp,0 -c 2 -t wav -l 1   # A: bypasses PipeWire
+# wait 10+ s
+speaker-test -c 2 -t wav -l 1                      # B: through PipeWire (ALSA default)
+```
+
+- **A plays "Front Left" on the left:** the round-2 silence came from stopping
+  PipeWire. Use `plughw` for the swap tests. It also removes H5 from the S2
+  reading.
+- **A silent, B plays left:** direct PCM access is the difference (candidate 3
+  above). Run the swap tests through B, and only after `pactl list sinks`
+  shows equal left/right volumes, or S2 can't be read.
+- **Both silent:** stop. The left side, which worked in round 1, is now silent
+  too. That's a new fault, and swap tests are pointless until it's explained.
+
+**R2-3. Swap tests redone**, same helpers and outcome table as step 4. The only
+changes: PipeWire is never stopped; every write line stays `idle && …`; and
+there's a 10 s wait after each through-PipeWire test before the next write.
+S0 can be skipped (H4 is out). S2 is the one that matters.
+
+**R2-4. Physical, last.** Only if S2 says channel 1 **is** on the link (left
+amps play "Front Right"), or if the timeline says it's intermittent or
+position-dependent:
+
+1. With `speaker-test -c 2 -t sine -f 440` running through PipeWire (it
+   alternates left and right every few seconds until Ctrl-C; `-s 2` is
+   single-shot and too short for this), apply **gentle** pressure to the
+   chassis near the right speaker during the right-channel turns, and slowly
+   move the lid and hinge through their range. Any crackle or return of sound
+   points at a marginal connection.
+2. Reseat the right speaker connector: power off, bottom cover off,
+   **disconnect the battery connector first**, then reseat. The reporter has
+   already had the cover off, so this is within their comfort zone, but the
+   reply must say battery first, and that it's at their own risk and warranty
+   discretion.
+
+Why this order: R2-1 and R2-2 are free and can't change the machine's state.
+R2-3 writes registers, but it's temporary and has the idle guard. R2-4 opens
+the machine, and that's only worth doing once the redone S2 says the link
+carries channel 1. If S2 says channel 1 is empty, a screwdriver can't help,
+and asking for it first would waste their time. Their "worked after I closed
+it" also means a reseat isn't a sure fix, so it shouldn't be the first ask.
+
+Nothing in this section has been tested on hardware. There's no NP960QGK
+here, so every expected result above comes from reading source and the
+reporter's own tables.
