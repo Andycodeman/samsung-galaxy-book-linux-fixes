@@ -14,8 +14,11 @@ same tester as in #49 (Book5 OV02E10 webcam).
 
 **Status:** reply posted 2026-09-28 as
 [comment-5881260449](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/100#issuecomment-5881260449)
-(see [Reply posted](#reply-posted)). No code changed. Issue stays **open**,
-awaiting the reporter's answers.
+(see [Reply posted](#reply-posted)). Round 2: reporter confirmed "left" and no
+Windows; short follow-up posted as
+[comment-5881394333](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/100#issuecomment-5881394333)
+(see [Round 2](#round-2)). No code changed. Issue stays **open**, awaiting the
+pre-install listen test and register dump.
 
 ---
 
@@ -397,3 +400,49 @@ name `galaxybook-amps.service` and bus `2` come from the reporter's own report.
 > ```
 >
 > On #99: that one looks different. There, the right amps are already enabled (`AMP_EN=0x81` on all four) and still silent, whereas here they were never switched on. Your finding that the firmware sets up the same left/right channel split we use is still a useful cross-check, so thank you for including it.
+
+## Round 2
+
+@noopduck answered two of the round-1 questions on 2026-09-28
+([comment-5881315622](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/100#issuecomment-5881315622)):
+"the left speaker was the one working without any changes on F45" and "I dont
+dual boot with Windows on the system". A second comment
+([comment-5881362199](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/100#issuecomment-5881362199))
+says he'll follow up on the rest later because he's busy.
+
+What the answers settle:
+
+- **(a) Left is right; the report's first paragraph was the typo.** "Left"
+  matches the register data: `0x38` is the only amp with `AMP_EN=0x81`, and its
+  `0x2021` selects the left channel. That also means `0x38` physically sits on the
+  **left**, the side the README puts it on. It says nothing about woofer vs
+  tweeter, so #93's question is still open.
+- **(b) No Windows, so the one-amp-on state comes from UEFI/BIOS.** Nothing that
+  runs before Linux on this machine can have left the state except the laptop's
+  own firmware. **Hypothesis 3 (Windows warm-reboot residue) is dropped.
+  Hypothesis 1 is confirmed as far as the data goes.** The cold-boot vs reboot
+  question went unanswered, but without Windows it no longer separates anything.
+  It only mattered for telling UEFI apart from Windows.
+- **(c) Outstanding asks are unchanged.** Steps 2 and 3 of the round-1 reply
+  (listen test, logs, firmware register dump) and step 4 (install speaker-fix and
+  report) are all still pending. For #93 the most valuable one is **step 2**: one
+  boot without his service, is the single playing speaker bassy or thin? Next is
+  the **step 3 register dump**. **Both have to happen before he installs
+  speaker-fix.** Our driver software-resets every amp at probe
+  (`max98390_hda.c:99`) and loads the Redrix DSM, so while it's installed the
+  firmware's own tuning is overwritten on every boot. After that, the only way
+  back to the firmware state is `uninstall.sh`.
+
+No code change. Recommendation (A) stands. Issue stays **open**, no labels.
+
+## Round 2 reply posted
+
+Posted verbatim to @noopduck on 2026-09-28 as
+[comment-5881394333](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/100#issuecomment-5881394333).
+It's deliberately short and low-pressure. It links the round-1 comment rather
+than repeating its command blocks, and it asks for just one thing (steps 2 + 3
+before installing speaker-fix). Issue left **open**, no labels, no code change.
+
+> Thanks, and no rush at all. "Left" lines up with the register data: `0x38` is the only amp the firmware switched on, and it's set to the left channel, so that clears up the contradiction. No Windows on the machine means the one-side state comes from the laptop's own firmware, which is the tidiest explanation.
+>
+> When you do have time, one thing matters most: steps 2 and 3 from [my earlier comment](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/100#issuecomment-5881260449). That's one boot without your service, a listen to whether that single left speaker sounds bassy or thin, and the `amp-0x3?.txt` register dump. Please do those *before* installing speaker-fix. The driver resets the amps on every boot, so the firmware's own tuning can't be read once it's installed. Everything else can wait, and if you'd rather just have both sides working, you're welcome to install speaker-fix whenever you like and tell us how it sounds.
