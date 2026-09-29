@@ -253,6 +253,29 @@ static __u32 try_subscribe_events(int fd)
 	return 0;
 }
 
+/* Only the 0.13+ event carries a usable payload: it is queued on capture
+ * STREAMON/STREAMOFF with count=1 while a reader streams. That also covers
+ * readers /proc cannot show us, such as a root daemon (gazed), which the
+ * UID-filtered scan in count_other_openers() skips. */
+static void note_usage_event(const struct v4l2_event *ev, int *streaming)
+{
+	if (ev->type == V4L2_EVENT_CLIENT_USAGE_NEW)
+		*streaming = *(const __u32 *)ev->u.data > 0;
+}
+
+static void drain_usage_events(int fd, int *streaming)
+{
+	struct pollfd pfd = { .fd = fd, .events = POLLPRI };
+
+	while (poll(&pfd, 1, 0) > 0 && (pfd.revents & POLLPRI)) {
+		struct v4l2_event ev;
+		memset(&ev, 0, sizeof(ev));
+		if (xioctl(fd, VIDIOC_DQEVENT, &ev) < 0)
+			break;
+		note_usage_event(&ev, streaming);
+	}
+}
+
 /* Read exactly n bytes from fd. Returns n on success, <n on EOF/error.
  * Uses a 100ms poll timeout to pump black frames to out_fd if the pipe
  * is silent (e.g. during pipeline startup). */
@@ -487,6 +510,7 @@ int main(int argc, char *argv[])
 	pid_t child_pid = 0;
 	int pipe_fd = -1;
 	int rapid_fails = 0;  /* pipeline failures without success */
+	int reader_streaming = 0;
 
 	if (use_events) {
 		/* Drain initial event (non-blocking — may not exist) */
@@ -494,7 +518,8 @@ int main(int argc, char *argv[])
 		if (poll(&pfd, 1, 200) > 0) {
 			struct v4l2_event ev;
 			memset(&ev, 0, sizeof(ev));
-			xioctl(fd, VIDIOC_DQEVENT, &ev);
+			if (xioctl(fd, VIDIOC_DQEVENT, &ev) == 0)
+				note_usage_event(&ev, &reader_streaming);
 		}
 	}
 
@@ -529,6 +554,8 @@ int main(int argc, char *argv[])
 					memset(&ev, 0, sizeof(ev));
 					if (xioctl(fd, VIDIOC_DQEVENT,
 						   &ev) == 0) {
+					note_usage_event(&ev,
+							 &reader_streaming);
 						/*
 						 * Verify via /proc — PipeWire
 						 * briefly opens the device
@@ -536,6 +563,8 @@ int main(int argc, char *argv[])
 						 * false events.
 						 */
 						usleep(100000);
+						drain_usage_events(fd,
+							&reader_streaming);
 						int clients =
 							count_other_openers(
 							dev_stat.st_rdev,
@@ -543,9 +572,12 @@ int main(int argc, char *argv[])
 						fprintf(stderr,
 							"[monitor] Event"
 							" fired, /proc"
-							" clients=%d\n",
-							clients);
-						if (clients > 0)
+							" clients=%d"
+							" streaming=%d\n",
+							clients,
+							reader_streaming);
+						if (clients > 0 ||
+						    reader_streaming)
 							client_detected = 1;
 					}
 					idle_polls = 0;
@@ -640,9 +672,12 @@ int main(int argc, char *argv[])
 			static int had_clients = 0;
 
 			if (!need_stop && ++check_tick % 30 == 0) {
+				if (use_events)
+					drain_usage_events(fd,
+						&reader_streaming);
 				int clients = count_other_openers(
 					dev_stat.st_rdev, our_pid,
-					child_pid);
+					child_pid) + reader_streaming;
 
 				if (clients > 0)
 					had_clients = 1;
@@ -721,14 +756,18 @@ int main(int argc, char *argv[])
 							.fd = fd,
 							.events = POLLPRI
 						};
+						reader_streaming = 0;
 						if (poll(&pfd, 1, 200)
 						    > 0) {
 							struct v4l2_event ev;
 							memset(&ev, 0,
 							       sizeof(ev));
-							xioctl(fd,
-							       VIDIOC_DQEVENT,
-							       &ev);
+							if (xioctl(fd,
+							    VIDIOC_DQEVENT,
+							    &ev) == 0)
+								note_usage_event(
+								&ev,
+								&reader_streaming);
 						}
 					}
 				}
@@ -744,7 +783,8 @@ int main(int argc, char *argv[])
 				 */
 				rapid_fails++;
 				int remaining = count_other_openers(
-					dev_stat.st_rdev, our_pid, 0);
+					dev_stat.st_rdev, our_pid, 0) +
+					reader_streaming;
 				if (remaining > 0 && rapid_fails < 3) {
 					fprintf(stderr,
 						"[monitor] %d client(s)"
