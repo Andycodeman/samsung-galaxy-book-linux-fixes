@@ -6,9 +6,9 @@
 # 6-anchor tuning for libcamera 0.6.0+.
 # Anchors: 2700K, 3200K, 4500K, 5500K, 6000K, 6500K
 #
-# Row sums intentionally > 1.0 for colour richness — the OV02E10 sensor
-# underproduces relative to libcamera's expectations. Normalising to 1.0
-# produces washed-out colours.
+# Rows are normalised to sum to 1.0. The original rows summed to 1.1-1.6
+# for "colour richness", but unequal row sums shift white balance after AWB:
+# a neutral target measured R/G 1.09 (pink) with them and 1.01 without.
 #
 # Green diagonal reduces with increasing CT to suppress the sensor's native
 # green bias, which worsens at higher colour temperatures. Cross-terms are
@@ -22,40 +22,40 @@
 version: 1
 algorithms:
   - BlackLevel:
-      # OV02E10 optical-black pedestal: same 10-bit OmniVision family as the
-      # OV02C10, so the same 64-code (= 4096 in 16-bit) pedestal. Anchors the
-      # black level so the SoftISP's dynamic estimator can't drift toward 0 in
-      # low-light noise and leave the pedestal unsubtracted (gray instead of
-      # black). Value by analogy with the OV02C10 fix confirmed in issue #71;
-      # adjust if a Book5 owner measures a different pedestal.
+      # OV02E10 optical-black pedestal: 64 codes at 10-bit (= 4096 in 16-bit).
+      # Anchors the black level so the SoftISP's dynamic estimator can't drift
+      # toward 0 in low-light noise and leave the pedestal unsubtracted (gray
+      # instead of black). Measured on a 960XHA from covered-lens raw frames at
+      # analogue gain 1x-15.5x: 63.3-63.7 on all four Bayer sites, independent
+      # of gain once light leakage is fitted out.
       blackLevel: 4096
   - Awb:
   - Ccm:
       ccms:
         - ct: 2700
-          ccm: [  1.620, -0.140, -0.100,
-                 -0.083,  1.633, -0.413,
-                  0.012, -0.433,  1.625 ]
+          ccm: [  1.174, -0.101, -0.072,
+                 -0.073,  1.436, -0.363,
+                  0.010, -0.360,  1.350 ]
         - ct: 3200
-          ccm: [  1.620, -0.120, -0.080,
-                 -0.150,  1.700, -0.340,
-                  0.000, -0.312,  1.500 ]
+          ccm: [  1.141, -0.085, -0.056,
+                 -0.124,  1.405, -0.281,
+                  0.000, -0.263,  1.263 ]
         - ct: 4500
-          ccm: [  1.590, -0.100, -0.060,
-                 -0.140,  1.380, -0.120,
-                  0.010, -0.216,  1.460 ]
+          ccm: [  1.112, -0.070, -0.042,
+                 -0.125,  1.232, -0.107,
+                  0.008, -0.172,  1.164 ]
         - ct: 5500
-          ccm: [  1.420, -0.120, -0.084,
-                 -0.050,  1.010, -0.030,
-                  0.050, -0.240,  1.460 ]
+          ccm: [  1.168, -0.099, -0.069,
+                 -0.054,  1.086, -0.032,
+                  0.039, -0.189,  1.150 ]
         - ct: 6000
-          ccm: [  1.480, -0.096, -0.096,
-                 -0.020,  0.920,  0.040,
-                  0.080, -0.252,  1.460 ]
+          ccm: [  1.149, -0.075, -0.075,
+                 -0.021,  0.979,  0.043,
+                  0.062, -0.196,  1.134 ]
         - ct: 6500
-          ccm: [  1.450, -0.072, -0.108,
-                  0.000,  0.850,  0.060,
-                  0.100, -0.264,  1.440 ]
+          ccm: [  1.142, -0.057, -0.085,
+                  0.000,  0.934,  0.066,
+                  0.078, -0.207,  1.129 ]
   - Adjust:
   - Agc:
 ...
