@@ -12,8 +12,10 @@ Hardware (as reported): Galaxy Book5 Pro **940XHA** (Lunar Lake), ALC298 subsyst
 Four MAX98390 at `0x38`/`0x39`/`0x3c`/`0x3d` on **i2c-2**. The reporter is the
 same tester as in #49 (Book5 OV02E10 webcam).
 
-**Status:** triage only. No reply posted and no code changed. Draft reply
-[at the end](#draft-reply).
+**Status:** reply posted 2026-09-28 as
+[comment-5881260449](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/100#issuecomment-5881260449)
+(see [Reply posted](#reply-posted)). No code changed. Issue stays **open**,
+awaiting the reporter's answers.
 
 ---
 
@@ -252,7 +254,7 @@ doesn't need to stay open for it.
 
 ## Draft reply
 
-Not posted. Follows repo conventions: no claim of personal testing, `journalctl -k -b`
+Posted unchanged; see [Reply posted](#reply-posted). Follows repo conventions: no claim of personal testing, `journalctl -k -b`
 rather than `dmesg`, files attached rather than written to `/tmp` (Fedora clears it on
 reboot).
 
@@ -319,3 +321,79 @@ sudo reboot
 
 On #99: that one looks different. There, the right amps are already enabled (`AMP_EN=0x81` on all four) and still silent, whereas here they were never switched on. Your finding that the firmware sets up the same left/right channel split we use is still a useful cross-check, so thank you for including it.
 ````
+
+## Reply posted
+
+Posted verbatim to @noopduck on 2026-09-28 as
+[comment-5881260449](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/100#issuecomment-5881260449).
+Issue left **open**, with no labels and no code change.
+
+It is the [draft above](#draft-reply) unchanged: no fix card landed after
+triage (a79c345), so recommendation (A) still stands and the reply points at
+`speaker-fix/` on `main` rather than a release tag. Before posting, the reply's
+`bash` blocks passed `bash -n`, and the paths and log line it cites were
+checked against the repo: `speaker-fix/install.sh`, `speaker-fix/uninstall.sh`,
+and the `MAX98390 HDA I2C probe` message (`max98390_hda_i2c.c:41`). The service
+name `galaxybook-amps.service` and bus `2` come from the reporter's own report.
+
+> Thanks — this is a really clean report, and the register reads made it quick to pin down.
+>
+> **What's going on:** there's no MAX98390 support in the stock kernel yet — not in 7.2.8, and not in current mainline (7.3-rc5) either. The upstream driver is still an open PR ([thesofproject/linux#5616](https://github.com/thesofproject/linux/pull/5616)). So on a stock kernel nothing in Linux touches the amps at all. The state you found — `GLOBAL_EN=1` on all four, the channel selects already set per side, but `AMP_EN` on only `0x38` — is what the laptop's firmware leaves behind before Linux starts. Your script finishes the job the firmware didn't. (It also explains why the live ISO behaved the same way.)
+>
+> **The fix in this repo covers exactly this.** [`speaker-fix/`](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/tree/main/speaker-fix) binds to the `MAX98390` ACPI device at `0x38`, creates `0x39`/`0x3c`/`0x3d` itself, resets each amp, and enables all four. It doesn't depend on what the firmware left. Nothing else in 7.2.8 claims these amps, so there's no conflict.
+>
+> One honest caveat before you switch: your amps currently run on whatever tuning the firmware loaded, and you say that sounds very good. speaker-fix replaces it with the DSM tuning from PR #5616 (originally from a Google Chromebook). On another Lunar Lake Book5 ([#93](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/93)) the woofers are still weak with it, and we haven't found out why. So you'll definitely get both sides, but it might sound thinner than your workaround. If it does, reverting is one command (below), and we'd really like to hear about it.
+>
+> Before installing, a few things would help a lot, both for this issue and for #93. Everything below only **reads** — no register writes.
+>
+> **1. Quick clarification.** Your first paragraph says the *right* side played and the left didn't. Your summary says only the *left* worked. Which one was it, physically? Also: does it happen after a full shutdown and power-on as well as after a reboot, and does this machine dual-boot Windows?
+>
+> **2. One boot without your service, then listen.** Please disable your service and reboot:
+>
+> ```bash
+> sudo systemctl disable galaxybook-amps.service
+> sudo reboot
+> ```
+>
+> Play some music. Only `0x38` should be on. Which physical side is it on, and does it sound **bassy** (woofer) or **thin/tinny** (tweeter)? That answers the open question in #93 with no driver involved.
+>
+> **3. Logs and the firmware's register state** (same boot, still without your service). Please attach the files rather than pasting:
+>
+> ```bash
+> journalctl -k -b | grep -iE 'max98390|scodec|smi|serial-multi' > kernel-max98390.txt
+> ls -l /sys/bus/i2c/devices/ > i2c-devices.txt
+> lsmod | grep -i max98390 > lsmod-max98390.txt   # empty is the expected answer
+> cat /proc/asound/card*/codec#0 > codec0.txt
+> ```
+>
+> And a read-only dump of each amp's registers as the firmware left them. Run as root (`sudo -s` first), with nothing playing:
+>
+> ```bash
+> modprobe i2c-dev
+> for a in 0x38 0x39 0x3c 0x3d; do
+>   for r in $(seq $((0x2010)) $((0x23ff))); do
+>     printf '0x%04x %s\n' "$r" "$(i2ctransfer -y 2 w2@$a $((r >> 8)) $((r & 0xff)) r1)"
+>   done > "amp-$a.txt"
+> done
+> ```
+>
+> That gives four `amp-0x3?.txt` files. They let us compare Samsung's own firmware tuning against what speaker-fix loads.
+>
+> **4. Then install speaker-fix.** Leave your service disabled; otherwise two things drive the same registers, and your `i2ctransfer` calls will fail with "busy" once the driver owns the amps. (Please don't add `-f` to get around that.)
+>
+> ```bash
+> sudo dnf install dkms kernel-devel-$(uname -r) i2c-tools
+> curl -sL https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/archive/refs/heads/main.tar.gz | tar xz && cd samsung-galaxy-book-linux-fixes-main/speaker-fix && sudo ./install.sh && sudo reboot
+> ```
+>
+> After the reboot, `journalctl -k -b | grep -i max98390` should show four `MAX98390 HDA I2C probe` lines. Then let us know: both sides playing? And how does it compare to your workaround, especially the bass?
+>
+> **To go back** if you prefer your workaround:
+>
+> ```bash
+> cd samsung-galaxy-book-linux-fixes-main/speaker-fix && sudo ./uninstall.sh
+> sudo systemctl enable galaxybook-amps.service
+> sudo reboot
+> ```
+>
+> On #99: that one looks different. There, the right amps are already enabled (`AMP_EN=0x81` on all four) and still silent, whereas here they were never switched on. Your finding that the firmware sets up the same left/right channel split we use is still a useful cross-check, so thank you for including it.
