@@ -135,6 +135,32 @@
     };
   };
 
+  ov02e10LowNoiseModule = pkgs.stdenvNoCC.mkDerivation {
+    pname = "ov02e10-lownoise";
+    version = "1.0-${kernelPackages.kernel.modDirVersion}";
+
+    src = ../webcam-fix-book5/ov02e10-lownoise-fix;
+
+    nativeBuildInputs =
+      [kernelPackages.kernel.dev cc pkgs.gnumake pkgs.perl]
+      ++ lib.optionals kernelUsesClang [pkgs.llvmPackages.lld];
+
+    buildPhase = ''
+      make -C ${kernelPackages.kernel.dev}/lib/modules/${kernelPackages.kernel.modDirVersion}/build \
+        M=$PWD modules ${clangMakeFlags}
+    '';
+
+    installPhase = ''
+      install -Dm644 ov02e10.ko $out/lib/modules/${kernelPackages.kernel.modDirVersion}/extra/ov02e10.ko
+    '';
+
+    meta = with lib; {
+      description = "OV02E10 driver with analog gain cap and digital gain parameters";
+      license = licenses.gpl2Only;
+      platforms = platforms.linux;
+    };
+  };
+
   cameraRelayMonitor = pkgs.stdenvNoCC.mkDerivation {
     pname = "camera-relay-monitor";
     version = "1.0";
@@ -355,6 +381,28 @@ in {
         Can be used to apply video flips or color balancing for V4L2 apps.
       '';
     };
+
+    lowNoise = {
+      enable = lib.mkEnableOption ''
+        the OV02E10 low-noise driver, which caps analog gain and makes up the
+        brightness with sensor digital gain. At high analog gain the sensor's
+        column noise and per-channel black offset grow, showing as vertical
+        bands and green shadows in dim rooms. See
+        webcam-fix-book5/ov02e10-lownoise-fix/README.md
+      '';
+
+      maxAnalogueGain = lib.mkOption {
+        type = lib.types.ints.between 16 248;
+        default = 64;
+        description = "Analog gain ceiling in sensor units (16 = 1x, 64 = 4x, 248 = 15.5x).";
+      };
+
+      digitalGain = lib.mkOption {
+        type = lib.types.ints.between 256 1020;
+        default = 1020;
+        description = "Fixed sensor digital gain (256 = 1x, 1020 = ~4x).";
+      };
+    };
   };
 
   config = lib.mkMerge [
@@ -391,11 +439,17 @@ in {
           "v4l2loopback"
         ];
 
-        extraModulePackages = [
-          intelCvsModule
-          ipuBridgeModule
-          kernelPackages.v4l2loopback
-        ];
+        extraModulePackages =
+          [
+            intelCvsModule
+            ipuBridgeModule
+            kernelPackages.v4l2loopback
+          ]
+          ++ lib.optional cfg.lowNoise.enable ov02e10LowNoiseModule;
+
+        extraModprobeConfig = lib.mkIf cfg.lowNoise.enable ''
+          options ov02e10 max_again=${toString cfg.lowNoise.maxAnalogueGain} dgain=${toString cfg.lowNoise.digitalGain}
+        '';
       };
 
       environment = {
