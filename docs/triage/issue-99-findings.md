@@ -15,8 +15,12 @@ Fedora Workstation (fresh install), kernel `7.2.6-200.fc44.x86_64`, Secure Boot
 [comment-5863742135](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/99#issuecomment-5863742135)
 (see [Reply posted](#reply-posted)). Round-2 reply posted 2026-09-28 as
 [comment-5874275777](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/99#issuecomment-5874275777)
-(see [Round 2 reply posted](#round-2-reply-posted)). No driver code changed.
-Issue stays **open**, awaiting the reporter's results.
+(see [Round 2 reply posted](#round-2-reply-posted)). Round-3 reply posted
+2026-09-30 as
+[comment-5920907688](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/99#issuecomment-5920907688)
+(see [Round 3](#round-3): Windows plays both sides, so H3 is ruled out). No
+driver code changed. Issue stays **open**; the reporter is back on Windows and
+will redo the tests on a Fedora dual-boot over the school holidays.
 
 ---
 
@@ -1186,3 +1190,135 @@ How it differs from the round-2 plan above:
 > 2. **Reseat the right speaker connector:** power off, remove the bottom cover, and **disconnect the battery connector first**, then reseat the speaker connector. This is at your own risk, and may affect your warranty.
 >
 > I'll keep the issue open until you've had a chance to run these. Thanks again for your patience!
+
+---
+
+## Round 3
+
+[@Bruzado1975's round 3 comment](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/99#issuecomment-5920687618)
+(2026-09-30). No data this round. What they said:
+
+- They're a music teacher and need working speakers, so they **reinstalled
+  Windows**. In Windows **both internal speakers work perfectly**: both
+  channels, full volume.
+- They ran the round-2 baselines (A/B) and S1/S2, but didn't save the output
+  and no longer have that Fedora install. **The results are lost.**
+- They plan to dual-boot Fedora over the school holidays and redo everything,
+  saving every log.
+
+### What Windows settles
+
+**H3 (right-side speaker, cable or connector) is ruled out** by the reporter's
+own evidence. Windows drives both right drivers at full volume through the same
+amps, the same speakers and the same right-side cabling. A marginal contact
+would have to keep working through their normal Windows use while failing
+consistently under Fedora. That isn't credible. The #61 caveat about Windows
+(it may high-pass the tweeters, so a weak driver is never stressed) doesn't
+apply here: #99 is **both** right drivers completely silent, not a distorting
+tweeter.
+
+It also backs up the round-2 3a table, which already cleared the amp driver
+(H4). Both right amps hold exactly what the driver wrote.
+
+### What's left
+
+| | Round 2 | Round 3 | Why |
+| --- | --- | --- | --- |
+| **H1** channel 1 not on the codec→amp link under Linux | Joint lead | **Favoured** | The only software mechanism that silences both right amps at once, and the hardware is now known to be good. Nothing in this package or upstream PR #5616 programs the ALC298's amp-facing output, so under Linux it's whatever state the codec is left in. Weak evidence against: #100 (Lunar Lake, different SSID) shows right amps on channel 1 do get audio on that board (`issue-100-findings.md`). Different platform, so it doesn't settle #99. |
+| **H5** PipeWire per-route volume | Moved up | **Open, cheaper to check** | Untouched by the Windows result. The dual-boot install will start with **fresh WirePlumber state** (`~/.local/state/wireplumber/`). If the right side works straight after that install and fails later, H5 (or some other stored per-user state) becomes the lead. `pactl list sinks` still closes it. |
+| **H3** right-side physical | Joint lead | **Ruled out** | Windows plays both sides. |
+| **H4** amp driver state | Ruled out | Ruled out | Round-2 3a table. |
+| **H2** framing mismatch | Folded into H1 | Folded into H1 | Unchanged. |
+
+The S2 swap results are lost, so **S2 is still the decisive pending test**
+between H1 and H5. It needs a working left side as its control.
+
+### Is a code change justified?
+
+**No.** Nothing new points at this package. The round-2 table ("Is a code
+change justified now?") still applies unchanged: only a redone S2 showing
+channel 1 empty would justify the opt-in stopgap, and the real fix would still
+be codec-side.
+
+### Firmware-inherited state: what #100 does and doesn't support
+
+`docs/triage/issue-100-findings.md` (Book5 Pro 940XHA, Lunar Lake, stock
+7.2.8 kernel) found all four MAX98390s already configured when Linux starts:
+`GLOBAL_EN=1`, `0x2021` set per side, `AMP_EN` on only `0x38`. No Linux code
+touches those amps on a stock kernel, so that state was **written before Linux
+and inherited by it**. The reporter has no Windows, so it came from UEFI/BIOS.
+
+That genuinely supports one point: **on these Samsung boards, audio state set
+before Linux starts can persist into Linux.** It does **not** show that
+Windows' state survives a warm reboot. #100's "Windows warm-reboot residue"
+hypothesis was dropped untested because there was no Windows to test it with.
+It's also amp state, not codec state, and on #99 our driver software-resets
+every amp at probe (`max98390_hda.c`, the checked `SOFTWARE_RESET` write), so
+any amp-side state Windows leaves is wiped. **Only codec-side (ALC298) state
+could carry over.**
+
+### New test for when they return: cold boot vs warm reboot from Windows
+
+Two boots, listening only:
+
+1. **Cold boot:** full shutdown, then power on straight into Fedora.
+2. **Warm reboot from Windows:** in Windows, with sound playing, choose
+   Restart and pick Fedora in the boot menu.
+
+Optional, after each boot: `journalctl -k -b | grep -iE 'picked fixup|alc298'`.
+That shows which Realtek fixup the kernel picked and when. It should be
+identical across both boots, and a difference would be a finding in itself.
+
+| Result | Meaning |
+| --- | --- |
+| Right side plays after the **warm** reboot, silent after the **cold** boot | Windows' codec programming survived the reboot, and Linux doesn't do it. **Direct evidence for H1**, and it says what to look for: the ALC298's amp-link configuration, set by Windows' driver, missing under Linux. Next step would be a codec dump from each boot, compared. |
+| Same result after both | That mechanism isn't shown. H1 stays open. Either Windows' codec state doesn't survive the reboot (Linux's HDA probe may reset it), or it isn't the missing piece. The test can't tell which. |
+| Right side plays after **both** | Fresh install works: points at H5 or other stored state building up later, not H1. |
+
+Why it matters: it's the one H1 test that needs no register writes and no
+helpers, so it's safe to ask first, and a positive result goes straight to the
+cause.
+
+**How sure I am of the premise: not very.** It's inferred, not verified on this
+board. What the repo actually has:
+
+- #61 (Book3 Ultra, ALC298): amp state set through the codec's COEFs **does
+  not survive suspend** (`issue-61-findings.md`, round 3; the shipped 940XFG
+  resume hook only exists for that reason). That's evidence state is **lost**
+  on power-down, not that it's **kept** across a reboot.
+- #100: state from **before** Linux persists into Linux (above). Firmware,
+  not Windows.
+- No note in the repo shows ALC298 vendor COEF state surviving a warm reboot.
+  Whether Linux's HDA controller reset at probe clears it is unknown. So the
+  warm-reboot half of the test could come back negative for reasons unrelated
+  to H1, which is why the "same result" row doesn't exclude H1.
+
+Nothing in this section has been tested on hardware.
+
+### Round 3 reply posted
+
+Posted verbatim to @Bruzado1975 on 2026-09-30 as
+[comment-5920907688](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/99#issuecomment-5920907688).
+Issue left **open**, with no labels and no driver change.
+
+How it differs from the round-3 notes above: it names H1 as the main suspect
+in plain words but doesn't mention H5, and it doesn't include the result table
+for the cold/warm test. It calls the test "an educated guess" from other
+Samsung models, not a confirmed mechanism. The only command is the optional
+`journalctl` line.
+
+> Hi @Bruzado1975, thank you so much for the update. Your teaching comes first, and Windows was the right call.
+>
+> You're right that Windows settles the hardware question. If both sides play at full volume there, the amps, speakers and right-side cabling are fine. That leaves the software between the codec and the amps under Linux, as you said. Your last register dump showed the amps set up identically on both sides, so my main suspect is the codec not sending the right channel to the amps under Linux.
+>
+> And no need to apologise about the lost output. We'll redo it.
+>
+> When you have the dual-boot, one test is worth doing first, and it's only listening. Boot into Fedora twice: once from cold (full shutdown, then power on), and once by restarting straight from Windows while sound is playing there, then picking Fedora. If the right side works after the restart from Windows but not after the cold boot, Windows is setting up something in the codec that Linux misses, and that tells us exactly where to look. It's an educated guess from what we've seen on other Samsung models, not confirmed on yours. As a bonus, paste the output of this after each boot:
+>
+> ```bash
+> journalctl -k -b | grep -iE 'picked fixup|alc298'
+> ```
+>
+> The S2 swap test and codec dump from [my earlier comment](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/99#issuecomment-5874275777) will still be there when you have time.
+>
+> I'll keep the issue open, and there's no rush at all. Good luck with the term!
