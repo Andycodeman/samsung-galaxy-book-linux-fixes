@@ -1,0 +1,134 @@
+--- a/src/ipa/simple/algorithms/awb.cpp
++++ b/src/ipa/simple/algorithms/awb.cpp
+@@ -65,7 +65,16 @@
+ 	 */
+ 	const uint64_t nPixels = std::accumulate(
+ 		histogram.begin(), histogram.end(), uint64_t(0));
+-	const uint64_t offset = blackLevel * nPixels;
++	RGB<uint64_t> offset({ blackLevel * nPixels, blackLevel * nPixels,
++			       blackLevel * nPixels });
++	const auto &channelLevels = context.activeState.blc.channelLevels;
++	if (channelLevels.has_value()) {
++		offset = RGB<uint64_t>({
++			static_cast<uint64_t>(channelLevels->r() * nPixels),
++			static_cast<uint64_t>(channelLevels->g() * nPixels),
++			static_cast<uint64_t>(channelLevels->b() * nPixels),
++		});
++	}
+ 	const uint64_t minValid = 1;
+ 	/*
+ 	 * Make sure the sums are at least minValid, while preventing unsigned
+--- a/src/ipa/simple/algorithms/blc.cpp
++++ b/src/ipa/simple/algorithms/blc.cpp
+@@ -7,7 +7,9 @@
+ 
+ #include "blc.h"
+ 
++#include <array>
+ #include <numeric>
++#include <vector>
+ 
+ #include <libcamera/base/log.h>
+ 
+@@ -20,6 +22,7 @@
+ LOG_DEFINE_CATEGORY(IPASoftBL)
+ 
+ BlackLevel::BlackLevel()
++	: lastGain_(1.0)
+ {
+ }
+ 
+@@ -34,6 +37,29 @@
+ 		 */
+ 		definedLevel_ = blackLevel.value() >> 8;
+ 	}
++
++	/*
++	 * Optional per-channel levels as [offset, slope] pairs on the same 16
++	 * bit scale, giving offset + slope * analogue gain. Some sensors'
++	 * pedestals differ per channel and drift with gain by a couple of
++	 * codes, which gamma turns into a visible colour cast near black. The
++	 * single level above is still what AWB and AGC subtract.
++	 */
++	const ValueNode &channels = tuningData["channelLevels"];
++	static const char *const names[] = { "r", "g", "b" };
++	std::array<ChannelLevel, 3> levels;
++	bool complete = true;
++	for (unsigned int i = 0; i < 3; i++) {
++		auto pair = channels[names[i]].get<std::vector<double>>();
++		if (!pair.has_value() || pair->size() != 2) {
++			complete = false;
++			break;
++		}
++		levels[i] = { (*pair)[0], (*pair)[1] };
++	}
++	if (complete)
++		channelLevels_ = levels;
++
+ 	return 0;
+ }
+ 
+@@ -52,6 +78,18 @@
+ 			 [[maybe_unused]] IPAFrameContext &frameContext,
+ 			 DebayerParams *params)
+ {
++	if (channelLevels_.has_value()) {
++		const auto &l = *channelLevels_;
++		params->blackLevel = RGB<float>({
++			static_cast<float>((l[0].offset + l[0].slope * lastGain_) / 65535.0),
++			static_cast<float>((l[1].offset + l[1].slope * lastGain_) / 65535.0),
++			static_cast<float>((l[2].offset + l[2].slope * lastGain_) / 65535.0),
++		});
++		/* AWB subtracts these from its sums in place of the single level. */
++		context.activeState.blc.channelLevels = params->blackLevel * 255.0f;
++		return;
++	}
++
+ 	/* Latch the blacklevel gain so GPUISP can apply. */
+ 	params->blackLevel = RGB<float>(context.activeState.blc.level / 255.0f);
+ }
+@@ -69,6 +107,9 @@
+ 	};
+ 	metadata.set(controls::SensorBlackLevels, blackLevels);
+ 
++	/* prepare() runs before this frame's gain is known, so use the last one. */
++	lastGain_ = frameContext.sensor.gain;
++
+ 	if (!stats->valid)
+ 		return;
+ 
+--- a/src/ipa/simple/algorithms/blc.h
++++ b/src/ipa/simple/algorithms/blc.h
+@@ -7,6 +7,7 @@
+ 
+ #pragma once
+ 
++#include <array>
+ #include <optional>
+ #include <stdint.h>
+ 
+@@ -35,6 +36,13 @@
+ 
+ private:
+ 	std::optional<uint8_t> definedLevel_;
++
++	struct ChannelLevel {
++		double offset;
++		double slope;
++	};
++	std::optional<std::array<ChannelLevel, 3>> channelLevels_;
++	double lastGain_;
+ };
+ 
+ } /* namespace ipa::soft::algorithms */
+--- a/src/ipa/simple/ipa_context.h
++++ b/src/ipa/simple/ipa_context.h
+@@ -46,6 +46,8 @@
+ 		uint8_t level;
+ 		int32_t lastExposure;
+ 		double lastGain;
++		/* Per-channel levels on the same 8 bit scale, if tuned. */
++		std::optional<RGB<float>> channelLevels;
+ 	} blc;
+ 
+ 	struct {

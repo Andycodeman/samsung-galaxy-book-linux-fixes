@@ -27,6 +27,8 @@
       (old.patches or [])
       ++ [
         ../webcam-fix-book5/libcamera-bayer-fix/bayer-fix-v0.7.patch
+        ../webcam-fix-book5/libcamera-bayer-fix/blc-channel-levels.patch
+        ../webcam-fix-book5/libcamera-bayer-fix/agc-min-gain-step.patch
       ];
 
     postPatch =
@@ -76,6 +78,17 @@
           $out/share/libcamera/ipa/simple/ov02c10.yaml
         install -Dm644 ${../webcam-fix-book5/ov02e10.yaml} \
           $out/share/libcamera/ipa/simple/ov02e10.yaml
+      ''
+      # Per-channel pedestals as offset + slope * analogue gain, fitted from
+      # covered-lens raw frames at 1x-4x with dgain=1020 (960XHA). The sensor
+      # digital gain scales the offsets, so they only hold for that profile.
+      + lib.optionalString (cfg.lowNoise.enable && cfg.lowNoise.digitalGain == 1020) ''
+        substituteInPlace $out/share/libcamera/ipa/simple/ov02e10.yaml \
+          --replace-fail "      blackLevel: 4096" "      blackLevel: 4096
+              channelLevels:
+                r: [ 4023, -20 ]
+                g: [ 4016, 56 ]
+                b: [ 3995, 53 ]"
       '';
   });
 
@@ -203,24 +216,25 @@
 
     dontConfigure = true;
 
-    postPatch = ''
-      substituteInPlace camera-relay-gst.c \
-        --replace-fail '"/usr/bin/gst-launch-1.0", "/usr/local/bin/gst-launch-1.0"' \
-                       '"${pkgs.gst_all_1.gstreamer.bin}/bin/gst-launch-1.0"' \
-        --replace-fail '"/usr/local/bin/cam", "/usr/bin/cam"' \
-                       '"${libcamera-book5}/bin/cam"' \
-        --replace-fail '"/usr/lib/", "/usr/lib64/", "/usr/share/",' \
-                       '"/nix/store/", "/usr/lib/", "/usr/lib64/", "/usr/share/",' \
-        --replace-fail '"/etc/glvnd/egl_vendor.d/", "/usr/share/glvnd/egl_vendor.d/",' \
-                       '"/run/opengl-driver/share/glvnd/egl_vendor.d/", "/etc/glvnd/egl_vendor.d/", "/usr/share/glvnd/egl_vendor.d/",'
-    ''
-    # The fresh environment would drop the rotation override, and without it
-    # the bayer-fix patch decodes the grid wrong (purple/green tint).
-    + lib.optionalString cfg.videoFlip ''
-      substituteInPlace camera-relay-gst.c \
-        --replace-fail 'env[n++] = "MESA_SHADER_CACHE_DIR=" CACHE_DIR "/mesa";' \
-                       'env[n++] = "MESA_SHADER_CACHE_DIR=" CACHE_DIR "/mesa"; env[n++] = "LIBCAMERA_FORCE_OV02E10_ROTATION=180";'
-    '';
+    postPatch =
+      ''
+        substituteInPlace camera-relay-gst.c \
+          --replace-fail '"/usr/bin/gst-launch-1.0", "/usr/local/bin/gst-launch-1.0"' \
+                         '"${pkgs.gst_all_1.gstreamer.bin}/bin/gst-launch-1.0"' \
+          --replace-fail '"/usr/local/bin/cam", "/usr/bin/cam"' \
+                         '"${libcamera-book5}/bin/cam"' \
+          --replace-fail '"/usr/lib/", "/usr/lib64/", "/usr/share/",' \
+                         '"/nix/store/", "/usr/lib/", "/usr/lib64/", "/usr/share/",' \
+          --replace-fail '"/etc/glvnd/egl_vendor.d/", "/usr/share/glvnd/egl_vendor.d/",' \
+                         '"/run/opengl-driver/share/glvnd/egl_vendor.d/", "/etc/glvnd/egl_vendor.d/", "/usr/share/glvnd/egl_vendor.d/",'
+      ''
+      # The fresh environment would drop the rotation override, and without it
+      # the bayer-fix patch decodes the grid wrong (purple/green tint).
+      + lib.optionalString cfg.videoFlip ''
+        substituteInPlace camera-relay-gst.c \
+          --replace-fail 'env[n++] = "MESA_SHADER_CACHE_DIR=" CACHE_DIR "/mesa";' \
+                         'env[n++] = "MESA_SHADER_CACHE_DIR=" CACHE_DIR "/mesa"; env[n++] = "LIBCAMERA_FORCE_OV02E10_ROTATION=180";'
+      '';
 
     buildPhase = ''
       $CC -O2 -Wall -o camera-relay-gst camera-relay-gst.c
