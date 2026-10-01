@@ -24,8 +24,7 @@ The stock `linux-firmware` package on Ubuntu 24.04 ships SOF (Sound Open Firmwar
 ## Install
 
 ```bash
-sudo bash install.sh
-# Reboot
+curl -sL https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/archive/refs/heads/main.tar.gz | tar xz && cd samsung-galaxy-book-linux-fixes-main/mic-fix && sudo ./install.sh && sudo reboot
 ```
 
 ## Verify
