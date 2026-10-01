@@ -12,7 +12,10 @@
     if kernelUsesClang
     then pkgs.llvmPackages.clang-unwrapped
     else pkgs.gcc;
-  clangMakeFlags = lib.optionalString kernelUsesClang "LLVM=1 CC=${cc}/bin/clang LD=${pkgs.llvmPackages.lld}/bin/ld.lld";
+  # The kernel's own make flags, not pkgs.llvmPackages: kernels that pin their
+  # own nixpkgs (CachyOS) are built with a different clang/lld than the system
+  # one, and objtool rejects objects from a mismatched toolchain.
+  clangMakeFlags = lib.optionalString kernelUsesClang (lib.escapeShellArgs kernel.commonMakeFlags);
 
   # Scoped patched libcamera: same patches/yamls as upstream
   # webcam-fix-book5.nix, but as a side package instead of a global
