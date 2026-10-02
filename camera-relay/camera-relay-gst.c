@@ -44,11 +44,6 @@
 #include <string.h>
 #include <unistd.h>
 
-/* Shared writable state for the pipeline's own caches. Root-owned,
- * group-writable, so a user cannot plant a poisoned GStreamer registry
- * (the registry maps elements to .so paths that get dlopen()ed). */
-#define CACHE_DIR "/var/cache/camera-relay"
-
 #define MAX_ARGS 64
 
 /*
@@ -284,16 +279,30 @@ static char **build_environment(const char *gst_plugin_path,
 				const char *softisp_mode,
 				const char *egl_vendor)
 {
-	static char *env[12];
-	static char buf[6][PATH_MAX + 64];
+	static char *env[13];
+	static char buf[8][PATH_MAX + 64];
 	int n = 0, b = 0;
+	const char *cache_dir = getenv("CACHE_DIRECTORY");
+
+	if (!cache_dir) {
+		const char *home = getenv("HOME");
+		if (home) {
+			snprintf(buf[b], sizeof(buf[b]), "%s/.cache/camera-relay", home);
+			cache_dir = buf[b++];
+		} else {
+			cache_dir = "/tmp/camera-relay-cache";
+		}
+	}
 
 	env[n++] = "PATH=/usr/local/bin:/usr/bin:/bin";
 	/* Mesa and GStreamer both want somewhere to cache; point them at the
-	 * group-writable directory rather than the user's HOME. */
-	env[n++] = "HOME=" CACHE_DIR;
-	env[n++] = "GST_REGISTRY=" CACHE_DIR "/gst-registry.bin";
-	env[n++] = "MESA_SHADER_CACHE_DIR=" CACHE_DIR "/mesa";
+	 * isolated cache directory rather than the user's HOME. */
+	snprintf(buf[b], sizeof(buf[b]), "HOME=%s", cache_dir);
+	env[n++] = buf[b++];
+	snprintf(buf[b], sizeof(buf[b]), "GST_REGISTRY=%s/gst-registry.bin", cache_dir);
+	env[n++] = buf[b++];
+	snprintf(buf[b], sizeof(buf[b]), "MESA_SHADER_CACHE_DIR=%s/mesa", cache_dir);
+	env[n++] = buf[b++];
 
 	if (gst_plugin_path) {
 		snprintf(buf[b], sizeof(buf[b]), "GST_PLUGIN_PATH=%s", gst_plugin_path);

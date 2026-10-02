@@ -234,8 +234,8 @@
       # the bayer-fix patch decodes the grid wrong (purple/green tint).
       + lib.optionalString cfg.videoFlip ''
         substituteInPlace camera-relay-gst.c \
-          --replace-fail 'env[n++] = "MESA_SHADER_CACHE_DIR=" CACHE_DIR "/mesa";' \
-                         'env[n++] = "MESA_SHADER_CACHE_DIR=" CACHE_DIR "/mesa"; env[n++] = "LIBCAMERA_FORCE_OV02E10_ROTATION=180";'
+          --replace-fail 'snprintf(buf[b], sizeof(buf[b]), "MESA_SHADER_CACHE_DIR=%s/mesa", cache_dir);' \
+                         'snprintf(buf[b], sizeof(buf[b]), "MESA_SHADER_CACHE_DIR=%s/mesa", cache_dir); env[n++] = "LIBCAMERA_FORCE_OV02E10_ROTATION=180";'
       '';
 
     buildPhase = ''
@@ -424,13 +424,7 @@ in {
     };
   };
 
-  config = lib.mkMerge [
-    {
-      # Preserve previous behavior: fix on with rotation handling by default.
-      hardware.samsungGalaxyBook.webcamFixBook5.enable = lib.mkDefault true;
-      hardware.samsungGalaxyBook.webcamFixBook5.videoFlip = lib.mkDefault true;
-    }
-    (lib.mkIf cfg.enable {
+  config = lib.mkIf cfg.enable {
       # Intentionally no nixpkgs.overlays here. Upstream patches libcamera
       # globally, which cascades: libcamera -> pipewire -> sdl2-compat ->
       # ffmpeg -> qtwebengine/electron (hours of source builds, no binary
@@ -519,9 +513,6 @@ in {
         "wireplumber.profiles".main."monitor.libcamera" = "disabled";
       };
 
-      # Launcher hardcodes this as HOME, GST_REGISTRY and the Mesa shader cache.
-      systemd.tmpfiles.rules = ["d /var/cache/camera-relay 1777 root root -"];
-
       systemd.user.services = {
         camera-relay = {
           description = "Camera Relay (on-demand libcamera to v4l2loopback)";
@@ -529,6 +520,8 @@ in {
           wantedBy = ["default.target"];
           serviceConfig = {
             Type = "simple";
+            CacheDirectory = "camera-relay";
+            RuntimeDirectory = "camera-relay";
             ExecStart = "${cameraRelay}/bin/camera-relay start --on-demand";
             # WirePlumber probes the loopback before the monitor pins YUYV and
             # caches the catch-all range, which WebRTC cannot use.
@@ -555,6 +548,5 @@ in {
           LIBCAMERA_FORCE_OV02E10_ROTATION = "180";
         };
       };
-    })
-  ];
+  };
 }

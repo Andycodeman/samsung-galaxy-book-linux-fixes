@@ -16,7 +16,8 @@ set -euo pipefail
 
 CARD_LABEL="Camera Relay"
 PID_FILE="${XDG_RUNTIME_DIR:-/tmp}/camera-relay.pid"
-CACHE_DIR="${XDG_RUNTIME_DIR:-/tmp}"
+CACHE_DIR="${RUNTIME_DIRECTORY:-${XDG_RUNTIME_DIR:-/tmp}/camera-relay}"
+mkdir -p "$CACHE_DIR" 2>/dev/null || true
 CAMERA_CACHE="${CACHE_DIR}/camera-relay-camera-name"
 DEVICE_CACHE="${CACHE_DIR}/camera-relay-loopback-dev"
 STATE_CACHE="${CACHE_DIR}/camera-relay-state"

@@ -195,10 +195,6 @@ Book5 (IPU7, OV02C10/OV02E10):
 ```nix
 hardware.samsungGalaxyBook.webcamFixBook5 = {
   enable = true;
-  # Strongly recommended — see the option description. Without it the
-  # libcamera overlay cascades through the Nix fixed-point and rebuilds
-  # chromium, discord, qemu, webkitgtk, ... from source.
-  nixpkgsUnpatched = inputs.nixpkgs.legacyPackages.${pkgs.system};
 };
 ```
 

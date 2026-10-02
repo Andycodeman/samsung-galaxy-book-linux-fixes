@@ -24,7 +24,7 @@
     if kernelUsesClang
     then pkgs.llvmPackages.clang-unwrapped
     else pkgs.gcc;
-  clangMakeFlags = lib.optionalString kernelUsesClang "LLVM=1 CC=${cc}/bin/clang LD=${pkgs.llvmPackages.lld}/bin/ld.lld";
+  clangMakeFlags = lib.optionalString kernelUsesClang (lib.escapeShellArgs kernel.commonMakeFlags);
 in {
   options.hardware.samsungGalaxyBook.ipuBridgeFix = {
     enable = lib.mkEnableOption "out-of-tree ipu-bridge override reporting sensor rotation";
