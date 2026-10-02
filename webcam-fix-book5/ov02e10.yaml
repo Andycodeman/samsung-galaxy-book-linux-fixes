@@ -6,9 +6,13 @@
 # 6-anchor tuning for libcamera 0.6.0+.
 # Anchors: 2700K, 3200K, 4500K, 5500K, 6000K, 6500K
 #
-# Rows are normalised to sum to 1.0. The original rows summed to 1.1-1.6
-# for "colour richness", but unequal row sums shift white balance after AWB:
-# a neutral target measured R/G 1.09 (pink) with them and 1.01 without.
+# Row sums are 1.09 (R), 1.0 (G) and 1.075 (B). The original rows summed to
+# 1.1-1.6 for "colour richness", but unequal row sums shift white balance
+# after AWB: a neutral target filling the frame measured R/G 1.09 (pink) with
+# them and 1.01 with rows of 1.0. The R/B lift that remains offsets grey-world
+# AWB reading skin tones as a warm illuminant: with a person in frame and rows
+# of 1.0 a grey wall measured R/G 0.975, B/G 0.98 in the output, about 5% low
+# in linear terms.
 #
 # Green diagonal reduces with increasing CT to suppress the sensor's native
 # green bias, which worsens at higher colour temperatures. Cross-terms are
@@ -33,29 +37,32 @@ algorithms:
   - Ccm:
       ccms:
         - ct: 2700
-          ccm: [  1.174, -0.101, -0.072,
+          ccm: [  1.280, -0.111, -0.079,
                  -0.073,  1.436, -0.363,
-                  0.010, -0.360,  1.350 ]
+                  0.010, -0.388,  1.452 ]
         - ct: 3200
-          ccm: [  1.141, -0.085, -0.056,
+          ccm: [  1.243, -0.092, -0.061,
                  -0.124,  1.405, -0.281,
-                  0.000, -0.263,  1.263 ]
+                  0.000, -0.283,  1.358 ]
         - ct: 4500
-          ccm: [  1.112, -0.070, -0.042,
+          ccm: [  1.213, -0.077, -0.046,
                  -0.125,  1.232, -0.107,
-                  0.008, -0.172,  1.164 ]
+                  0.008, -0.185,  1.251 ]
         - ct: 5500
-          ccm: [  1.168, -0.099, -0.069,
+          ccm: [  1.272, -0.107, -0.075,
                  -0.054,  1.086, -0.032,
-                  0.039, -0.189,  1.150 ]
+                  0.042, -0.204,  1.237 ]
         - ct: 6000
-          ccm: [  1.149, -0.075, -0.075,
-                 -0.021,  0.979,  0.043,
-                  0.062, -0.196,  1.134 ]
+          ccm: [  1.254, -0.082, -0.082,
+                 -0.021,  0.978,  0.043,
+                  0.067, -0.211,  1.219 ]
         - ct: 6500
-          ccm: [  1.142, -0.057, -0.085,
+          ccm: [  1.244, -0.062, -0.092,
                   0.000,  0.934,  0.066,
-                  0.078, -0.207,  1.129 ]
+                  0.084, -0.222,  1.213 ]
   - Adjust:
   - Agc:
+      # Mean sample value AGC aims for on a 1-5 scale (default 2.5). The
+      # default clips highlights and spends gain a webcam does not need.
+      exposureTarget: 1.5
 ...

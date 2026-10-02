@@ -29,6 +29,8 @@
         ../webcam-fix-book5/libcamera-bayer-fix/bayer-fix-v0.7.patch
         ../webcam-fix-book5/libcamera-bayer-fix/blc-channel-levels.patch
         ../webcam-fix-book5/libcamera-bayer-fix/agc-min-gain-step.patch
+        ../webcam-fix-book5/libcamera-bayer-fix/awb-skip-saturated.patch
+        ../webcam-fix-book5/libcamera-bayer-fix/agc-exposure-target.patch
       ];
 
     postPatch =

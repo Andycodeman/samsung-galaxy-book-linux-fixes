@@ -1,0 +1,106 @@
+--- a/include/libcamera/internal/software_isp/swisp_stats.h
++++ b/include/libcamera/internal/software_isp/swisp_stats.h
+@@ -32,6 +32,13 @@
+ 	 */
+ 	RGB<uint64_t> sum_;
+ 	/**
++	 * \brief Number of sampled pixels included in sum_
++	 *
++	 * Saturated pixels are left out of the sums, so this can be lower than
++	 * the number of pixels in the histogram.
++	 */
++	uint64_t sumCount_;
++	/**
+ 	 * \brief Number of bins in the yHistogram
+ 	 */
+ 	static constexpr unsigned int kYHistogramSize = 64;
+--- a/src/ipa/simple/algorithms/awb.cpp
++++ b/src/ipa/simple/algorithms/awb.cpp
+@@ -49,7 +49,6 @@
+ 		  const SwIspStats *stats,
+ 		  ControlList &metadata)
+ {
+-	const SwIspStats::Histogram &histogram = stats->yHistogram;
+ 	const uint8_t blackLevel = context.activeState.blc.level;
+ 
+ 	metadata.set(controls::ColourGains, { frameContext.gains.r(),
+@@ -63,8 +62,8 @@
+ 	 * would be off if they were computed from the whole brightness range
+ 	 * rather than from the sensor range.
+ 	 */
+-	const uint64_t nPixels = std::accumulate(
+-		histogram.begin(), histogram.end(), uint64_t(0));
++	/* The sums skip saturated pixels, so offset only the ones counted. */
++	const uint64_t nPixels = stats->sumCount_;
+ 	RGB<uint64_t> offset({ blackLevel * nPixels, blackLevel * nPixels,
+ 			       blackLevel * nPixels });
+ 	const auto &channelLevels = context.activeState.blc.channelLevels;
+--- a/src/libcamera/software_isp/swstats_cpu.cpp
++++ b/src/libcamera/software_isp/swstats_cpu.cpp
+@@ -171,18 +171,31 @@
+ static constexpr unsigned int kGreenYMul = 150; /* 0.587 * 256 */
+ static constexpr unsigned int kBlueYMul = 29; /* 0.114 * 256 */
+ 
++/*
++ * A clipped pixel reads the same maximum on every channel whatever the
++ * illuminant, so including it drags the grey-world AWB gains towards 1.0
++ * and leaves a green cast on scenes with blown highlights.
++ */
++static constexpr unsigned int kSaturatedLevel = 248;
++
+ #define SWSTATS_START_LINE_STATS(pixel_t) \
+ 	pixel_t r, g, g2, b;              \
+ 	uint64_t yVal;                    \
+                                           \
+ 	uint64_t sumR = 0;                \
+ 	uint64_t sumG = 0;                \
+-	uint64_t sumB = 0;
++	uint64_t sumB = 0;                \
++	uint64_t sumCount = 0;
+ 
+-#define SWSTATS_ACCUMULATE_LINE_STATS(div) \
+-	sumR += r;                         \
+-	sumG += g;                         \
+-	sumB += b;                         \
++#define SWSTATS_ACCUMULATE_LINE_STATS(div)          \
++	if (r < kSaturatedLevel * (div) &&          \
++	    g < kSaturatedLevel * (div) &&          \
++	    b < kSaturatedLevel * (div)) {          \
++		sumR += r;                          \
++		sumG += g;                          \
++		sumB += b;                          \
++		sumCount++;                         \
++	}                                           \
+                                            \
+ 	yVal = r * kRedYMul;               \
+ 	yVal += g * kGreenYMul;            \
+@@ -192,7 +205,8 @@
+ #define SWSTATS_FINISH_LINE_STATS() \
+ 	stats.sum_.r() += sumR;     \
+ 	stats.sum_.g() += sumG;     \
+-	stats.sum_.b() += sumB;
++	stats.sum_.b() += sumB;     \
++	stats.sumCount_ += sumCount;
+ 
+ void SwStatsCpu::statsBGGR8Line0(const uint8_t *src[], SwIspStats &stats)
+ {
+@@ -391,6 +405,7 @@
+ 
+ 	for (auto &s : stats_) {
+ 		s.sum_ = RGB<uint64_t>({ 0, 0, 0 });
++		s.sumCount_ = 0;
+ 		s.yHistogram.fill(0);
+ 	}
+ }
+@@ -408,9 +423,11 @@
+ 
+ 	if (valid) {
+ 		sharedStats_->sum_ = RGB<uint64_t>({ 0, 0, 0 });
++		sharedStats_->sumCount_ = 0;
+ 		sharedStats_->yHistogram.fill(0);
+ 		for (const auto &s : stats_) {
+ 			sharedStats_->sum_ += s.sum_;
++			sharedStats_->sumCount_ += s.sumCount_;
+ 			for (unsigned int j = 0; j < SwIspStats::kYHistogramSize; j++)
+ 				sharedStats_->yHistogram[j] += s.yHistogram[j];
+ 		}
