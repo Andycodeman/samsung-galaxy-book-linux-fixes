@@ -11,12 +11,15 @@ tweeters) — squarely inside `speaker-fix/`'s coverage, not `speaker-fix-940xfg
 The blob corruption was real and worth fixing on its own merits, but it is not
 what silences the woofers on this machine.
 
-**Status:** fix committed as
-[`1194a83`](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/commit/1194a83);
-reply **posted** 2026-08-25 with maintainer sign-off —
-[comment-5413748371](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/93#issuecomment-5413748371).
-Issue deliberately left **open** pending the reporter's confirmation. Release to
-be cut once they confirm.
+**Status:** round 1 blob fix committed as
+[`1194a83`](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/commit/1194a83)
+(real bug, not the cause). Round 2's inverted-map hypothesis was refuted by
+@Elias02345's measurements. [Round 3](#round-3--two-np960qha-units-one-picture-the-tweeters-are-attenuated-not-dead):
+a second NP960QHA (@fphillips00) fits the same state. The tweeters are attenuated
+by the driver's `0x23BA`=`0x8D`, not dead. Reply posted 2026-10-03 as
+[comment-5967299583](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/93#issuecomment-5967299583)
+(see [Round 3 reply posted](#round-3-reply-posted)). **No driver change and no
+release.** Issue stays **open**, awaiting @fphillips00's R3-1..3 results.
 
 ---
 
@@ -632,3 +635,78 @@ supersedes them. Don't reuse them anywhere.
 > Also: had the laptop been suspended before your tests?
 >
 > Separately, bass: Elias showed the low end isn't the amp (DSP off moved it ~1 dB, no limiting). That half is the enclosure, and EQ is the lever there.
+
+## Round 3 reply posted
+
+Posted verbatim to @fphillips00 and @Elias02345 on 2026-10-03 as
+[comment-5967299583](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/93#issuecomment-5967299583).
+Issue left **open**, with no labels and no code change. Nobody had commented
+since @fphillips00's 2026-10-03 03:34 UTC comment.
+
+It is the [draft above](#draft-reply) with two additions. One is a table row for
+the R3-3 "no difference" outcome, which the draft left out. The other is a
+closing note for other testers repeating @fphillips00's warning about writing DSM
+registers on a running amp. No driver-change card ran after the round-3 triage
+(8fe43c6), so the only build the reply mentions is the conditional
+`tweeter_volume` follow-up from the [Recommendation](#recommendation).
+
+Checks done before posting:
+- the `bash` block passed `bash -n`, and a dry run with stubbed `sudo`/`i2ctransfer`
+  produced the intended byte sequences (e.g. `rd 0x38 0x2021` →
+  `w2@0x38 0x20 0x21 r1`, `wr 0x3c 0x23ba 0x99` → `w3@0x3c 0x23 0xba 0x99`);
+- `tw()` follows the same write order as `max98390_hda_init()` +
+  `max98390_configure_high_pass_filter()` (`0x23FF`=0, 50 ms, `0x203A`=`0x80`,
+  `0x23E1`=0, `0x23BA`, `0x23E1`=1, `0x203A`=`0x81`, `0x23FF`=1);
+- `0x2021` = 0/1/0/1 and `0x23BA` = `0xA0`/`0x8d` per pair, as the reply states, match
+  `max98390_hda_filters.c`;
+- test 2 relies on the woofers' `EN`=0 sticking while `speaker-test` opens a
+  stream. That holds because the playback hook never fires on these boards
+  (README "Power Management"; no MAX98390 alc269 quirk in 7.2.x).
+
+> Thanks, both of you. This moves things a long way.
+>
+> @Elias02345, apologies: your measurement pass landed before our round-2 reply and we missed it. It refuted the inverted-map idea before we'd even posted it. `0x38`/`0x39` are the woofers and `0x3c`/`0x3d` the tweeters, as the driver assumes. Your register findings check out against the datasheet. One footnote: the `0x2021` bass nibble is unused, because stereo bass is off in both blobs (`0x23E0` bit 7).
+>
+> @fphillips00, first, three corrections from the MAX98390 datasheet:
+>
+> - **`0x2101` reading 0 is expected.** DSM coefficients are only readable with EN, SPK_EN and DSP_GLOBAL_EN all 0, so our expected values in test A were wrong. `0x23E0` is the valid check, and yours is right.
+> - **Your blob-rewrite warning is exactly right, and the datasheet says why.** DSM registers may only be written after EN=0 → SPK_EN=0 → DSP_GLOBAL_EN=0, and changing DSM enables with EN=1 "may result in speaker damage". Our round-2 mute via `0x203A` on a running amp also broke a write rule (SPK_EN is static). Please use `EN` (`0x23FF`) to switch an amp off instead.
+> - **The woofer blob isn't full-range.** It's a low-pass. The two blobs are a crossover.
+>
+> **What we now think is going on:** the tweeters aren't dead. The driver turns them down. It sets the tweeter digital volume `0x23BA` to `0x8D` (−9.5 dB) against `0xA0` (0 dB) on the woofers, a 9.5 dB gap where the Samsung table that value came from has 3.5 dB. On top of that, the tweeter blob's high-pass is still −6 dB at ~5 kHz. Elias's sweep matches that prediction almost exactly and shows the system ~20 dB down around 6 kHz. That's "muffled/distant", and a tweeter alone at that level sounds like faint hiss.
+>
+> Three tests, all undone by a reboot:
+>
+> ```bash
+> BUS=2   # whatever bus you used before
+> rd(){ sudo i2ctransfer -y -f "$BUS" w2@"$1" $(printf '0x%02x 0x%02x' $(( $2 >> 8 )) $(( $2 & 0xff ))) r1; }
+> wr(){ sudo i2ctransfer -y -f "$BUS" w3@"$1" $(printf '0x%02x 0x%02x' $(( $2 >> 8 )) $(( $2 & 0xff ))) "$3"; }
+>
+> # 1. raw values, please (driver writes 0x2021 = 0/1/0/1, so "identical" surprised us)
+> for a in 0x38 0x39 0x3c 0x3d; do echo "$a $(rd $a 0x2021) $(rd $a 0x23ba) $(rd $a 0x23e0)"; done
+>
+> # 2. woofers off, 8 kHz tone at moderate volume: is the tone audible from the tweeters?
+> wr 0x38 0x23ff 0x00; wr 0x39 0x23ff 0x00
+> speaker-test -t sine -f 8000 -c 2      # Ctrl-C after a few seconds
+> wr 0x38 0x23ff 0x01; wr 0x39 0x23ff 0x01
+>
+> # 3. pause playback, raise the tweeters (datasheet-safe sequence), resume and listen
+> tw(){ wr $1 0x23ff 0x00 && sleep 0.05 && wr $1 0x203a 0x80 && wr $1 0x23e1 0x00 &&
+>       wr $1 0x23ba $2 && wr $1 0x23e1 0x01 && wr $1 0x203a 0x81 && wr $1 0x23ff 0x01; }
+> tw 0x3c 0x99; tw 0x3d 0x99     # -3.5 dB; then try 0xa0 (0 dB); 0x8d restores
+> ```
+>
+> | If… | Then |
+> | --- | --- |
+> | 2: clear tone from the tweeters | signal reaches them; your unit matches Elias's |
+> | 2: only hiss, no tone | no data reaching them; please repeat after a full power-off |
+> | 3: noticeably less muffled | we add a `tweeter_volume` module option, and you'd get a build to test |
+> | 3: no difference | volume isn't it; `0x8d` stays and we look at the crossover point |
+>
+> Also: had the laptop been suspended before your tests?
+>
+> Separately, bass: Elias showed the low end isn't the amp (DSP off moved it ~1 dB, no limiting). That half is the enclosure, and EQ is the lever there.
+>
+> **Note for anyone else testing on these amps:** @fphillips00's warning stands. Don't write DSM blob or coefficient registers, or toggle `0x23E1`/`0x203A`, while an amp is running. Only `tw()` above touches those, and it switches the amp off (`EN`=0) first.
+>
+> Keeping this open.
