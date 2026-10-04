@@ -9,14 +9,16 @@
 #   - Next reboot uses the native kernel module instead
 
 DKMS_NAME="ipu-bridge-fix"
+
+log() { echo "ipu-bridge-check: $*"; }
+
 # Detect installed version from DKMS rather than hardcoding — the installed
 # version may differ from what this script was originally shipped with.
 DKMS_VER=$(dkms status 2>/dev/null \
     | grep "^${DKMS_NAME}" \
     | grep -oP "${DKMS_NAME}/\K[0-9.]+" \
     | head -1 || true)
-
-log() { echo "ipu-bridge-check: $*"; }
+[ -n "$DKMS_VER" ] || { log "${DKMS_NAME} not installed via DKMS — nothing to check"; exit 0; }
 
 # Find the kernel's own ipu-bridge module (in kernel/ tree, NOT updates/)
 NATIVE_MODULE=$(find "/lib/modules/$(uname -r)/kernel" -name "ipu-bridge*" 2>/dev/null | head -1)

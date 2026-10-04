@@ -1,8 +1,6 @@
 [Unit]
 Description=Check if kernel ipu-bridge has Samsung camera rotation fix
 After=multi-user.target
-# Only run if the DKMS package is still installed
-ConditionPathExists=/usr/src/ipu-bridge-fix-1.0/dkms.conf
 
 [Service]
 Type=oneshot
