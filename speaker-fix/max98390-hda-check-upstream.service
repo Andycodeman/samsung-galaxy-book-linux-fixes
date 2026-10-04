@@ -1,8 +1,6 @@
 [Unit]
 Description=Check if native MAX98390 HDA support has landed upstream
 After=multi-user.target
-# Only run if the DKMS package is still installed
-ConditionPathExists=/usr/src/max98390-hda-1.0/dkms.conf
 
 [Service]
 Type=oneshot
