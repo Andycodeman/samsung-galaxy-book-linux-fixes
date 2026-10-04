@@ -10,7 +10,11 @@ affected. The only thing lost was the automatic clean-up that removes the
 `ipu-bridge-fix` DKMS workaround once the stock kernel carries the rotation
 quirk.
 
-**Status:** fix `62ca875`, release and reply pending.
+**Status:** fix `62ca875` released as **v0.3.72** —
+https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/releases/tag/v0.3.72.
+Reply posted — [comment-5978587717](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/103#issuecomment-5978587717), 2026-10-04.
+Issue **closed** as completed; the reporter can reopen if the check still
+doesn't run.
 
 ---
 
@@ -88,4 +92,16 @@ confirm with `journalctl -b -u ipu-bridge-check-upstream`.
 
 ## Reply posted
 
-_pending_
+[comment-5978587717](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/103#issuecomment-5978587717), 2026-10-04. Verbatim:
+
+Thanks @renato-machado-atman, this is a great report. Your diagnosis is right: the unit's `ConditionPathExists` still pointed at `ipu-bridge-fix-1.0` after the package moved on to 1.4, so the check got skipped on every boot. Your camera was never affected. You only lost the automatic clean-up for when the kernel gets the rotation quirk natively.
+
+I adopted your suggested fix as written. The condition is gone from the unit, and the script now logs and exits when `dkms status` doesn't find the package.
+
+`max98390-hda-check-upstream.service` had the same hardcoded `-1.0` path. It only works today because `speaker-fix` is still at 1.0, so it got the same fix.
+
+Fixed in [`62ca875`](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/commit/62ca875), released as **[v0.3.72](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/releases/tag/v0.3.72)**.
+
+To update: `git pull`, then re-run the webcam installer you used (`webcam-fix-book5/install.sh` or `webcam-fix-libcamera/install.sh`). It copies the new unit and runs `daemon-reload`. After your next boot, `journalctl -b -u ipu-bridge-check-upstream` should show the check's output instead of the unmet-condition line.
+
+Closing this since it's released. Reopen if it doesn't take.
