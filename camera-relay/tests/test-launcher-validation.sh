@@ -87,6 +87,36 @@ reject "a path in a property"  --camera X --fd-sink 3 --color-filter 'videobalan
 reject "a dangling separator"  --camera X --fd-sink 3 --color-filter 'videobalance !'
 
 echo
+echo "── a chained color filter yields one separator per stage ──"
+# Nothing above looks at the argv a valid filter produces, and a doubled "!"
+# passes every rejection test while gst-launch refuses to parse it. Swap the
+# gst-launch path for a stub that prints its arguments and read them back.
+cat > "$TMP/fake-gst" <<'STUB'
+#!/bin/sh
+echo "$*"
+STUB
+chmod +x "$TMP/fake-gst"
+sed "s|\"/usr/bin/gst-launch-1.0\", \"/usr/local/bin/gst-launch-1.0\"|\"$TMP/fake-gst\"|" \
+    "$SRC" > "$TMP/launcher-argv.c"
+if ! grep -q "$TMP/fake-gst" "$TMP/launcher-argv.c"; then
+    bad "could not point the launcher at the gst-launch stub"
+elif ! gcc -O2 -Wall -o "$TMP/launcher-argv" "$TMP/launcher-argv.c" 2>"$TMP/build.log"; then
+    bad "stubbed launcher failed to build"
+else
+    out=$("$TMP/launcher-argv" --camera X --fd-sink 3 \
+            --color-filter 'videobalance saturation=0.9 ! videoflip method=vertical-flip' \
+            3>/dev/null 2>&1)
+    want='videoconvert ! videobalance saturation=0.9 ! videoflip method=vertical-flip ! video/x-raw'
+    if [[ "$out" == *"! !"* ]]; then
+        bad "two-stage filter — doubled separator: $out"
+    elif [[ "$out" == *"$want"* ]]; then
+        ok "two-stage filter"
+    else
+        bad "two-stage filter — unexpected pipeline: $out"
+    fi
+fi
+
+echo
 echo "── code-loading paths must be root-owned ──"
 reject "plugin path in \$HOME" --camera X --fd-sink 3 --gst-plugin-path "$HOME/evil"
 reject "plugin path in /tmp"   --camera X --fd-sink 3 --gst-plugin-path /tmp/evil
