@@ -9,6 +9,9 @@ at `f2a20e76`. 25 commits (two of them merges from upstream), 14 files,
 
 ## Verdict: 🟡 **Request changes + split** (not merged)
 
+> **Merged 2026-10-05:** approved at `8fb2085` and merged as `4bae9c1`,
+> released as **v0.3.75**. See [Merged + released](#merged--released) at the end.
+
 > **Updated 2026-10-05:** after the author's rework at `56adfc0`, the verdict is
 > 🟢 **MERGE AFTER #104 + #105**. See [Re-review 2026-10-05](#re-review-2026-10-05--head-56adfc0)
 > at the end of this file.
@@ -788,7 +791,7 @@ the previous Next step.
 **Recommendation:** cut **v0.3.75**, NixOS-only notes, leading with the
 breaking points above. Andy decides.
 
-### Draft approve/merge comment (NOT posted, for Andy)
+### Draft approve/merge comment (POSTED 2026-10-05 as the APPROVE review, verbatim)
 
 Post it as the **approval** review body. That clears the `CHANGES_REQUESTED`
 state. Then merge.
@@ -820,5 +823,43 @@ gh release view v0.3.69 / v0.3.70
 
 ### Next step (2026-10-05, final)
 
-- Andy: approve with the draft above, merge #102, and cut v0.3.75 (NixOS notes).
+- ~~Andy: approve with the draft above, merge #102, and cut v0.3.75 (NixOS notes).~~
+  Done 2026-10-05, see below.
 - After that: the author's follow-up PR for R-N1..R-N3 plus the F-N4 README line.
+
+## Merged + released
+
+- **Head re-checked** just before approving: still `8fb2085`, `MERGEABLE`, and
+  no new comments after his 2026-10-05T20:01Z one.
+- **Review:** the draft above was posted verbatim as an APPROVE review
+  ([#pullrequestreview-5420754819](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/pull/102#pullrequestreview-5420754819)).
+  `reviewDecision` went from `CHANGES_REQUESTED` to `APPROVED`.
+- **Merge:** `gh pr merge 102 --merge --match-head-commit 8fb2085…` →
+  merge commit `4bae9c1` (2026-10-05T21:27:03Z). The pull fast-forwarded with
+  13 files, +939/−255, the same as §F1.
+- **On `main` after the merge:** the only difference from the PR tree is this
+  file (`git diff --stat 8fb2085 4bae9c1`). `webcam-fix-book5/ov02e10.yaml` and
+  `camera-relay/camera-relay-monitor.c` are unchanged from the pre-merge `main`
+  `462ac83`. All 11 `camera-relay/tests/test-*.sh` scripts pass (same counts as
+  §F3, launcher-validation 30/0). The live relay and installed files were not
+  touched.
+- **Release:** [v0.3.75](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/releases/tag/v0.3.75),
+  tagged on the commit that adds this section. The notes are NixOS-only and lead
+  with the breaking points from §F5. They say shell users have nothing to do,
+  and that testing was build, test and eval only. @david-bartlett is credited
+  for the 940XHA test (§R7) that kept the new tuning NixOS-only.
+
+### Follow-ups expected from the author (one PR, none blocking)
+
+- **R-N1** `camera-relay status`/`stop` from a terminal on NixOS read
+  `$XDG_RUNTIME_DIR`, but the unit writes to `RuntimeDirectory=`. `status`
+  then reports `stopped` while the relay runs. Cosmetic.
+- **R-N2** In the `USER_CACHE` build, the `/tmp/camera-relay-cache` fallback
+  (no `CACHE_DIRECTORY` and no `HOME`) should fail instead. Nit, unreachable
+  from the unit or a login shell.
+- **R-N3** `max98390-hda-module.nix` still takes `lld` from `llvmPackages`.
+  There are also `substituteInPlace --replace` deprecation warnings in the
+  `camera-relay` derivation.
+- **F-N4** A `nixos/README.md` line saying `webcam-fix-book5.nix` needs
+  nixos-unstable for now, because stable 26.05 ships libcamera 0.7.0 and stops
+  at the 0.7.2 assertion. Asked for in the approval review.
