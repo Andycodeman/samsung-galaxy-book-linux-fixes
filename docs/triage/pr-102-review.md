@@ -9,6 +9,10 @@ at `f2a20e76`. 25 commits (two of them merges from upstream), 14 files,
 
 ## Verdict: 🟡 **Request changes + split** (not merged)
 
+> **Updated 2026-10-05:** after the author's rework at `56adfc0`, the verdict is
+> 🟢 **MERGE AFTER #104 + #105**. See [Re-review 2026-10-05](#re-review-2026-10-05--head-56adfc0)
+> at the end of this file.
+
 Most of this PR is NixOS-only and in good shape. It evaluates and builds, and it
 is opt-in. Two changes reach **every non-NixOS user**, though, and one of those is
 a security regression in the setgid launcher. Several other parts are good and
@@ -326,3 +330,300 @@ Thank-you comment:
   who sets a chained `RELAY_COLOR_FILTER`. If the split doesn't arrive, it's a
   one-line fix to land ourselves, crediting @ang3lo-azevedo.
 - No release: nothing was merged.
+
+---
+
+## Re-review 2026-10-05 — head `56adfc0`
+
+On 2026-10-05 the author split out **#104** (`!` fix + test) and **#105**
+(monitor usage events), pushed `56adfc0` to #102, and replied listing the
+changes ([comment](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/pull/102#issuecomment-5995932265)).
+I checked every claim against the code. I didn't take the summary on trust.
+Base is now `main` at `1df6dae`, and `git merge-tree` is clean. 14 files,
++991/−265. Still no Book5 here, so everything below is build, test, eval and
+source reading. **Not hardware-tested.**
+
+### Verdict: 🟢 **MERGE AFTER #104 + #105**
+
+For non-NixOS users (Ubuntu/Fedora/Arch shell installs, Book3/4/5), `56adfc0`
+is **safe**. Every original blocker and should-fix is resolved. Once you leave
+out the NixOS files and the patch files that only Nix reads, the PR changes
+three things for shell users:
+
+1. the `!` fix, the same hunk as #104;
+2. `camera-relay-monitor.c`, byte-identical to #105;
+3. `camera-relay` L19, which resolves to the same directory as `main` unless
+   systemd sets `$RUNTIME_DIRECTORY`, and no shell-installed unit does that.
+
+The only reason not to merge it today: merging #102 as-is also lands #105's
+behaviour change for v4l2loopback 0.13+ users (Fedora/Arch, and Nix's 0.15.4),
+which we wanted to review on its own. It would also land the `!` fix without
+#104's regression test. Recommended order:
+
+1. Merge **#104**. It has the regression test.
+2. Review **#105** and merge it if it's OK.
+3. Ask the author to merge `main` back into #102. Its non-Nix diff then drops to
+   L19 plus the `#ifdef` block. Then merge **#102**.
+
+`merge-tree` simulation: `main`+#104+#105+#102 merges clean at each step, and
+the reverse order (#102 first) gives an **identical final tree**. So the order
+doesn't change the result, only what lands before review. If #105 is rejected,
+the author must drop the monitor change from #102 before it merges.
+
+### Original items → status
+
+| Item | Status | Evidence |
+|---|---|---|
+| **B1** setgid launcher cache from env | ✅ Resolved | See §R1 |
+| **B2** shared `ov02e10.yaml` CCM | ✅ Resolved | See §R2 |
+| **S1** `nixpkgsUnpatched` without `mkRemovedOptionModule` | ✅ Resolved | eval prints the friendly message (§R6) |
+| **S2** session `LIBCAMERA_IPA_MODULE_PATH`; dead pipewire/wireplumber rotation env | ✅ Resolved | eval: no session var, pipewire/wireplumber env `{}`, rotation only in the relay unit and wrapper (§R6) |
+| **S3** patches pinned to libcamera 0.7.2 | ✅ Resolved | `libcameraPatchedVersion = "0.7.2"` assertion; overlaid 0.7.3 → clear eval error (§R6) |
+| **S4** `camera-relay` L19 moved the cache for everyone | ✅ Resolved | See §R4 |
+| **S5** README | ✅ Resolved | `nixos/README.md:205-242` covers `ipuBridgeFix`, `lowNoise.*`, `loopbackVideoNr`, the disabled libcamera monitor, the 0.7.2 pin and the removed option |
+| **N1** toolchain flags | 🟡 Partial | `ov02c10-26mhz-fix.nix` now uses `kernel.commonMakeFlags`; `max98390-hda-module.nix:37-45` still uses `llvmPackages.lld`. Nit, Nix-only |
+| **N2** duplicate `extra/ipu-bridge.ko` | ✅ Resolved | mutual-exclusion assertion fires (§R6) |
+| **N3** PR body | ✅ | The reply comment documents the changes |
+| Split | ✅ Done | #104, #105 open from the author |
+
+### R1. `camera-relay-gst.c`: default build is `main` + the #104 fix
+
+The env-derived block is now `append_user_cache()` behind
+`#ifdef CAMERA_RELAY_USER_CACHE`. The fixed `CACHE_DIR` is behind `#ifndef`.
+
+```
+# Preprocess (no -D) and drop blank lines, then compare.
+$ diff pr102.i pr104.i            → IDENTICAL
+$ diff pr102.i main.i             → only:  >    argv[argc++] = tok;   (the ! fix)
+```
+
+Both shell installers compile with `gcc -O2 -Wall` and no `-D`
+(`webcam-fix-book5/install.sh:1130`, `webcam-fix-libcamera/install.sh:1597`,
+the setgid one), so they get exactly the `main` logic. The env harness
+(`build_environment()` printed from the PR's file) with a hostile environment:
+
+```
+$ env -i HOME=/home/victim CACHE_DIRECTORY=/home/victim/evil \
+         GST_PLUGIN_SYSTEM_PATH=/evil GST_REGISTRY=/evil/r.bin ./h-default
+PATH=/usr/local/bin:/usr/bin:/bin
+HOME=/var/cache/camera-relay
+GST_REGISTRY=/var/cache/camera-relay/gst-registry.bin
+MESA_SHADER_CACHE_DIR=/var/cache/camera-relay/mesa
+```
+
+Nothing from the caller reaches the default build, so the setgid invariant
+holds. `strings` on the default binary shows only `/var/cache/camera-relay`,
+with no `CACHE_DIRECTORY`. With `-DCAMERA_RELAY_USER_CACHE`, the same env gives
+`HOME=/home/victim/evil`, which is the intended Nix behaviour. It is safe only
+because the Nix build isn't setgid. I checked: no `security.wrappers` in the
+module, `install -Dm755` (`webcam-fix-book5.nix:252`).
+
+Builds:
+
+| build | result |
+|---|---|
+| default, `-O2 -Wall -Wextra -Werror` | ✅ clean |
+| `-DCAMERA_RELAY_USER_CACHE`, `-O2 -Wall -Wextra -Werror` | ✅ clean (the old `-Wformat-truncation` errors are gone) |
+| Nix derivation (`$CC -O2 -Wall -DCAMERA_RELAY_USER_CACHE`) | ✅ built in `nixos/nix` (§R6) |
+
+### R2. `webcam-fix-book5/ov02e10.yaml` is byte-identical to `main`
+
+```
+$ git diff --quiet main pr-102-check -- webcam-fix-book5/ov02e10.yaml   → no diff
+$ sha256sum (main) (PR)  → 8617962b…5d8ec7  both
+```
+
+The shell installer copies `$SCRIPT_DIR/${TUNING_SENSOR}.yaml` from
+`webcam-fix-book5/` (`install.sh:864-880`). Nothing outside `nixos/` references
+`nixos/ov02e10.yaml`. Its only consumer is `webcam-fix-book5.nix:85`
+(`install -Dm644 ${./ov02e10.yaml}` into `libcamera-book5`). In the Nix build,
+the patched libcamera's `share/libcamera/ipa/simple/ov02e10.yaml` carries the
+new "NixOS variant" header. Its matrices are the ones @david-bartlett tested
+(identical to `3bc641d`'s shared-file version apart from the header). So
+**shell users keep the current tuning and won't get the green tint**.
+
+### R3. CRITICAL: do the 4 new patches reach shell installs? **No.**
+
+The new files are `blc-channel-levels`, `agc-min-gain-step`,
+`awb-skip-saturated` and `agc-exposure-target.patch` in
+`webcam-fix-book5/libcamera-bayer-fix/`, next to the existing
+`bayer-fix-v0.{5,6,7}.patch` and `build-patched-libcamera.sh`.
+
+- `build-patched-libcamera.sh` (the only shell script in that directory, and
+  unchanged by the PR) applies its fix with **sed/python** (`apply_patch_sed`,
+  L385+). It never reads a `.patch` file: `SCRIPT_DIR` is defined at L24 and
+  never used again, and there is no `patch`, `git apply` or `git am`.
+- `git grep` over the PR tree, excluding `nixos/`, `docs/` and `*.md`, for
+  `libcamera-bayer-fix`, `\.patch`, `patch -p`, `git apply`, `git am`, `quilt`,
+  `*.yaml` globs or a directory copy: the hits are only `install.sh` /
+  `uninstall.sh` / `tune-ccm.sh` invoking `build-patched-libcamera.sh` by name,
+  and comments. No glob, no copy.
+- `install.sh`, `uninstall.sh`, `tune-ccm.sh` and `build-patched-libcamera.sh`
+  are byte-identical to `main`.
+- The only consumer is `nixos/webcam-fix-book5.nix:33-37`, the `patches` list
+  of `libcamera-book5`.
+
+**Not a blocker.** One leftover point: the patch files live in a shell-installer
+directory but only Nix uses them. `nixos/ov02e10.yaml` does say so; the
+patches don't. A one-line README note would help, but it's optional.
+
+### R4. `camera-relay` L19
+
+`CACHE_DIR="${RUNTIME_DIRECTORY:-${XDG_RUNTIME_DIR:-/tmp}}"`:
+
+| env | `main` | PR |
+|---|---|---|
+| `XDG_RUNTIME_DIR=/run/user/1000` (shell install, terminal or unit) | `/run/user/1000` | `/run/user/1000` |
+| nothing | `/tmp` | `/tmp` |
+| `+ RUNTIME_DIRECTORY=/run/user/1000/camera-relay` (Nix unit) | `/run/user/1000` | `/run/user/1000/camera-relay` |
+
+`git grep RuntimeDirectory|RUNTIME_DIRECTORY` over the PR tree outside `docs/`
+finds only L19 and `webcam-fix-book5.nix:556`. The installed
+`camera-relay.service` on Andy's box has no `RuntimeDirectory=`. So non-Nix
+installs keep the same cache dir as before. The previous round's `mkdir -p` is
+gone (systemd creates the Nix dir). `test-gst-tools-check.sh` seeds
+`$XDG_RUNTIME_DIR/camera-relay-*` (§5 `:127`, §7 `:205`), which matches again.
+Those two sections still **skip** on this host, because a live relay holds the
+loopback. That's the same as last round. The fixture location is now provably
+the one the script reads.
+
+### R5. #104 / #105 equivalence
+
+```
+$ git diff pr-105-check pr-102-check -- camera-relay/camera-relay-monitor.c   → empty (identical)
+$ git diff main pr-104-check -- camera-relay/camera-relay-gst.c               → the same 3-comment + 1-deletion hunk as #102
+```
+
+#104 = `9a470e3`, #105 = `3aab9dc`, both based on `main` `1df6dae`. #104
+additionally adds a stub-gst-launch argv test to `test-launcher-validation.sh`,
+which #102 doesn't carry. That's one more reason to merge #104 first.
+**Merging #102 alone would land #105's 0.13+ behaviour change unreviewed.**
+
+### R6. NixOS side (`nixos/nix` 2.35.2 container, nixos-unstable, libcamera 0.7.2)
+
+Harness `$SP/nixeval/eval.nix` (outside the repo) imports the PR's
+`nixos/webcam-fix-book5.nix` via `eval-config.nix`.
+
+| case | result |
+|---|---|
+| `nix-instantiate --parse` all 6 `nixos/*.nix` | ✅ OK |
+| `enable = true` | ✅ toplevel `.drv` instantiates. Modules `vision-driver`, `ipu-bridge-fix-1.1`, `v4l2loopback-0.15.4`. **No** session `LIBCAMERA_IPA_MODULE_PATH`. pipewire/wireplumber env `{}`. Unit has `CacheDirectory`/`RuntimeDirectory = camera-relay` |
+| module imported, not enabled | ✅ no modules, no unit, no loopback conf (still opt-in) |
+| `videoFlip + lowNoise + loopbackVideoNr=42 + chained relayColorFilter` | ✅ adds `ov02e10-lownoise`, `options ov02e10 max_again=64 dgain=1020`, `video_nr=42`, `LIBCAMERA_FORCE_OV02E10_ROTATION` + `RELAY_COLOR_FILTER` in the **relay unit only** |
+| `ipuBridgeFix` alone | ✅ only `ipu-bridge-fix-1.1` |
+| old config `nixpkgsUnpatched = true` | ✅ `Failed assertions: - The option definition … nixpkgsUnpatched' … no longer has any effect; please remove it. The patched libcamera is now a package used only by the camera relay …` |
+| `webcamFixBook5` + `ipuBridgeFix` | ✅ `Failed assertions: - … already ships the ipu-bridge override. Disable hardware.samsungGalaxyBook.ipuBridgeFix, both install extra/ipu-bridge.ko.` |
+| overlay libcamera `version = "0.7.3"` | ✅ `Failed assertions: - … the libcamera patches only apply to 0.7.2, but nixpkgs provides 0.7.3. Pin nixpkgs' libcamera …` |
+
+**Full `nix-build`** of the relay package (`full` case, `videoFlip = true`):
+✅ exit 0. The output `c6nhr86y…-camera-relay-1.0` matches the eval's
+`ExecStart` path. The `libcamera-0.7.2` derivation lists all five patches
+(`bayer-fix-v0.7`, `blc-channel-levels`, `agc-min-gain-step`,
+`awb-skip-saturated`, `agc-exposure-target`), and the build applied and
+compiled them. Every `--replace-fail` matched. The built `camera-relay-gst`
+contains `CACHE_DIRECTORY`, `camera-relay-cache`,
+`LIBCAMERA_FORCE_OV02E10_ROTATION=180`, the store `gst-launch-1.0` and the
+store `cam`, and **no** `/var/cache/camera-relay`. The built script's L19 is the
+new line.
+
+**Not run:** a full system `nix-build` of the toplevel (kernel modules etc.).
+I instantiated it but didn't build it. I didn't evaluate a clang kernel for the
+`kernel.commonMakeFlags` path. And there's no runtime test of anything, since
+we have no hardware.
+
+### New findings (all Nix-only, none blocking)
+
+- **R-N1** `camera-relay status`/`stop` from a terminal on NixOS look in
+  `$XDG_RUNTIME_DIR`. The unit writes its camera/device/state caches to
+  `$XDG_RUNTIME_DIR/camera-relay/` (table in §R4). `status` (`camera-relay:1046-1056`)
+  then falls back to live probes for camera and device, but reports the
+  state as `stopped` while the relay is running (`state` defaults to
+  "stopped" when `STATE_CACHE` is missing). Found by reading the code, not
+  run on NixOS. Cosmetic. Possible fixes: drop `RuntimeDirectory=` from the
+  unit, or have the wrapper default `RUNTIME_DIRECTORY` to
+  `$XDG_RUNTIME_DIR/camera-relay`.
+- **R-N2** In the `USER_CACHE` build, when both `CACHE_DIRECTORY` and `HOME`
+  are unset, the fallback is a fixed `/tmp/camera-relay-cache`. Another local
+  user could pre-create it and plant a registry. It's unreachable from the
+  unit (which sets `CacheDirectory=`) and from a login shell (which has
+  `HOME`). Failing instead would be stricter. Nit.
+- **R-N3** `max98390-hda-module.nix` still takes `lld` from `llvmPackages`
+  (the remaining half of N1). There are also `substituteInPlace --replace`
+  deprecation warnings in the `camera-relay` derivation (pre-existing).
+
+### R7. @david-bartlett's green-tint test (recorded, out of scope)
+
+[Comment](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/pull/102#issuecomment-5991491457),
+2026-10-05: Book5 Pro **940XHA**, Fedora 44, **libcamera 0.7.1** (stock, so
+without the four patches), Kamoso, an overcast day. The *proposed* (old PR)
+yaml brings the **green tint back**, worse at higher colour temperature and
+intensity. That confirms B2 was the right call. The author agrees the new
+matrices assume the patches. With `webcam-fix-book5/ov02e10.yaml` reverted
+(§R2), shell users keep the current tuning, so **this PR does not deliver the
+green tint to them**.
+
+He also says the **current** yaml "has some issues after the sensor flip has
+been applied". That's **out of scope** for #102, a separate tuning thread worth
+an issue of its own if he wants to pursue it. His evidence was low-light and
+overcast, so it isn't conclusive yet.
+
+### Commands run (reproducible)
+
+```
+git fetch origin pull/102/head:pr-102-check pull/104/head:pr-104-check pull/105/head:pr-105-check
+git worktree add --detach $SP/wt102 pr-102-check        # removed afterwards
+for t in camera-relay/tests/test-*.sh; do bash $t; done  # in the worktree
+gcc -E -P {pr,pr104,main}.c | diff                      # R1
+gcc -O2 -Wall -Wextra -Werror [-DCAMERA_RELAY_USER_CACHE]
+docker run nixos/nix …  nix-instantiate --eval --strict --json eval.nix --argstr case <case>
+docker run nixos/nix …  nix-build eval.nix --argstr case full -A relay
+git merge-tree --write-tree (main → +104 → +105 → +102, and reverse)
+```
+
+Test suites on PR head (`56adfc0`):
+
+| suite | result |
+|---|---|
+| test-launcher-validation | **29/0** (was a build failure last round) |
+| chromium-pipewire-flag | 61/0 |
+| distro-detection | 16/0 |
+| egl-vendor-pin | 18/0 |
+| firefox-pipewire-pref | 15/0 |
+| gst-tools-check | 8/0, 3 skipped (live relay holds the loopback, same as last round) |
+| monitor-exit-propagation | 5/0 |
+| pipewire-restart-guard | 17/0 |
+| unit-regeneration | 15/0 |
+| wireplumber-format-nudge | 26/0 |
+| writer-format-check | 1/0, 1 skipped (no idle loopback) |
+
+### Draft reply (NOT posted, for Andy to send)
+
+Suggested as a PR **comment**, not an approval yet. Approve after #104/#105 land
+and `main` is merged back.
+
+> Thanks @ang3lo-azevedo, that's a really thorough turnaround, and thanks for splitting out #104 and #105!
+>
+> I went through `56adfc0` item by item, and everything from the review is addressed:
+>
+> - **Launcher:** without `-DCAMERA_RELAY_USER_CACHE`, `camera-relay-gst.c` preprocesses to exactly `main` plus the `!` fix. With a hostile `CACHE_DIRECTORY`/`HOME`, the default build still hands gst-launch `/var/cache/camera-relay`. Both builds pass `-Wall -Wextra -Werror`, and `test-launcher-validation.sh` is back to 29/0.
+> - **Tuning:** `webcam-fix-book5/ov02e10.yaml` is byte-identical to `main`, and `nixos/ov02e10.yaml` only goes into `libcamera-book5`. The four new patches aren't picked up by any shell installer either: `build-patched-libcamera.sh` still applies its fix with sed and never reads `.patch` files.
+> - **`camera-relay` L19:** it resolves to the same directory as before everywhere except the Nix unit.
+> - **NixOS:** evaluated against nixos-unstable (libcamera 0.7.2). `nixpkgsUnpatched` now gives the friendly removal message, and both assertions fire with clear messages (an overlaid 0.7.3, and `ipuBridgeFix` + `webcamFixBook5`). There's no session IPA path any more, and a `nix-build` of the relay with `videoFlip` applies all five patches and produces a launcher without `/var/cache`. (All of that is build/eval only; I don't have a Book5 to run it on.)
+>
+> On merge order: I'll take #104 first since it has the test, then review #105 on its own. Once those are in, could you merge `main` back into this branch? Then it's just the NixOS rework plus the `#ifdef`, and I'll merge it.
+>
+> A few optional Nix-side follow-ups, none of them blocking:
+> - With `RuntimeDirectory=camera-relay`, running `camera-relay status` from a terminal looks in `$XDG_RUNTIME_DIR` while the unit writes to `$XDG_RUNTIME_DIR/camera-relay/`. From reading the code, the state would show as "stopped" while the relay is running.
+> - In the `USER_CACHE` build, the `/tmp/camera-relay-cache` fallback (no `CACHE_DIRECTORY` and no `HOME`) is a shared, predictable path. Failing there would be safer, though the unit never hits it.
+> - `max98390-hda-module.nix` still takes `lld` from `llvmPackages`.
+>
+> @david-bartlett, thanks for testing the proposed file on the 940XHA. Your result is exactly why the shared yaml stays as it is. If you'd like to chase the issues you're seeing with the **current** yaml after the flip, could you open a separate issue (ideally with a daylight shot too)? That way it doesn't get lost in this PR.
+
+### Next step (2026-10-05)
+
+- Andy: post the draft above (or edit it). Merge **#104** (`gh pr merge 104 --merge`).
+- Review **#105** separately (0.13+ behaviour change on Fedora/Arch).
+- After the author merges `main` back into #102, re-check that its non-Nix diff
+  is only L19 + the `#ifdef` block, then merge #102. No release needed for #102
+  itself (Nix-only + a no-op for shell users), but #104/#105 change shell-install
+  behaviour and want a release tag when they land.
