@@ -14,6 +14,11 @@ UPSTREAM_READY=true
 
 log() { echo "max98390-hda-check: $*"; }
 
+if ! dkms status "${DKMS_NAME}/${DKMS_VER}" 2>/dev/null | grep -q "${DKMS_NAME}"; then
+    log "${DKMS_NAME}/${DKMS_VER} not installed via DKMS — nothing to check"
+    exit 0
+fi
+
 # Check 1: Does serial-multi-instantiate know about MAX98390?
 SMI_MODULE=$(find "/lib/modules/$(uname -r)/kernel/drivers/platform/x86" -name "serial-multi-instantiate*" 2>/dev/null | head -1)
 if [ -n "$SMI_MODULE" ]; then
