@@ -603,6 +603,15 @@ Test suites on PR head (`56adfc0`):
 
 ### Draft reply (NOT posted, for Andy to send)
 
+> **Posted 2026-10-05 (trimmed):** a shorter version went up as a plain comment
+> (not an approval):
+> https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/pull/102#issuecomment-6001923107.
+> I checked first that the head was still `56adfc0` and that nothing new had been posted.
+> The merge-order paragraph was cut: the author already heard it on #105 and
+> acknowledged it, and #104 and #105 have both merged since. The per-item
+> verification list was cut down to one paragraph. The Nix follow-ups and the
+> @david-bartlett note went up as drafted below.
+
 Suggested as a PR **comment**, not an approval yet. Approve after #104/#105 land
 and `main` is merged back.
 
@@ -626,9 +635,8 @@ and `main` is merged back.
 
 ### Next step (2026-10-05)
 
-- Andy: post the draft above (or edit it). Merge **#104** (`gh pr merge 104 --merge`).
-- Review **#105** separately (0.13+ behaviour change on Fedora/Arch).
-- After the author merges `main` back into #102, re-check that its non-Nix diff
-  is only L19 + the `#ifdef` block, then merge #102. No release needed for #102
-  itself (Nix-only + a no-op for shell users), but #104/#105 change shell-install
-  behaviour and want a release tag when they land.
+- **#104 merged** (v0.3.73), **#105 merged** (v0.3.74). Re-review reply posted (above).
+- Waiting on the author to merge `main` back into #102, keeping `main`'s
+  `camera-relay-monitor.c`. Then do a final check that the non-Nix diff is only
+  `camera-relay` L19 + the `#ifdef` block, and merge #102. No release is needed
+  for #102 itself (Nix-only, and a no-op for shell users).
