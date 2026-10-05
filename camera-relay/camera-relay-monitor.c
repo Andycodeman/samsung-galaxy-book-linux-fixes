@@ -554,8 +554,8 @@ int main(int argc, char *argv[])
 					memset(&ev, 0, sizeof(ev));
 					if (xioctl(fd, VIDIOC_DQEVENT,
 						   &ev) == 0) {
-					note_usage_event(&ev,
-							 &reader_streaming);
+						note_usage_event(&ev,
+							&reader_streaming);
 						/*
 						 * Verify via /proc — PipeWire
 						 * briefly opens the device

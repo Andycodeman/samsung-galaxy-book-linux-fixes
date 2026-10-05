@@ -17,6 +17,10 @@
   # one, and objtool rejects objects from a mismatched toolchain.
   clangMakeFlags = lib.optionalString kernelUsesClang (lib.escapeShellArgs kernel.commonMakeFlags);
 
+  # The patches below are cut against this release and do not apply to
+  # 0.7.0, 0.7.1 or later versions, which rework the simple IPA.
+  libcameraPatchedVersion = "0.7.2";
+
   # Scoped patched libcamera: same patches/yamls as upstream
   # webcam-fix-book5.nix, but as a side package instead of a global
   # nixpkgs.overlays override. System pkgs.libcamera (and therefore
@@ -78,7 +82,7 @@
       + ''
         install -Dm644 ${../webcam-fix-book5/ov02c10.yaml} \
           $out/share/libcamera/ipa/simple/ov02c10.yaml
-        install -Dm644 ${../webcam-fix-book5/ov02e10.yaml} \
+        install -Dm644 ${./ov02e10.yaml} \
           $out/share/libcamera/ipa/simple/ov02e10.yaml
       ''
       # Per-channel pedestals as offset + slope * analogue gain, fitted from
@@ -234,12 +238,14 @@
       # the bayer-fix patch decodes the grid wrong (purple/green tint).
       + lib.optionalString cfg.videoFlip ''
         substituteInPlace camera-relay-gst.c \
-          --replace-fail 'snprintf(buf[b], sizeof(buf[b]), "MESA_SHADER_CACHE_DIR=%s/mesa", cache_dir);' \
-                         'snprintf(buf[b], sizeof(buf[b]), "MESA_SHADER_CACHE_DIR=%s/mesa", cache_dir); env[n++] = "LIBCAMERA_FORCE_OV02E10_ROTATION=180";'
+          --replace-fail 'env[n++] = "PATH=/usr/local/bin:/usr/bin:/bin";' \
+                         'env[n++] = "PATH=/usr/local/bin:/usr/bin:/bin"; env[n++] = "LIBCAMERA_FORCE_OV02E10_ROTATION=180";'
       '';
 
+    # Not setgid, so the launcher may keep its caches in the caller's
+    # CACHE_DIRECTORY instead of the shared /var/cache/camera-relay.
     buildPhase = ''
-      $CC -O2 -Wall -o camera-relay-gst camera-relay-gst.c
+      $CC -O2 -Wall -DCAMERA_RELAY_USER_CACHE -o camera-relay-gst camera-relay-gst.c
     '';
 
     installPhase = ''
@@ -290,6 +296,7 @@
         pkgs.gst_all_1.gst-plugins-bad
       ]} \
         --set LIBCAMERA_IPA_MODULE_PATH ${libcamera-book5}/lib/libcamera/ipa \
+        ${lib.optionalString cfg.videoFlip "--set LIBCAMERA_FORCE_OV02E10_ROTATION 180"} \
         --prefix GST_PLUGIN_PATH : ${lib.makeSearchPath "lib/gstreamer-1.0" [libcamera-book5]} \
         --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath [libcamera-book5]}
     '';
@@ -358,6 +365,14 @@
 
   wireplumberUsesConf = lib.versionAtLeast (pkgs.wireplumber.version or "0.5") "0.5";
 in {
+  imports = [
+    (lib.mkRemovedOptionModule ["hardware" "samsungGalaxyBook" "webcamFixBook5" "nixpkgsUnpatched"] ''
+      The patched libcamera is now a package used only by the camera relay,
+      so the system package set is no longer overlaid and there is nothing
+      left to shield from rebuilds. Remove the option from your configuration.
+    '')
+  ];
+
   options.hardware.samsungGalaxyBook.webcamFixBook5 = {
     enable = lib.mkEnableOption "Samsung Galaxy Book 5 webcam fix (IPU7/OV02C10/OV02E10, relay-scoped libcamera, no system overlay)";
 
@@ -436,6 +451,27 @@ in {
       # consumers (Chromium, Electron, Firefox PipeWire camera) only see the
       # relay node instead of a stock-libcamera one with the wrong bayer order.
 
+      assertions = [
+        {
+          assertion = pkgs.libcamera.version == libcameraPatchedVersion;
+          message = ''
+            hardware.samsungGalaxyBook.webcamFixBook5: the libcamera patches only
+            apply to ${libcameraPatchedVersion}, but nixpkgs provides
+            ${pkgs.libcamera.version}. Pin nixpkgs' libcamera to
+            ${libcameraPatchedVersion} or update the patches in
+            webcam-fix-book5/libcamera-bayer-fix.
+          '';
+        }
+        {
+          assertion = !(config.hardware.samsungGalaxyBook.ipuBridgeFix.enable or false);
+          message = ''
+            hardware.samsungGalaxyBook.webcamFixBook5 already ships the
+            ipu-bridge override. Disable hardware.samsungGalaxyBook.ipuBridgeFix,
+            both install extra/ipu-bridge.ko.
+          '';
+        }
+      ];
+
       boot = {
         initrd.kernelModules = [
           "usb_ljca"
@@ -468,13 +504,9 @@ in {
       environment = {
         systemPackages = [cameraRelay];
 
-        sessionVariables =
-          {
-            LIBCAMERA_IPA_MODULE_PATH = "${libcamera-book5}/lib/libcamera/ipa";
-          }
-          // lib.optionalAttrs cfg.videoFlip {
-            LIBCAMERA_FORCE_OV02E10_ROTATION = "180";
-          };
+        # No LIBCAMERA_IPA_MODULE_PATH in the session: the patched IPA shares
+        # a changed SwIspStats layout with its own libcamera.so, so a stock
+        # libcamera program picking it up would read a mismatched struct.
 
         etc =
           {
@@ -538,14 +570,6 @@ in {
             // lib.optionalAttrs (cfg.relayColorFilter != "") {
               RELAY_COLOR_FILTER = cfg.relayColorFilter;
             };
-        };
-
-        pipewire.environment = lib.optionalAttrs cfg.videoFlip {
-          LIBCAMERA_FORCE_OV02E10_ROTATION = "180";
-        };
-
-        wireplumber.environment = lib.optionalAttrs cfg.videoFlip {
-          LIBCAMERA_FORCE_OV02E10_ROTATION = "180";
         };
       };
   };

@@ -9,6 +9,7 @@ Declarative equivalents of the install scripts, for NixOS users.
 | [`speaker-fix-940xfg.nix`](speaker-fix-940xfg.nix) | Galaxy Book3 Pro 14" (NP940XFG, ALC298, SSID `0x144dc882`) | Silent internal speakers |
 | [`samsung-speaker-fix.nix`](samsung-speaker-fix.nix) | Galaxy Book4 Pro/Ultra, Book5 Pro (MAX98390 amps) | Silent internal speakers |
 | [`webcam-fix-book5.nix`](webcam-fix-book5.nix) | Galaxy Book5 (IPU7, OV02C10/OV02E10) | Camera not detected, purple tint, upside-down image |
+| [`ipu-bridge-fix.nix`](ipu-bridge-fix.nix) | Galaxy Book5 convertibles on a native in-tree IPU7 stack | Upside-down image, without the relay |
 | [`ov02c10-26mhz-fix.nix`](ov02c10-26mhz-fix.nix) | Any Book3/Book4 whose OV02C10 rejects a 26 MHz clock | Sensor never probes at all |
 
 Not sure which speaker fix applies? Run:
@@ -200,6 +201,45 @@ hardware.samsungGalaxyBook.webcamFixBook5 = {
 
 Set `videoFlip = true;` if the image is upside-down on a Galaxy Book 360 /
 convertible (NP960QHA, NP960QFG, NP960QGK, ...).
+
+The patched libcamera is a separate package used only by the camera relay, so
+the system `libcamera` stays stock and nothing else is rebuilt. Two things
+follow from that:
+
+- PipeWire's libcamera monitor is disabled. Applications see the camera only
+  through the relay's V4L2 loopback node ("Built-in Front Camera"), not as a
+  PipeWire libcamera source.
+- The patches apply to libcamera 0.7.2 only. On any other version the module
+  fails evaluation with a message saying so instead of failing the build.
+
+`nixpkgsUnpatched` is gone along with the overlay it worked around. Remove it
+from your configuration.
+
+Other options:
+
+| Option | Default | Purpose |
+|---|---|---|
+| `loopbackVideoNr` | `null` | Pin the relay loopback to `/dev/videoN`. Unset, it takes whichever number is free at module load, which races the IPU7 nodes. |
+| `relayColorFilter` | `""` | GStreamer filter stages applied to the relay output, e.g. `videobalance saturation=0.95`. |
+| `lowNoise.enable` | `false` | OV02E10 driver that caps analog gain and makes up brightness with sensor digital gain. Reduces column noise and green shadows in dim rooms. |
+| `lowNoise.maxAnalogueGain` | `64` | Analog gain ceiling in sensor units (16 = 1x). |
+| `lowNoise.digitalGain` | `1020` | Fixed sensor digital gain (256 = 1x). |
+
+The OV02E10 tuning used here is [`ov02e10.yaml`](ov02e10.yaml) in this
+directory, not the shared `webcam-fix-book5/ov02e10.yaml`: it depends on the
+extra libcamera patches that only this module applies.
+
+## `ipu-bridge-fix.nix`
+
+Only the out-of-tree `ipu-bridge` override, with no relay and no patched
+libcamera. Use it on a native in-tree IPU7 stack where stock libcamera works
+but the image is upside-down, so the sensor rotation reaches every consumer.
+
+```nix
+hardware.samsungGalaxyBook.ipuBridgeFix.enable = true;
+```
+
+Do not combine it with `webcamFixBook5`, which already ships the same module.
 
 ## Credits
 

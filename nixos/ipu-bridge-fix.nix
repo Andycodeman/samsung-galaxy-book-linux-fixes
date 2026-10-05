@@ -17,7 +17,7 @@
   ...
 }: let
   cfg = config.hardware.samsungGalaxyBook.ipuBridgeFix;
-  kernelPackages = config.boot.kernelPackages;
+  inherit (config.boot) kernelPackages;
   inherit (kernelPackages) kernel;
   kernelUsesClang = kernel.stdenv.cc.isClang or false;
   cc =
