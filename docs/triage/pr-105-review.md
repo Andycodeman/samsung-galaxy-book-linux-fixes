@@ -8,6 +8,9 @@ on `main` `1df6dae`. 1 commit, 1 file (`camera-relay/camera-relay-monitor.c`),
 
 ## Verdict: 🟠 **CHANGES REQUESTED** (not merged)
 
+> **Merged 2026-10-05:** approved at `bc4afdd` and merged as `d80b87d`,
+> released as **v0.3.74**. See [Merged + released](#merged--released) at the end.
+
 > **Update 2026-10-05:** re-checked at `bc4afdd`. F1–F3 are all fixed, so the
 > PR is 🟢 **READY TO MERGE**. See
 > [Re-check at `bc4afdd`](#re-check-at-bc4afdd-2026-10-05) at the end.
@@ -363,7 +366,7 @@ Runtime A/B, re-run the same way as §6:
 F3 can't be reached at runtime here, because re-subscribe on a fresh fd doesn't
 fail. It was verified by reading the code (table above).
 
-### Draft reply (NOT posted, for Andy to review)
+### Reply (POSTED 2026-10-05 as the approving review, see below)
 
 > Thanks, @ang3lo-azevedo. I checked bc4afdd. All three are in exactly as
 > suggested: `_NEW` first, the idle timeout honours `reader_streaming`, and the
@@ -384,8 +387,37 @@ fail. It was verified by reading the code (table above).
 > show the `idle_polls` warning, and that one comes from main anyway). All 11
 > `camera-relay/tests` pass on the PR and on the merge with current main.
 >
-> I'll merge this now rather than wait for the `gazed` checks. In the worst case
+> I'm merging this now rather than waiting for the `gazed` checks. In the worst case
 > NixOS behaves like main does today, and it unblocks #102. Please still post the
 > three results (start, stop within ~3 s, relay restart while streaming) when
 > you have them. If anything is off, we'll fix it in a follow-up. Then go ahead
 > with merging main back into #102 and taking main's `camera-relay-monitor.c`.
+
+---
+
+## Merged + released
+
+- **Head re-checked** just before approving: still `bc4afdd`, and no new
+  comments after his 2026-10-05T19:19Z one (so no `gazed` results yet).
+- **Review:** the reply above was posted as an APPROVE review
+  ([#pullrequestreview-5419660012](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/pull/105#pullrequestreview-5419660012)).
+  Only edit: "I'll merge this now rather than wait" → "I'm merging this now
+  rather than waiting".
+- **Merge:** `gh pr merge 105 --merge --match-head-commit bc4afdd…` →
+  merge commit `d80b87d` (2026-10-05T19:40:59Z).
+- **On `main` after the merge:** builds with no warnings under the installer
+  flags (`gcc -O2 -Wall`), and all 11 `camera-relay/tests/test-*.sh` scripts
+  pass (launcher-validation 30/0, monitor-exit-propagation 5/0,
+  writer-format-check 1/0).
+- **Release:** [v0.3.74](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/releases/tag/v0.3.74),
+  tagged on the commit that adds this section.
+- **Still open:** his three `gazed` checks on NixOS, now as post-merge
+  confirmation. A failure there is a follow-up PR, not a revert.
+
+### #102 is now unblocked
+
+Nothing has been posted on #102 yet. It now waits only on the author: merge
+`main` back into #102 and take `main`'s side of
+`camera-relay/camera-relay-monitor.c` (he already said he would, in his
+19:19Z comment). Expect a conflict in that file, since #102 still carries the
+`3aab9dc` version.
