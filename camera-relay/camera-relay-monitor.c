@@ -233,21 +233,23 @@ static __u32 try_subscribe_events(int fd)
 	struct v4l2_event_subscription sub;
 
 	memset(&sub, 0, sizeof(sub));
-	sub.type = V4L2_EVENT_CLIENT_USAGE_OLD;
-	sub.flags = V4L2_EVENT_SUB_FL_SEND_INITIAL;
-	if (xioctl(fd, VIDIOC_SUBSCRIBE_EVENT, &sub) == 0) {
-		fprintf(stderr,
-			"[monitor] Using v4l2loopback 0.12.x event API\n");
-		return V4L2_EVENT_CLIENT_USAGE_OLD;
-	}
-
-	memset(&sub, 0, sizeof(sub));
+	/* Ubuntu's 0.13+ package accepts both IDs, and only this one carries
+	 * the payload note_usage_event() reads, so it has to be tried first. */
 	sub.type = V4L2_EVENT_CLIENT_USAGE_NEW;
 	sub.flags = V4L2_EVENT_SUB_FL_SEND_INITIAL;
 	if (xioctl(fd, VIDIOC_SUBSCRIBE_EVENT, &sub) == 0) {
 		fprintf(stderr,
 			"[monitor] Using v4l2loopback 0.13+ event API\n");
 		return V4L2_EVENT_CLIENT_USAGE_NEW;
+	}
+
+	memset(&sub, 0, sizeof(sub));
+	sub.type = V4L2_EVENT_CLIENT_USAGE_OLD;
+	sub.flags = V4L2_EVENT_SUB_FL_SEND_INITIAL;
+	if (xioctl(fd, VIDIOC_SUBSCRIBE_EVENT, &sub) == 0) {
+		fprintf(stderr,
+			"[monitor] Using v4l2loopback 0.12.x event API\n");
+		return V4L2_EVENT_CLIENT_USAGE_OLD;
 	}
 
 	return 0;
@@ -591,12 +593,15 @@ int main(int argc, char *argv[])
 					int clients = count_other_openers(
 						dev_stat.st_rdev,
 						our_pid, 0);
-					if (clients > 0) {
+					if (clients > 0 ||
+					    reader_streaming) {
 						fprintf(stderr,
 							"[monitor] /proc"
 							" fallback:"
-							" clients=%d\n",
-							clients);
+							" clients=%d"
+							" streaming=%d\n",
+							clients,
+							reader_streaming);
 						client_detected = 1;
 					}
 				}
@@ -737,6 +742,7 @@ int main(int argc, char *argv[])
 						running = 0;
 						break;
 					}
+					reader_streaming = 0;
 					event_type =
 						try_subscribe_events(fd);
 					if (event_type == 0) {
@@ -756,7 +762,6 @@ int main(int argc, char *argv[])
 							.fd = fd,
 							.events = POLLPRI
 						};
-						reader_streaming = 0;
 						if (poll(&pfd, 1, 200)
 						    > 0) {
 							struct v4l2_event ev;
