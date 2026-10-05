@@ -8,6 +8,10 @@ on `main` `1df6dae`. 1 commit, 1 file (`camera-relay/camera-relay-monitor.c`),
 
 ## Verdict: 🟠 **CHANGES REQUESTED** (not merged)
 
+> **Update 2026-10-05:** re-checked at `bc4afdd`. F1–F3 are all fixed, so the
+> PR is 🟢 **READY TO MERGE**. See
+> [Re-check at `bc4afdd`](#re-check-at-bc4afdd-2026-10-05) at the end.
+
 Posted 2026-10-05 as a REQUEST_CHANGES review from @Andycodeman:
 <https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/pull/105#pullrequestreview-5418552526>
 
@@ -272,3 +276,116 @@ sudo "$SCRATCH/v4l2loopback-ctl" add -x 0 -w 1920 -h 1080 63
   … run monitor on /dev/video63 640 480 -- <frame source on fd 3>; readers: [sudo] timeout 4 v4l2-ctl -d /dev/video63 --stream-mmap
 sudo "$SCRATCH/v4l2loopback-ctl" delete /dev/video63
 ```
+
+---
+
+## Re-check at `bc4afdd` (2026-10-05)
+
+The author pushed one commit on top of `3aab9dc`:
+`bc4afdd fix(camera-relay): subscribe to the 0.13+ usage event first and honour
+the streaming flag on idle`. It touches only `camera-relay/camera-relay-monitor.c`
+(+15/−10). He commented at 2026-10-05T19:19Z, and there have been no commits since.
+
+### Verdict: 🟢 **READY TO MERGE** (code). Recommendation: merge now, don't wait for the `gazed` results
+
+All three findings are fixed exactly as suggested. Apart from a two-line comment,
+the monitor at `bc4afdd` is byte-identical to the `prfix` build tested in §6
+(`diff prfix.c bc4afdd:…monitor.c` shows only those comment lines). The runtime
+A/B re-run below gives the same result.
+
+His NixOS `gazed` checks are still to come. Merging now is still the better
+choice:
+
+- On a real 0.15.3 module, scenarios B and C here are the case he will test:
+  a root reader is invisible to `/proc`, and a reader is already streaming
+  when the relay restarts.
+- If something NixOS-specific still fails there, the result is the same as on
+  `main` today (the relay doesn't start for a root reader), so nobody ends up
+  worse off. Row A (same-UID reader, the common case) behaves the same on all
+  three builds.
+- #102 is blocked on this merge.
+
+His `gazed` results then act as post-merge confirmation. If one of them fails,
+the fix is a follow-up PR, not a revert.
+
+### Per-finding status
+
+| # | Status | Where (`bc4afdd`) |
+|---|---|---|
+| F1 `_NEW` before `_OLD` | ✅ **Fixed** | `try_subscribe_events()` `:236-253`. `_NEW` is tried first (`:238`/`:243`), `_OLD` as fallback (`:247`/`:252`), log strings swapped to match, and a comment explains the Ubuntu delta (`:236-237`) |
+| F2 idle timeout honours the flag | ✅ **Fixed** | Poll-timeout branch `:596-606`: `clients > 0 \|\| reader_streaming`, and both values are logged |
+| F3 reset before re-subscribe | ✅ **Fixed** | `reader_streaming = 0;` at `:745`, before `try_subscribe_events(fd)` at `:747`. The old success-branch reset was removed. A failed re-subscribe now leaves 0, and nothing writes the flag after `use_events = 0` |
+
+Nothing else changed. The other paths are unchanged:
+
+- Ubuntu 0.12.7 still subscribes `_OLD` (`_NEW` fails), so its behaviour is
+  the same as before.
+- Stock 0.12.7 still subscribes neither ID and uses `/proc` polling.
+- No new per-frame work: the relay loop is untouched, so §5's strace numbers
+  still apply.
+- `open_writer()` is untouched.
+
+### His comment, checked
+
+| Claim | Checked |
+|---|---|
+| All three fixes are in `bc4afdd`, following our patch | ✅ True (above) |
+| Builds with `-O2 -Wall`, "same single warning as `main` (the unused `idle_polls`)" | ⚠️ Partly reproduced. gcc 15.2 (Ubuntu) prints **no** warnings for either `main` or `bc4afdd`, even with `-Wextra -Werror`. The variable really is written but never read (`:528/585/592`, and the same on `main` `:501/551/558`), so his compiler is probably more sensitive. Either way the warning comes from `main`, not from this PR. It's fine to leave, or to remove in a later cleanup |
+| `test-monitor-exit-propagation.sh` + `test-writer-format-check.sh` pass, but neither covers the event path | ✅ Agreed. Both pass here too (5/0, 1/0). The temp-device test is still the only event-path coverage |
+| `gazed` checks not run yet | Noted. They are still to come (see "Testing still needed" above) |
+| Will merge `main` back into #102 and take `main`'s monitor | ✅ Matches "Knock-on for #102" |
+
+### Tests at `bc4afdd`
+
+| | |
+|---|---|
+| Mergeable vs `origin/main` (`c965f85`) | **Yes.** `git merge-tree --write-tree origin/main bc4afdd` → `fe8a1e4`, rc 0. The merged tree's monitor is identical to the PR's |
+| Build, gcc 15.2 | Clean with `-O2 -Wall` (installer flags), `-O2 -Wall -Wextra -Werror`, and `-O3 -Wall -Wextra -Wstrict-aliasing=1` |
+| `camera-relay/tests/test-*.sh` | **11/11 scripts pass** on the PR tree and on the merged tree. The counts match §7 (launcher-validation 29/0 on the PR, 30/0 merged). writer-format-check is build-only, as before |
+
+Runtime A/B, re-run the same way as §6:
+
+- Temporary `/dev/video63`, created with `v4l2loopback-ctl add -x 0 … 63` and
+  deleted afterwards (verified gone).
+- Ubuntu's 0.15.3 module, which was not reloaded.
+- A Python fd-3 frame source.
+- `timeout N v4l2-ctl --stream-mmap` readers.
+- The live relay on `/dev/video0` was not touched: its PID was `4818` before
+  and after.
+- No camera hardware was involved.
+
+| Scenario | `base` (main) | `pr` (`3aab9dc`) | **`bc4afdd`** |
+|---|---|---|---|
+| A. same-UID reader 4 s | START → STOP ✅ | START → STOP ✅ | **START → STOP ✅** (`Event fired, /proc clients=1 streaming=1`) |
+| B. **root** reader 4 s | READY only ❌ | READY only ❌ ("0.12.x event API", `streaming=0`) | **START → STOP ✅** ("0.13+ event API", `clients=0 streaming=1`; STOP ~2.2 s after the reader exited) |
+| C. root reader already streaming, monitor restarted | no START ❌ | no START ❌ | **START ✅** (`/proc fallback: clients=0 streaming=1`, 2 s after READY) |
+
+F3 can't be reached at runtime here, because re-subscribe on a fresh fd doesn't
+fail. It was verified by reading the code (table above).
+
+### Draft reply (NOT posted, for Andy to review)
+
+> Thanks, @ang3lo-azevedo. I checked bc4afdd. All three are in exactly as
+> suggested: `_NEW` first, the idle timeout honours `reader_streaming`, and the
+> flag is reset before re-subscribing. Apart from your comment, the monitor is
+> byte-identical to the patched build I tested on the temporary loopback
+> earlier.
+>
+> I re-ran the same test on a temporary `/dev/video63` (Ubuntu's v4l2loopback
+> 0.15.3, synthetic frames, `v4l2-ctl` readers, no camera involved):
+>
+> - a same-user reader still goes START → STOP;
+> - a root reader now goes START → STOP (main and the first revision never
+>   started);
+> - a root reader already streaming when the monitor restarts now gets a START
+>   about 2 s later.
+>
+> It builds cleanly with `-O2 -Wall -Wextra -Werror` (gcc 15.2 here doesn't even
+> show the `idle_polls` warning, and that one comes from main anyway). All 11
+> `camera-relay/tests` pass on the PR and on the merge with current main.
+>
+> I'll merge this now rather than wait for the `gazed` checks. In the worst case
+> NixOS behaves like main does today, and it unblocks #102. Please still post the
+> three results (start, stop within ~3 s, relay restart while streaming) when
+> you have them. If anything is off, we'll fix it in a follow-up. Then go ahead
+> with merging main back into #102 and taking main's `camera-relay-monitor.c`.
