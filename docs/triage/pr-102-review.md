@@ -241,6 +241,11 @@ since `note_usage_event` ignores it, so Ubuntu's 0.12.7 is unaffected. It does
 change behaviour for 0.13+ (Fedora/Arch, Nix's 0.15.4). It compiles warning-free
 with `-Wall -Wextra`.
 
+> **Correction (2026-10-05, [#105 review](pr-105-review.md) F1):** Ubuntu is no
+> longer only 0.12.7. This machine runs `0.15.3-1ubuntu2`, which queues the same
+> payload under the `_OLD` ID as well. The monitor subscribes `_OLD` first, so
+> the change is *inert* on Ubuntu 0.13+, not "unaffected by design".
+
 **Test suites on PR head** (`camera-relay/tests/*.sh`): all pass except
 `test-launcher-validation.sh` (B1). Results: chromium-pipewire-flag 61/0,
 distro-detection 16/0, egl-vendor-pin 18/0, firefox-pipewire-pref 15/0,
