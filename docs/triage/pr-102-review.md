@@ -647,3 +647,178 @@ and `main` is merged back.
   `camera-relay-monitor.c`. Then do a final check that the non-Nix diff is only
   `camera-relay` L19 + the `#ifdef` block, and merge #102. No release is needed
   for #102 itself (Nix-only, and a no-op for shell users).
+
+## Final check 2026-10-05 — head `8fb2085` (main merged back)
+
+The author merged `main` back in ([comment](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/pull/102#issuecomment-6001988917),
+20:01Z). `8fb2085` is a merge commit with parents `56adfc0` and `c6eebfa`, which
+is the current `main` tip. I checked each of his claims against the code.
+Still no Book5 here, so this is build, test, eval-evidence and source reading
+only. **Not hardware-tested.**
+
+### Verdict: 🟢 **READY TO MERGE**
+
+The non-Nix diff against `main` is exactly the two expected pieces: L19 and the
+`#ifdef` block. The default launcher build preprocesses byte-identical to `main`,
+and the merge reverts nothing. The Nix files and patches are unchanged since
+the `56adfc0` eval/build evidence (§R6), and nixos-unstable is still on libcamera
+0.7.2. One new non-blocking note, F-N4: stable nixos-26.05 ships 0.7.0, see §F4.
+
+GitHub: `MERGEABLE`, `CLEAN`, no CI checks configured. `reviewDecision` is still
+`CHANGES_REQUESTED` from the 2026-10-04 review, so **approve before merging** to
+clear it.
+
+### F1. Diff vs `main` and merge integrity
+
+```
+$ git merge-base origin/main pr-102-final                → c6eebfa (= origin/main)
+$ git diff origin/main...pr-102-final --stat             → 13 files, +939/−255
+$ git diff origin/main pr-102-final --stat               → identical (base is main's tip)
+$ git diff --name-only origin/main pr-102-final \
+    | grep -v -e '^nixos/' -e '^webcam-fix-book5/libcamera-bayer-fix/.*\.patch$'
+camera-relay/camera-relay
+camera-relay/camera-relay-gst.c
+```
+
+- `camera-relay`: one line, L19 →
+  `CACHE_DIR="${RUNTIME_DIRECTORY:-${XDG_RUNTIME_DIR:-/tmp}}"` (same as §R4).
+- `camera-relay-gst.c`: only `#ifndef CAMERA_RELAY_USER_CACHE` around
+  `CACHE_DIR`, the `append_user_cache()` function, and the `#ifdef`/`#else`
+  in `build_environment()`. Additions only. The #104 `!` fix is untouched.
+- Byte-identical to `main`: `camera-relay/camera-relay-monitor.c` (so main's #105
+  version, as he said), `webcam-fix-book5/ov02e10.yaml`, and
+  `webcam-fix-book5/libcamera-bayer-fix/build-patched-libcamera.sh`. That's the
+  only `build-patched-libcamera.sh` in the repo, and there's no `installers/` copy.
+- `git merge-tree --write-tree origin/main pr-102-final` → exit 0, tree
+  `f15eab3`, **equal to the PR's own tree**. Every path outside the 13 files above
+  is therefore `main`'s: #104 fix and test, #105 monitor, #103 upstream-check,
+  and all `docs/triage/*`.
+- No conflict markers anywhere in the tree (`git grep` for `<<<<<<<`, `>>>>>>>`,
+  `=======` outside `*.md`).
+
+### F2. Nix side unchanged since `56adfc0`
+
+```
+$ git diff --stat 56adfc0 8fb2085 -- nixos/ webcam-fix-book5/libcamera-bayer-fix/   → empty
+$ git diff --stat 56adfc0 8fb2085
+ camera-relay/camera-relay-monitor.c, camera-relay/tests/test-launcher-validation.sh,
+ docs/triage/pr-10{2,4,5}-review.md        (= what main gained from #104/#105 + docs)
+```
+
+So the §R6 evidence (eval cases, assertions, full relay `nix-build` with all
+five patches) still applies. I didn't re-run the docker eval.
+
+### F3. Builds and tests on the PR tree (throwaway worktree, removed)
+
+| check | result |
+|---|---|
+| `gcc -E -P` default build vs `main`, blank lines dropped | ✅ **identical**, sha256 `0c9d659e…` both |
+| default, `-O2 -Wall -Wextra -Werror` | ✅ clean. `strings`: only `/var/cache/camera-relay`, no `CACHE_DIRECTORY` |
+| `-DCAMERA_RELAY_USER_CACHE`, `-O2 -Wall -Wextra -Werror` | ✅ clean. `strings`: `CACHE_DIRECTORY`, `%s/.cache/camera-relay`, `/tmp/camera-relay-cache` |
+
+So the setgid invariant holds, since shell installers build without `-D`.
+
+| suite | result |
+|---|---|
+| test-launcher-validation | **30/0** (29 + #104's argv test, now on the branch) |
+| chromium-pipewire-flag | 61/0 |
+| distro-detection | 16/0 |
+| egl-vendor-pin | 18/0 |
+| firefox-pipewire-pref | 15/0 |
+| gst-tools-check | 8/0, 3 skipped (live relay holds the loopback, as before) |
+| monitor-exit-propagation | 5/0 |
+| pipewire-restart-guard | 17/0 |
+| unit-regeneration | 15/0 |
+| wireplumber-format-nudge | 26/0 |
+| writer-format-check | 1/0, 1 skipped (no idle loopback) |
+
+11 suites, all pass. That matches the author's claim. The live relay and the
+installed files were not touched.
+
+### F4. libcamera version in nixpkgs today
+
+From `pkgs/by-name/li/libcamera/package.nix`, fetched through the GitHub API
+and decoded:
+
+| branch | libcamera |
+|---|---|
+| `nixos-unstable` (`494ce7f`, 2026-10-05 05:43Z) | **0.7.2** ✅ |
+| `master` | 0.7.2 |
+| `nixos-26.05` (current stable) | **0.7.0** |
+| `nixos-25.11` | 0.6.0 |
+
+Upstream libcamera's newest tag is still `v0.7.2`, and I found no open nixpkgs
+PR bumping it. So the 0.7.2 assertion **doesn't fire for unstable users today**.
+
+**F-N4 (new, non-blocking, Nix-only):** on **stable nixos-26.05** the module
+now fails evaluation, with the clear assertion message. On `main` it would have
+worked there. I checked with `git apply`, applying the patches in the PR's order
+to libcamera git tags:
+
+| tag | bayer-fix-v0.7 | blc-channel-levels | agc-min-gain-step | awb-skip-saturated | agc-exposure-target |
+|---|---|---|---|---|---|
+| v0.7.0 | ✅ | ✅ | ❌ | (not reached) | (not reached) |
+| v0.7.2 | ✅ | ✅ | ✅ | ✅ | ✅ |
+
+`main`'s module applies only `bayer-fix-v0.7`, which applies to 0.7.0. This
+check is source-level only: I didn't build `main`'s module against 26.05. It
+fails loudly rather than at build time, and the README says "0.7.2 only". The
+README's flake example already uses `nixos-unstable`, but it doesn't say that
+stable won't work. Worth a README line in the follow-up PR. It isn't a reason
+to hold this one: an eval-time failure with a clear message is exactly what S3
+asked for, and the four new patches can't be applied to 0.7.0 anyway.
+
+### F5. Release
+
+Precedent: both earlier Nix-only merges were released, **v0.3.69** (#95,
+`speaker-fix-940xfg.nix`) and **v0.3.70** (#96, `ov02c10-26mhz-fix.nix`),
+each with NixOS-focused notes. This reverses the "no release needed" line in
+the previous Next step.
+
+- **Shell users:** no change. L19 resolves the same without
+  `$RUNTIME_DIRECTORY`, the `#ifdef` is compiled out, and the yaml and
+  installers are byte-identical.
+- **NixOS users of `webcam-fix-book5.nix`:** a real, partly **breaking** change.
+  - `nixpkgsUnpatched` was removed, so old configs get an eval error telling them to drop it.
+  - libcamera is no longer patched system-wide.
+  - PipeWire's libcamera monitor is disabled, so the camera is visible only through the relay's loopback node.
+  - The 0.7.2 pin means stable 26.05 fails eval (F-N4).
+  - Also new: the `ipuBridgeFix` / `lowNoise.*` / `loopbackVideoNr` options and the NixOS-only tuning.
+
+**Recommendation:** cut **v0.3.75**, NixOS-only notes, leading with the
+breaking points above. Andy decides.
+
+### Draft approve/merge comment (NOT posted, for Andy)
+
+Post it as the **approval** review body. That clears the `CHANGES_REQUESTED`
+state. Then merge.
+
+> Thanks @ang3lo-azevedo, and thanks for taking main's `camera-relay-monitor.c` rather than resolving the duplicate by hand.
+>
+> I checked `8fb2085`. Apart from the NixOS files and the Nix-only patches, the diff against main is just `camera-relay` L19 and the `#ifdef CAMERA_RELAY_USER_CACHE` block. The default launcher build preprocesses identical to main, both builds pass `-Wall -Wextra -Werror`, and all 11 `camera-relay/tests` suites pass on the merged tree. The Nix files are unchanged from `56adfc0`, so the earlier eval and relay `nix-build` still hold. nixos-unstable is still on libcamera 0.7.2. As before, this is build, test and eval only; I don't have a Book5.
+>
+> A follow-up PR for the three optional points is fine. One more for that PR if you're up for it: stable nixos-26.05 ships libcamera 0.7.0, so the module now stops at the 0.7.2 assertion there. A line in `nixos/README.md` saying it needs nixos-unstable (for now) would save someone a confused rebuild.
+>
+> Merging, thanks again!
+
+### Commands run (reproducible)
+
+```
+git fetch origin pull/102/head:pr-102-final            # branch deleted afterwards
+git diff origin/main{...,} pr-102-final --stat
+git merge-tree --write-tree origin/main pr-102-final   # == pr-102-final^{tree}
+git diff --stat 56adfc0 8fb2085 -- nixos/ webcam-fix-book5/libcamera-bayer-fix/
+git worktree add --detach $SP/wt102f pr-102-final      # removed afterwards
+gcc -E -P {main,pr}.c | grep -v '^\s*$' | diff
+gcc -O2 -Wall -Wextra -Werror [-DCAMERA_RELAY_USER_CACHE]
+for t in camera-relay/tests/test-*.sh; do bash $t; done
+gh api repos/NixOS/nixpkgs/contents/pkgs/by-name/li/libcamera/package.nix?ref=<branch>
+git clone --depth 1 --branch v0.7.{0,2} https://git.libcamera.org/libcamera/libcamera.git
+git apply <5 patches in PR order>                      # scratchpad, removed afterwards
+gh release view v0.3.69 / v0.3.70
+```
+
+### Next step (2026-10-05, final)
+
+- Andy: approve with the draft above, merge #102, and cut v0.3.75 (NixOS notes).
+- After that: the author's follow-up PR for R-N1..R-N3 plus the F-N4 README line.
