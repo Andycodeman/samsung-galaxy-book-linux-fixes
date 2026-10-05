@@ -5,7 +5,24 @@ Reviewed: 2026-10-04. Author: **@LucasDondo** (Lucas Dondo). Base `main`,
 (`mic-fix/README.md`), +1/−2.
 <https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/pull/101>
 
-## Verdict: 🟡 **Request changes** (not merged)
+## Status: ✅ **MERGED** 2026-10-04 (`3087a74`)
+
+Originally reviewed as 🟡 **Request changes** (below). @LucasDondo applied the
+`sudo` fix in `1585a2c` ("Simplified installation instructions", amended in
+place of `d20d5869`) and merged `main` into the branch (`c627a7f`, PR head at
+merge). Re-checked `gh pr diff 101` before merging: still exactly one line in
+`mic-fix/README.md`, `sudo ./install.sh` present, and byte-identical to the
+top-level README's mic-fix line. Merged with `gh pr merge 101 --merge
+--match-head-commit c627a7f…`, the same merge-commit method as #79–#91. Merge
+commit `3087a74c52fd4bbc092f9ae55f177d819dfa02b7` (GitHub `mergedAt`
+2026-10-05T05:26:18Z UTC, 2026-10-04 local).
+
+- Thank-you comment:
+  <https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/pull/101#issuecomment-5988653187>
+- **No release: docs-only.** GitHub renders the README from `main`, so the
+  new line is live without a tag.
+
+## Original verdict: 🟡 **Request changes**
 
 The idea is good and the shape is right: it replaces `sudo bash install.sh` +
 `# Reboot` with the same download-and-run one-liner every other per-fix README
@@ -121,7 +138,7 @@ one notification instead of two.
 
 ---
 
-## Next step
+## Next step (done — see Status above)
 
 When @LucasDondo applies the suggestion, check that the line matches `README.md:45`,
 then merge. Past contributor PRs landed as merge commits (`Merge pull request #91
