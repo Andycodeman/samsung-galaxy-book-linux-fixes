@@ -44,10 +44,12 @@
 #include <string.h>
 #include <unistd.h>
 
+#ifndef CAMERA_RELAY_USER_CACHE
 /* Shared writable state for the pipeline's own caches. Root-owned,
  * group-writable, so a user cannot plant a poisoned GStreamer registry
  * (the registry maps elements to .so paths that get dlopen()ed). */
 #define CACHE_DIR "/var/cache/camera-relay"
+#endif
 
 #define MAX_ARGS 64
 
@@ -275,6 +277,42 @@ static int append_color_filter(char **argv, int argc, char *spec)
 	return argc;
 }
 
+#ifdef CAMERA_RELAY_USER_CACHE
+/*
+ * Per-user caches taken from the caller's environment. Only for builds that
+ * are never installed setgid (NixOS): a caller who picks the cache directory
+ * picks the GStreamer registry and the plugin scan under HOME, which is code
+ * loading, so a setgid build must keep the fixed CACHE_DIR instead.
+ */
+static int append_user_cache(char **env, int n)
+{
+	static char dir[PATH_MAX];
+	static char buf[3][PATH_MAX + 64];
+	const char *cache_dir = getenv("CACHE_DIRECTORY");
+
+	if (!cache_dir || !*cache_dir) {
+		const char *home = getenv("HOME");
+
+		if (home && *home) {
+			snprintf(dir, sizeof(dir), "%s/.cache/camera-relay", home);
+			cache_dir = dir;
+		} else {
+			cache_dir = "/tmp/camera-relay-cache";
+		}
+	}
+	if (strlen(cache_dir) >= PATH_MAX)
+		die("cache directory path is too long");
+
+	snprintf(buf[0], sizeof(buf[0]), "HOME=%s", cache_dir);
+	env[n++] = buf[0];
+	snprintf(buf[1], sizeof(buf[1]), "GST_REGISTRY=%s/gst-registry.bin", cache_dir);
+	env[n++] = buf[1];
+	snprintf(buf[2], sizeof(buf[2]), "MESA_SHADER_CACHE_DIR=%s/mesa", cache_dir);
+	env[n++] = buf[2];
+	return n;
+}
+#endif
+
 /*
  * Replace the inherited environment wholesale. Only entries built here
  * survive, so nothing the caller set can steer code loading.
@@ -289,11 +327,15 @@ static char **build_environment(const char *gst_plugin_path,
 	int n = 0, b = 0;
 
 	env[n++] = "PATH=/usr/local/bin:/usr/bin:/bin";
+#ifdef CAMERA_RELAY_USER_CACHE
+	n = append_user_cache(env, n);
+#else
 	/* Mesa and GStreamer both want somewhere to cache; point them at the
 	 * group-writable directory rather than the user's HOME. */
 	env[n++] = "HOME=" CACHE_DIR;
 	env[n++] = "GST_REGISTRY=" CACHE_DIR "/gst-registry.bin";
 	env[n++] = "MESA_SHADER_CACHE_DIR=" CACHE_DIR "/mesa";
+#endif
 
 	if (gst_plugin_path) {
 		snprintf(buf[b], sizeof(buf[b]), "GST_PLUGIN_PATH=%s", gst_plugin_path);

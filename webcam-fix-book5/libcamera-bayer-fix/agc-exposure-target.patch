@@ -1,0 +1,52 @@
+--- a/src/ipa/simple/algorithms/agc.cpp
++++ b/src/ipa/simple/algorithms/agc.cpp
+@@ -62,15 +62,28 @@
+ static constexpr float kExpMaxStep = 0.15;
+ 
+ Agc::Agc()
++	: exposureOptimal_(kExposureOptimal)
+ {
+ }
+ 
++/*
++ * The default target is the middle of the linear range, which gamma turns
++ * into a bright image: highlights clip and gain is spent that a dimmer
++ * target would not need. Let the tuning file lower it per sensor.
++ */
++int Agc::init([[maybe_unused]] IPAContext &context,
++	      const ValueNode &tuningData)
++{
++	exposureOptimal_ = tuningData["exposureTarget"].get<float>(kExposureOptimal);
++	return 0;
++}
++
+ void Agc::updateExposure(IPAContext &context, IPAFrameContext &frameContext, double exposureMSV)
+ {
+ 	int32_t &exposure = frameContext.sensor.exposure;
+ 	double &again = frameContext.sensor.gain;
+ 
+-	double error = kExposureOptimal - exposureMSV;
++	double error = exposureOptimal_ - exposureMSV;
+ 
+ 	if (std::abs(error) <= kExposureSatisfactory)
+ 		return;
+--- a/src/ipa/simple/algorithms/agc.h
++++ b/src/ipa/simple/algorithms/agc.h
+@@ -19,6 +19,8 @@
+ 	Agc();
+ 	~Agc() = default;
+ 
++	int init(IPAContext &context, const ValueNode &tuningData) override;
++
+ 	void process(IPAContext &context, const uint32_t frame,
+ 		     IPAFrameContext &frameContext,
+ 		     const SwIspStats *stats,
+@@ -26,6 +28,8 @@
+ 
+ private:
+ 	void updateExposure(IPAContext &context, IPAFrameContext &frameContext, double exposureMSV);
++
++	float exposureOptimal_;
+ };
+ 
+ } /* namespace ipa::soft::algorithms */

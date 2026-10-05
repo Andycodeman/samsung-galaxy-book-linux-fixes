@@ -14,7 +14,7 @@
 }:
 
 let
-  kernelUsesClang = (kernel.stdenv.cc.isClang or false);
+  kernelUsesClang = kernel.stdenv.cc.isClang or false;
   cc = if kernelUsesClang then llvmPackages.clang-unwrapped else gcc;
   src = if sourceType == "local" then localSrc else fetchFromGitHub {
     owner = githubOwner;

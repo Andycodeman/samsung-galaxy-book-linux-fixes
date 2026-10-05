@@ -1,19 +1,15 @@
 { pkgs, config, ... }:
 
 let
-  lib = pkgs.lib;
+  inherit (pkgs) lib;
   cfg = config.hardware.samsungGalaxyBook.speakerFix;
 
   kernelPackages = config.boot.kernelPackages;
 
   # Out-of-tree kernel module for MAX98390 HDA speaker amplifier
   max98390-hda = kernelPackages.callPackage ./max98390-hda-module.nix {
+    inherit (cfg) localSrc githubOwner githubRepo githubRev githubHash;
     sourceType = cfg.source;
-    localSrc = cfg.localSrc;
-    githubOwner = cfg.githubOwner;
-    githubRepo = cfg.githubRepo;
-    githubRev = cfg.githubRev;
-    githubHash = cfg.githubHash;
   };
 
   # I2C setup script to create devices for additional amplifiers

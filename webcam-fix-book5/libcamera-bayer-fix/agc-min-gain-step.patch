@@ -1,0 +1,29 @@
+--- a/src/ipa/simple/soft_simple.cpp
++++ b/src/ipa/simple/soft_simple.cpp
+@@ -5,6 +5,7 @@
+  * Simple Software Image Processing Algorithm module
+  */
+ 
++#include <algorithm>
+ #include <chrono>
+ #include <stdint.h>
+ #include <sys/mman.h>
+@@ -228,10 +229,16 @@
+ 		context_.configuration.agc.againMin = camHelper_->gain(againMin);
+ 		context_.configuration.agc.againMax = camHelper_->gain(againMax);
+ 		context_.configuration.agc.again10 = std::max(context_.configuration.agc.againMin, 1.0);
+-		context_.configuration.agc.againMinStep =
++		/*
++		 * A step below one gain code is truncated away when converted
++		 * back to a code, leaving AGC stuck at its current gain. That
++		 * happens once the sensor's gain range is narrow enough.
++		 */
++		context_.configuration.agc.againMinStep = std::max(
+ 			(context_.configuration.agc.againMax -
+ 			 context_.configuration.agc.againMin) /
+-			100.0;
++				100.0,
++			camHelper_->gain(againMin + 1) - camHelper_->gain(againMin));
+ 		if (camHelper_->blackLevel().has_value()) {
+ 			/*
+ 			 * The black level from camHelper_ is a 16 bit value, software ISP

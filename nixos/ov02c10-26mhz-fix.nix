@@ -24,12 +24,15 @@
 let
   cfg = config.hardware.samsungGalaxyBook.ov02c10ClockFix;
 
-  kernelPackages = config.boot.kernelPackages;
-  kernel = kernelPackages.kernel;
-  kernelUsesClang = (kernel.stdenv.cc.isClang or false);
+  inherit (config.boot) kernelPackages;
+  inherit (kernelPackages) kernel;
+  kernelUsesClang = kernel.stdenv.cc.isClang or false;
   cc = if kernelUsesClang then pkgs.llvmPackages.clang-unwrapped else pkgs.gcc;
+  # The kernel's own make flags, not pkgs.llvmPackages: kernels that pin their
+  # own nixpkgs (CachyOS) are built with a different clang/lld than the system
+  # one, and objtool rejects objects from a mismatched toolchain.
   clangMakeFlags = lib.optionalString kernelUsesClang
-    "LLVM=1 CC=${cc}/bin/clang LD=${pkgs.llvmPackages.lld}/bin/ld.lld";
+    (lib.escapeShellArgs kernel.commonMakeFlags);
 
   ov02c10Module = pkgs.stdenvNoCC.mkDerivation {
     pname = "ov02c10-26mhz";
