@@ -609,8 +609,15 @@ Test suites on PR head (`56adfc0`):
 > I checked first that the head was still `56adfc0` and that nothing new had been posted.
 > The merge-order paragraph was cut: the author already heard it on #105 and
 > acknowledged it, and #104 and #105 have both merged since. The per-item
-> verification list was cut down to one paragraph. The Nix follow-ups and the
-> @david-bartlett note went up as drafted below.
+> verification list was cut down to one paragraph. The Nix follow-ups went up
+> as drafted below.
+>
+> **Edited 2026-10-05 (19:57Z), same comment, no new one:** Andy cut the
+> request for @david-bartlett to open a separate issue, since he had already
+> been through that with him. The last paragraph now reads only: "@david-bartlett,
+> thanks for testing the proposed file on the 940XHA. Your result is why the
+> shared yaml stays as it is." I checked the before/after bodies, and only that
+> paragraph changed.
 
 Suggested as a PR **comment**, not an approval yet. Approve after #104/#105 land
 and `main` is merged back.
