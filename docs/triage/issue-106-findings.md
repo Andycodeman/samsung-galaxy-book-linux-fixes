@@ -6,10 +6,11 @@
 fix to ship yet; testing comes first. The reporter's 2-amp workaround is the
 kernel's own code path and is safe to keep using.
 
-**Status:** reply drafted in `docs/triage/issue-106-reply.md`. **NOT posted**,
-nothing committed, no code changed. The reply file is the comment body only, so
-it can be posted as-is with `gh issue comment 106 --body-file
-docs/triage/issue-106-reply.md`.
+**Status:** reply posted 2026-10-06, comment
+[6020627289](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/106#issuecomment-6020627289),
+verbatim from `docs/triage/issue-106-reply.md` (no reporter comments had arrived
+since the draft). No code changed. No separate #61 cross-post made; the reply's
+`#61` mentions auto-link it on #61's timeline (see "Repo changes this suggests").
 
 ### Review notes for Andy before posting
 
