@@ -160,3 +160,230 @@ under `/usr/local/…` would select the 0.7.2 yaml even when the active libcamer
 >
 > Looking forward to the Ubuntu 26.04 and Arch results. Once the mode is fixed,
 > I'm happy to merge.
+
+## Re-check at 586c849
+
+RE-CHECK VERDICT: READY TO MERGE
+
+Re-checked 2026-10-09. The author force-pushed a single commit `586c849` (parent
+`e9a3738`, the same base as before). The previously reviewed head was `c7e48f5`.
+GitHub: `MERGEABLE` / `CLEAN`. `git merge-tree` against current `main` (`d405992`,
+docs only since the base) is clean. There is no CI. `reviewDecision` is still
+`CHANGES_REQUESTED` from my 10:14Z review, so **Andy has to approve before
+merging** to clear it.
+
+Inputs: David's comments at 10:28Z ("fixing now, then Ubuntu/Arch") and 14:40Z
+(everything addressed, plus Ubuntu 26.04.1 / CachyOS / Fedora 45 results), and the
+rewritten PR description.
+
+**Since the last review, the PR is larger.** `c7e48f5 → 586c849` changes 4
+files, +124/−14. Most of that is not the requested fixes. It is a **rework of
+`--uninstall`**, prompted by David's Ubuntu test. On Ubuntu 26.04 (distro 0.7.0,
+built as v0.7.2 per #71), `uninstall.sh` on `main` leaves libcamera broken: no
+soft ISP, RAW only. I reviewed the rework in full (below). It is correct, it
+fixes a real bug on `main`, and it is limited to package-managed installs.
+
+### Requested changes
+
+| Item | Status | Evidence |
+|---|---|---|
+| **B1** file mode | **Fixed** | `git ls-tree pr-107 …/build-patched-libcamera.sh` → `100755`. `git diff main...pr-107` contains no `old mode` line (count 0). `install.sh` is still `100755`. |
+| N1 yaml comments | **Fixed** | Lines 6 and 81 now say 1.7, and the value at line 83 is `1.7`. No other yaml changes. |
+| N2 README | **Fixed, accurate** | A new paragraph after the rebuild block (README ~L160). The upgrade path is `--uninstall` and then `./install.sh`. It does **not** recommend re-running the build script over an existing install. "Re-running `./install.sh` won't add the patches" matches `install.sh` L543–562: the backup version equals the current version, so it prints "already installed". The list of full-install paths matches the install-strategy block. |
+| N3 yaml outlives patched IPA | **Fixed (docs)** | README bullet: after a standalone `--uninstall`, re-run `./install.sh` or `./uninstall.sh`. The tuning step in `install.sh` runs on every run, not only when the bayer fix builds, so re-running really does re-select the yaml. |
+| N4 tune-ccm | **Fixed** | `install.sh` sets `TUNING_PATCHED=true` only on the 0.7.2 branch and reads it as `${TUNING_PATCHED:-false}` (safe under `set -u`). On that branch it prints "Matched to the SoftISP tuning patches: tune-ccm.sh presets don't apply" instead of the tune-ccm hint. The README bullet tells users to re-run `./install.sh` to put the file back. |
+| N5 master gate | **Fixed** | A new first branch in step 4c: `SWISP_SRC_VER == 0.7.2 && USE_SRPM != true && LIBCAMERA_GIT_TAG == master` skips the patches with an info line. `LIBCAMERA_GIT_TAG=master` is set on both master paths: clone fallback (L870) and unparseable version (L294). `USE_SRPM` is initialised at L790, before use. The SRPM guard is correct, because an SRPM build is Fedora's release source even if the version string was unparseable. |
+| N6 untested distros | **Covered by author** | On the 940XHA, David tested install and uninstall on Ubuntu 26.04.1 (0.7.0 → v0.7.2: patches applied, 0.7.2 yaml, Kamoso + Firefox work), on CachyOS (Arch repos 0.7.2: applied, camera works, `pacman -Qkk` clean) and on Fedora 45 beta (re-tested with the final code, `rpm -V` clean). |
+| N7 | Not changed | As agreed (nit). |
+
+The `.patch` files and the body of step 4c are unchanged
+(`git diff c7e48f5 586c849 -- '*.patch'` is empty). The earlier patch-apply runs
+on v0.7.0/0.7.1/0.7.2/master therefore still hold, so I did not re-run them.
+
+### New logic: `--uninstall` rework (build-patched-libcamera.sh L48–117, L178–209, L1062–1064, L1114)
+
+What it does:
+- A full install now copies meson's `builddir/meson-logs/install-log.txt` into the
+  backup. Both copies run from `$BUILD_DIR/libcamera`: the `cd` is at L1054 and
+  nothing in between changes directory.
+- `libcamera_pkg_managed` checks whether any backed-up `libcamera*.so*` is owned by
+  a package (`dpkg-query -S` / `rpm -qf` / `pacman -Qqo`). If none is, as with a
+  `/usr/local` source build, the old path runs, now with symlinks restored too.
+- `remove_unowned_installed_files` removes a file listed in the install log only
+  if it still exists, is not a directory, is **not in the backup** (the backup gets
+  restored instead) and is **not owned by any package**. With an older backup
+  that has no install log, it falls back to `libcamera*.so*` in the directories
+  that hold backed-up libraries. It then runs `rmdir` on directories that are now
+  empty, but only while the path contains `libcamera`.
+- The restore loop now handles symlinks: `find \( -type f -o -type l \)` and
+  `ln -sfn "$(readlink …)"`. Step 7 already backed up symlinks, because
+  `[[ -f ]]` follows links and `cp -a` keeps them as links. They were just never
+  restored. This is the actual Ubuntu bug: `libcamera.so.0.7` was left pointing
+  at the 0.7.2 build.
+- `reinstall_distro_libcamera` reinstalls the libcamera packages that are
+  **installed**, instead of `apt-get install --reinstall 'libcamera*'`, which
+  matches every libcamera package in the archive. It warns, rather than failing,
+  if a reinstall doesn't work. The stale-backup path uses the same helpers.
+
+How I verified it:
+
+| Check | Result |
+|---|---|
+| Sandbox run of the PR's **own** helper and restore code. I extracted them with `sed` from the head and ran them under `set -euo pipefail` in a fake root under the scratchpad. `pkg_owns` was stubbed with an owned-files list, and the setup simulated Ubuntu: distro 0.7.0 → v0.7.2 full install, plus headers, a changed `uncalibrated.yaml` and our `ov02e10.yaml`. | **With install log:** it removed `libcamera.so.0.7.2`, `libcamera-base.so.0.7.2`, the unowned `libcamera.so` dev link and both headers. It kept the owned `uncalibrated.yaml` and the user's `ov02e10.yaml`. It restored `libcamera.so.0.7 → libcamera.so.0.7.0` and `libcamera-base.so.0.7 → …0.7.0`, and the IPA content went back to the 0.7.0 file. The empty `include/libcamera/**` directories were removed and `/usr/include` was kept. **Old backup, no install log:** only the 3 added `libcamera*.so*` were removed (headers left, as documented), and the symlinks and IPA were restored the same way. |
+| Version check on Ubuntu 0.7.0 → v0.7.2 | The backup records `LIBCAMERA_VERSION_CLEAN`, which the #71 floor sets to `0.7.2`. After the install, `pkg-config` reads 0.7.2. So uninstall takes the normal path, not the stale one, which matches David's "restored `libcamera.so.0.7 -> 0.7.0`". |
+| `dpkg-query -S` on this Ubuntu 26.04.1 box (read-only) | It resolves `/usr/lib/x86_64-linux-gnu/libcamera.so.0.7{,.0}` and `…/ipa/ipa_soft_simple.so` to their packages, so absolute paths in the meson log match the dpkg database. |
+| apt package selection (`apt-get install --reinstall -s` with the exact list the new `dpkg-query \| awk` produces here) | The list is `gstreamer1.0-libcamera libcamera-dev libcamera-ipa libcamera0.2 libcamera0.7 libspa-0.2-libcamera`. `libcamera0.2` is an obsolete leftover from an older release and can't be downloaded. apt prints "Reinstallation of libcamera0.2 is not possible" and **exits 0, reinstalling the other 5**, so a stray old package doesn't turn the reinstall into a warning. |
+| What meson installs to the tuning directory (libcamera v0.7.2, `src/ipa/simple/data/meson.build`) | Only `uncalibrated.yaml`. Our `ov02e10.yaml` is never in the install log, so uninstall cannot remove or touch it. That is consistent with the README note about the yaml staying behind. |
+| `set -e` hazards | `[[ … ]] && continue` / `&& { …; }` lists are exempt. The `grep` inside `mapfile < <(…)` cannot kill the parent. The empty `"${files[@]}"` is fine under `set -u` on bash ≥ 4.4. `reinstall_distro_libcamera` ends with `return 0`. |
+
+### Static checks (re-run)
+
+- `bash -n`: both changed scripts pass.
+- shellcheck (`koalaman/shellcheck:stable`):
+  - install.sh: main 8 → head 8.
+  - build-patched-libcamera.sh: main 8 → head 7.
+  - The finding text matches `main`'s set minus the `SCRIPT_DIR` SC2034, which is now used. **No new findings.** The SC2295 on the restore loop's `${backup_file#$BACKUP_DIR}` is pre-existing.
+
+### Non-blocking (follow-ups, not for this PR)
+
+- **R1. Uninstall is slow and silent on Ubuntu.** `pkg_owns` runs one
+  `dpkg-query -S` per install-log entry that still exists and isn't backed up.
+  That is about 0.33 s each here (50 calls took 16.4 s). With roughly 100
+  installed headers plus libs, tools, gst and python, expect up to about a minute
+  without output. It's correct, just slow. A follow-up could batch the lookups
+  (one `dpkg-query -S` with all paths) or print a "checking package ownership…"
+  line.
+- **R2. Arch reinstall is `pacman -S` without `-y`.** If the local sync database
+  is newer than what's installed, this upgrades only libcamera, which is a partial
+  upgrade. This is **pre-existing**: `main` already runs
+  `pacman -S libcamera libcamera-ipa`. The PR only widens the package list.
+- **R3. The "Found while testing" items in the PR description are worth their own
+  issues:**
+  - Ubuntu: the MOK key is not checked for enrollment when Secure Boot is turned on later.
+  - Fedora: the akmods key is used only when SB is on at install time.
+  - Arch: generic `linux-headers` with a CachyOS kernel.
+  - Arch: `/usr/lib64` symlink → "Could not verify installation timestamp".
+
+  David also said he'll report the Fedora libraries-only install, where the camera
+  didn't work. None of these are caused by this PR.
+
+### Draft merge comment (NOT posted)
+
+> Thanks David, this is great work. Thanks especially for testing on Ubuntu 26.04
+> and CachyOS as well as Fedora.
+>
+> Everything from the review is fixed: the script is executable again, the yaml
+> comments say 1.7, `install.sh` no longer points people at `tune-ccm.sh` for the
+> patched file, step 4c skips a master clone, and the README now gives the right
+> upgrade path for existing 0.7.2 users.
+>
+> The `--uninstall` fix is a really good catch. Leaving `libcamera.so.0.7`
+> pointing at the 0.7.2 build was a real bug on `main` for anyone on Ubuntu's
+> 0.7.0. I ran the new helper and restore code in a sandbox with an Ubuntu-style
+> layout, with and without the install log, and it removes exactly the added files
+> and puts the symlinks back. Your test results cover the hardware side.
+>
+> Merging now. It'll go out in the next release, v0.3.76. The other installer
+> issues you listed at the bottom (Secure Boot key enrollment, CachyOS headers)
+> are worth their own issues, and I'll follow up on those separately.
+
+### Draft release notes (NOT published)
+
+**Title:** `v0.3.76 — Book5 OV02E10: SoftISP tuning on libcamera 0.7.2, and the bayer-fix uninstall no longer breaks libcamera`
+
+**Body:**
+
+> If you have a **Galaxy Book5 with the OV02E10 camera** and use the shell
+> installer (`webcam-fix-book5`), this release brings the four SoftISP tuning
+> patches from the NixOS module to libcamera 0.7.2. It also fixes an uninstall bug
+> that could leave libcamera broken on Ubuntu.
+>
+> Contributed by [@david-bartlett](https://github.com/david-bartlett) in
+> [#107](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/pull/107).
+>
+> ## What's new
+>
+> - **SoftISP tuning patches on libcamera 0.7.2.** When the bayer-fix build
+>   (`libcamera-bayer-fix/build-patched-libcamera.sh`) builds libcamera **0.7.2**
+>   as a **full install**, it now applies the same four patches as the NixOS
+>   module:
+>   - `blc-channel-levels`
+>   - `agc-min-gain-step`
+>   - `awb-skip-saturated`
+>   - `agc-exposure-target`
+>
+>   Full installs are the Fedora source RPM, Arch, Debian/Ubuntu, and libcamera
+>   in `/usr/local`. Ubuntu's 0.7.0 is already built as 0.7.2 (#71), so it is
+>   included. `install.sh` then installs a matching tuning file,
+>   `ov02e10-0.7.2.yaml`, which has the NixOS CCMs and black level with
+>   `exposureTarget: 1.7`.
+> - **Other versions are unchanged.** libcamera 0.7.1, 0.6.x and older,
+>   libraries-only installs and master builds keep today's behaviour: only the
+>   bayer fix and the existing tuning file.
+> - **`tune-ccm.sh` isn't suggested for the patched file.** Its presets are
+>   measured on stock libcamera.
+>
+> ## Fixed
+>
+> - **`./uninstall.sh` / `build-patched-libcamera.sh --uninstall` left libcamera
+>   broken when the build was a different version from the distro's.** On Ubuntu
+>   26.04 (0.7.0 built as 0.7.2) the camera ended up RAW-only after uninstalling:
+>   - the `libcamera.so.0.7` symlink was never restored;
+>   - the added 0.7.2 libraries were never removed;
+>   - so the 0.7.2 library loaded the stock 0.7.0 IPA, and the soft ISP was
+>     disabled.
+>
+>   When libcamera comes from your package manager, uninstall now:
+>   - removes the files the build added that no package owns;
+>   - restores the backup, including symlinks;
+>   - reinstalls your installed libcamera packages.
+>
+>   Source builds in `/usr/local` keep the old behaviour, plus the symlink fix.
+>
+> ## Who is affected
+>
+> Book5 OV02E10 owners whose sensor needs the bayer fix (flipped sensor), on a
+> full-install distro with libcamera 0.7.0 or 0.7.2. Everyone else (OV02C10,
+> Book3/Book4, NixOS, libcamera 0.7.1 or older) sees no change.
+>
+> ## How it was tested
+>
+> @david-bartlett tested install and uninstall on a Galaxy Book5 Pro (940XHA):
+> - **Fedora 45 beta** (0.7.2 source RPM): patches applied, colour correct, and
+>   `rpm -V` is clean after uninstall.
+> - **Ubuntu 26.04.1** (0.7.0 → 0.7.2): patches applied, and Kamoso and Firefox
+>   work. Uninstall restores Ubuntu's 0.7.0.
+> - **CachyOS** (Arch repos, 0.7.2): patches applied, and `pacman -Qkk` is clean
+>   after uninstall.
+> - **Fedora 44** (0.7.1): the patches are skipped as intended.
+>
+> I also checked off-hardware:
+> - the patches apply only to v0.7.2 (they fail on 0.7.0, 0.7.1 and master), and
+>   a failure falls back cleanly to the bayer fix alone;
+> - the new uninstall code was run in a sandbox;
+> - shellcheck finds nothing new.
+>
+> ## Update
+>
+> **Already have the bayer fix on libcamera 0.7.2 (or Ubuntu 0.7.0)?** Re-running
+> `./install.sh` alone won't pick up the patches, because it sees the fix as
+> already installed. Rebuild with:
+>
+> ```bash
+> cd samsung-galaxy-book-linux-fixes && git pull
+> cd webcam-fix-book5
+> sudo ./libcamera-bayer-fix/build-patched-libcamera.sh --uninstall
+> ./install.sh
+> ```
+>
+> Then restart PipeWire: `systemctl --user restart pipewire wireplumber`. Also
+> restart `camera-relay.service` if you use the relay.
+>
+> Nothing else changed. Drivers, the speaker fixes and the NixOS modules are
+> untouched.
+
+### Housekeeping
+
+- The head was fetched into the temporary branch `pr-107-586c849` (never checked
+  out over `main`), which was deleted after review. The working tree is on `main`.
+- Nothing was merged, posted, tagged or released.
