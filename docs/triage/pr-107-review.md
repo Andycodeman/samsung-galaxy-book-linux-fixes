@@ -2,6 +2,11 @@
 
 VERDICT: CHANGES REQUESTED
 
+**Review POSTED 2026-10-09** as REQUEST_CHANGES on head `c7e48f5` (unchanged
+since the review; no prior comments or reviews on the PR):
+<https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/pull/107#pullrequestreview-5468715276>
+(review id 5468715276). Awaiting the author's fix for B1.
+
 The only blocker is B1: the commit drops the executable bit on
 `build-patched-libcamera.sh`. The fix is a one-line `chmod +x`. The logic is
 otherwise sound, and every claim in the PR body that could be checked off-hardware
@@ -118,7 +123,7 @@ the author.
 under `/usr/local/…` would select the 0.7.2 yaml even when the active libcamera is
 `/usr`. This is very unlikely, so leave it.
 
-## Draft GitHub review (NOT posted)
+## GitHub review (posted 2026-10-09, review id 5468715276, unchanged from the draft)
 
 > Thanks David, this is a really clean port, and the PR description made it easy
 > to check.
