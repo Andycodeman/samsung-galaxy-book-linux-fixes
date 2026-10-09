@@ -1,0 +1,84 @@
+# SPDX-License-Identifier: CC0-1.0
+# Tuning file for OmniVision OV02E10 on Intel IPU7 (Lunar Lake)
+# Used by libcamera's Simple pipeline handler / Software ISP
+#
+# Shell-installer copy of nixos/ov02e10.yaml. Same CCMs and black level;
+# only exposureTarget differs (1.7 here, 1.5 in the NixOS file).
+# install.sh selects it only when the installed soft ISP IPA was built by
+# build-patched-libcamera.sh from libcamera 0.7.2 with the blc-channel-levels,
+# agc-min-gain-step, awb-skip-saturated and agc-exposure-target patches.
+# Without them it gives a green tint: stock libcamera ignores exposureTarget,
+# and the matrices were measured with all four applied. Otherwise install.sh
+# uses ov02e10.yaml.
+#
+# Based on the multi-temperature CCM tuning by @david-bartlett.
+# 6-anchor tuning for libcamera 0.6.0+.
+# Anchors: 2700K, 3200K, 4500K, 5500K, 6000K, 6500K
+#
+# Row sums are 1.09 (R), 1.0 (G) and 1.03 (B). The original rows summed to
+# 1.1-1.6 for "colour richness", but unequal row sums shift white balance
+# after AWB: a neutral target filling the frame measured R/G 1.09 (pink) with
+# them and 1.01 with rows of 1.0. The R/B lift that remains offsets grey-world
+# AWB reading skin tones as a warm illuminant: with a person in frame and rows
+# of 1.0 a grey wall measured R/G 0.975, B/G 0.98 in the output, about 5% low
+# in linear terms.
+#
+# Green diagonal reduces with increasing CT to suppress the sensor's native
+# green bias, which worsens at higher colour temperatures. Cross-terms are
+# used to selectively suppress green on neutral surfaces while preserving
+# saturation on genuinely green objects.
+#
+# Measured on a 960XHA (NixOS, patched libcamera 0.7.2). Checked on a
+# Galaxy Book 5 Pro (940XHA), Fedora 44 with libcamera 0.7.2 rebuilt with the
+# Bayer fix, OV02E10 sensor helper and the four patches: grey patches stay
+# neutral (B/G 0.98-1.00) from dark grey to white under mixed window and lamp
+# light, where ov02e10.yaml on 0.7.1 drifts from warm to green.
+# Also tested on the Galaxy Book 5 Pro (940XHA), Fedora 45 with libcamera
+# 0.7.2, built by build-patched-libcamera.sh with the same patches.
+%YAML 1.1
+---
+version: 1
+algorithms:
+  - BlackLevel:
+      # OV02E10 optical-black pedestal: 64 codes at 10-bit (= 4096 in 16-bit).
+      # Anchors the black level so the SoftISP's dynamic estimator can't drift
+      # toward 0 in low-light noise and leave the pedestal unsubtracted (gray
+      # instead of black). Measured on a 960XHA from covered-lens raw frames at
+      # analogue gain 1x-15.5x: 63.3-63.7 on all four Bayer sites, independent
+      # of gain once light leakage is fitted out.
+      blackLevel: 4096
+  - Awb:
+  - Ccm:
+      ccms:
+        - ct: 2700
+          ccm: [  1.280, -0.111, -0.079,
+                 -0.073,  1.436, -0.363,
+                  0.010, -0.372,  1.393 ]
+        - ct: 3200
+          ccm: [  1.243, -0.092, -0.061,
+                 -0.124,  1.405, -0.281,
+                  0.000, -0.271,  1.301 ]
+        - ct: 4500
+          ccm: [  1.213, -0.077, -0.046,
+                 -0.125,  1.232, -0.107,
+                  0.008, -0.177,  1.200 ]
+        - ct: 5500
+          ccm: [  1.272, -0.107, -0.075,
+                 -0.054,  1.086, -0.032,
+                  0.040, -0.195,  1.185 ]
+        - ct: 6000
+          ccm: [  1.254, -0.082, -0.082,
+                 -0.021,  0.978,  0.043,
+                  0.064, -0.202,  1.168 ]
+        - ct: 6500
+          ccm: [  1.244, -0.062, -0.092,
+                  0.000,  0.934,  0.066,
+                  0.080, -0.213,  1.162 ]
+  - Adjust:
+  - Agc:
+      # Mean sample value AGC aims for on a 1-5 scale (default 2.5). The
+      # default clips highlights and spends gain a webcam does not need.
+      # 1.7 rather than the NixOS module's 1.5: 1.5 looked too dark next to
+      # a bright window on a Galaxy Book5 Pro (940XHA). Personal preference.
+      exposureTarget: 1.7
+...

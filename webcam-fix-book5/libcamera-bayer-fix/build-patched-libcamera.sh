@@ -45,6 +45,77 @@ fi
 
 REAL_USER="${SUDO_USER:-$USER}"
 
+# ─── Uninstall helpers ───────────────────────────────────────────────
+# True if a distro package owns PATH.
+pkg_owns() {
+    local f="$1"
+    if command -v dpkg-query &>/dev/null && dpkg-query -S "$f" &>/dev/null; then return 0; fi
+    if command -v rpm &>/dev/null && rpm -qf "$f" &>/dev/null; then return 0; fi
+    if command -v pacman &>/dev/null && pacman -Qqo "$f" &>/dev/null; then return 0; fi
+    return 1
+}
+
+# True if the backed-up libcamera came from the package manager (not a
+# source build in /usr/local), judged by its libraries.
+libcamera_pkg_managed() {
+    local f
+    while IFS= read -r f; do
+        pkg_owns "${f#"$BACKUP_DIR"}" && return 0
+    done < <(find "$BACKUP_DIR" -name 'libcamera*.so*' \( -type f -o -type l \) 2>/dev/null)
+    return 1
+}
+
+# Remove files the full install added that weren't there before and that no
+# package owns. When the build is a different version from the distro's (e.g.
+# 0.7.0 built as v0.7.2, issue #71), the new libcamera*.so.X.Y.Z sit next to
+# the distro's and ldconfig keeps picking them, so restoring the backup alone
+# leaves the patched library loaded against the stock IPA.
+remove_unowned_installed_files() {
+    local list="$BACKUP_DIR/install-log.txt" f d n=0
+    local -a files=() dirs=()
+    if [[ -f "$list" ]]; then
+        mapfile -t files < <(grep -v '^#' "$list")
+    else
+        # Backups made before the install log was kept: catch the libraries.
+        mapfile -t dirs < <(find "$BACKUP_DIR" -name 'libcamera*.so*' -printf '%h\n' 2>/dev/null | sort -u)
+        for d in "${dirs[@]}"; do
+            files+=("${d#"$BACKUP_DIR"}"/libcamera*.so*)
+        done
+    fi
+    for f in "${files[@]}"; do
+        [[ -n "$f" ]] || continue
+        [[ -e "$f" || -L "$f" ]] || continue
+        [[ -d "$f" && ! -L "$f" ]] && continue
+        [[ -e "$BACKUP_DIR$f" || -L "$BACKUP_DIR$f" ]] && continue   # existed before: restored below
+        pkg_owns "$f" && continue
+        rm -f "$f" && info "  Removed: $f" && n=$((n + 1))
+    done
+    # Drop libcamera directories the install created and left empty
+    while IFS= read -r d; do
+        while [[ "$d" == *libcamera* && -d "$d" ]] && rmdir "$d" 2>/dev/null; do
+            d="$(dirname "$d")"
+        done
+    done < <(printf '%s\n' "${files[@]}" | xargs -r -n1 dirname | sort -ru)
+    info "Removed $n file(s) added by the patched build."
+}
+
+# Reinstall the libcamera packages that are installed, to put back files the
+# backup doesn't cover (e.g. the GStreamer plugin).
+reinstall_distro_libcamera() {
+    local -a pkgs=()
+    if command -v dnf &>/dev/null; then
+        mapfile -t pkgs < <(rpm -qa --qf '%{NAME}\n' 'libcamera*' | sort -u)
+        [[ ${#pkgs[@]} -gt 0 ]] && { dnf reinstall -y "${pkgs[@]}" || warn "dnf reinstall failed — run: sudo dnf reinstall ${pkgs[*]}"; }
+    elif command -v pacman &>/dev/null; then
+        mapfile -t pkgs < <(pacman -Qq | grep -E '^(libcamera|gst-plugin-libcamera)' || true)
+        [[ ${#pkgs[@]} -gt 0 ]] && { pacman -S --noconfirm "${pkgs[@]}" || warn "pacman reinstall failed — run: sudo pacman -S ${pkgs[*]}"; }
+    elif command -v apt-get &>/dev/null; then
+        mapfile -t pkgs < <(dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' 2>/dev/null | awk '$1 == "ii" && $2 ~ /libcamera/ {print $2}')
+        [[ ${#pkgs[@]} -gt 0 ]] && { apt-get install --reinstall -y "${pkgs[@]}" || warn "apt reinstall failed — run: sudo apt install --reinstall ${pkgs[*]}"; }
+    fi
+    return 0
+}
+
 # ─── Uninstall mode ──────────────────────────────────────────────────
 if [[ "${1:-}" == "--uninstall" ]]; then
     echo ""
@@ -95,16 +166,13 @@ if [[ "${1:-}" == "--uninstall" ]]; then
         warn "libcamera version changed since backup ($BACKUP_VER_CLEAN → $CURRENT_VER_CLEAN)"
         warn "Restoring stale backup would break the system — skipping restore."
         info "Removing stale backup and reinstalling from package manager..."
+        if libcamera_pkg_managed; then
+            remove_unowned_installed_files
+        fi
         rm -rf "$BACKUP_DIR"
 
         # Reinstall from distro package manager
-        if command -v dnf &>/dev/null; then
-            dnf reinstall -y 'libcamera*' 2>/dev/null || true
-        elif command -v pacman &>/dev/null; then
-            pacman -S --noconfirm libcamera libcamera-ipa 2>/dev/null || true
-        elif command -v apt-get &>/dev/null; then
-            apt-get install --reinstall -y 'libcamera*' 2>/dev/null || true
-        fi
+        reinstall_distro_libcamera
 
         ldconfig 2>/dev/null || true
         rm -f /etc/profile.d/libcamera-ipa-path.sh
@@ -113,15 +181,32 @@ if [[ "${1:-}" == "--uninstall" ]]; then
         exit 0
     fi
 
+    PKG_MANAGED=false
+    libcamera_pkg_managed && PKG_MANAGED=true
+    if $PKG_MANAGED; then
+        info "Removing files added by the patched build..."
+        remove_unowned_installed_files
+    fi
+
     info "Restoring original libcamera files (version: ${BACKUP_VERSION:-unknown})..."
     while IFS= read -r backup_file; do
         rel_path="${backup_file#$BACKUP_DIR}"
-        # Skip the version marker file
+        # Skip the version marker and the install log
         [[ "$backup_file" == "$BACKUP_DIR/version" ]] && continue
-        if [[ -f "$backup_file" ]]; then
+        [[ "$backup_file" == "$BACKUP_DIR/install-log.txt" ]] && continue
+        if [[ -L "$backup_file" ]]; then
+            # Symlinks too: e.g. libcamera.so.0.7 -> libcamera.so.0.7.0
+            ln -sfn "$(readlink "$backup_file")" "$rel_path"
+            echo "'$backup_file' -> '$rel_path' (symlink)"
+        elif [[ -f "$backup_file" ]]; then
             cp -v "$backup_file" "$rel_path"
         fi
-    done < <(find "$BACKUP_DIR" -type f)
+    done < <(find "$BACKUP_DIR" \( -type f -o -type l \))
+
+    if $PKG_MANAGED; then
+        info "Reinstalling distro libcamera packages (restores files not in the backup)..."
+        reinstall_distro_libcamera
+    fi
 
     ldconfig 2>/dev/null || true
     rm -rf "$BACKUP_DIR"
@@ -850,6 +935,64 @@ else
 fi
 echo ""
 
+# Determine install strategy (used by step 4c and step 8):
+# - SRPM build: full install (distro source, matching signatures)
+# - /usr/local prefix: full install (built from source, no distro packages to preserve)
+# - Distro package paths (/usr/lib*): .so-only install (preserve distro IPA signatures)
+USE_FULL_INSTALL=false
+INSTALL_MODE_MSG=""
+if [[ "$USE_SRPM" == "true" ]]; then
+    USE_FULL_INSTALL=true
+    INSTALL_MODE_MSG="Full install: built from distro source RPM."
+elif [[ "$LIBCAMERA_LIB_DIR" == /usr/local/* ]]; then
+    USE_FULL_INSTALL=true
+    INSTALL_MODE_MSG="Full install: library is in /usr/local (built from source, not distro package)."
+elif [[ "$DISTRO" == "arch" ]]; then
+    # Arch: must use full install. The .so-only approach leaves build-tree
+    # paths embedded in the library (IPA search path becomes //src/ipa)
+    # because meson install is what rewrites the rpath. Arch's IPA signature
+    # checking falls back to non-sandboxed mode when signatures don't match,
+    # so this is safe.
+    USE_FULL_INSTALL=true
+    INSTALL_MODE_MSG="Full install: Arch Linux (so-only install breaks IPA path resolution)."
+elif [[ "$DISTRO" == "debian" || "$DISTRO" == "ubuntu" ]]; then
+    # Ubuntu/Debian: IPA modules must match the patched library's build hash.
+    # The .so-only approach preserves distro IPA .sign files which were built
+    # against the original library — causing signature mismatch and camera failure.
+    USE_FULL_INSTALL=true
+    INSTALL_MODE_MSG="Full install: Ubuntu/Debian (IPA modules must match patched library)."
+fi
+
+# Step 4c: libcamera 0.7.2 only — SoftISP tuning patches from the NixOS module
+# (PR #102). They are cut against 0.7.2 and do not apply to other versions.
+# install.sh selects ov02e10-0.7.2.yaml only when they are in the installed IPA.
+# Full installs only: awb-skip-saturated changes the SwIspStats layout shared by
+# libcamera.so and the IPA, so a .so-only install (distro IPA kept) would pass
+# the stock IPA statistics it misreads, breaking AGC, AWB and black level.
+# Not on a master clone either: master's meson.build can still read 0.7.2, but
+# the patches only apply to the v0.7.2 release.
+SWISP_SRC_VER=$(grep -m1 -oP "^\s*version\s*:\s*'\K[0-9.]+" "$BUILD_DIR/libcamera/meson.build" || true)
+if [[ "$SWISP_SRC_VER" == "0.7.2" && "$USE_SRPM" != "true" && "$LIBCAMERA_GIT_TAG" == "master" ]]; then
+    info "Building libcamera master, not the v0.7.2 release — skipping SoftISP tuning patches."
+    echo ""
+elif [[ "$SWISP_SRC_VER" == "0.7.2" && "$USE_FULL_INSTALL" != "true" ]]; then
+    info "libcamera 0.7.2, but this is a libraries-only install (distro IPA kept)."
+    info "Skipping SoftISP tuning patches: they must be in libcamera.so and the IPA together."
+    echo ""
+elif [[ "$SWISP_SRC_VER" == "0.7.2" ]]; then
+    info "libcamera 0.7.2 — applying SoftISP tuning patches..."
+    cp -a "$BUILD_DIR/libcamera" "$BUILD_DIR/libcamera.orig"
+    if (cd "$BUILD_DIR/libcamera" && for p in blc-channel-levels agc-min-gain-step awb-skip-saturated agc-exposure-target; do
+            git apply "$SCRIPT_DIR/$p.patch" || exit 1; done); then
+        ok "SoftISP tuning patches applied."
+        rm -rf "$BUILD_DIR/libcamera.orig"
+    else
+        warn "SoftISP tuning patches did not apply — building with the bayer fix only."
+        rm -rf "$BUILD_DIR/libcamera" && mv "$BUILD_DIR/libcamera.orig" "$BUILD_DIR/libcamera"
+    fi
+    echo ""
+fi
+
 # Step 5: Verify patch
 info "Verifying patch..."
 if grep -qE 'ispFormat|inputBayer\.order' "$BUILD_DIR/libcamera/src/libcamera/pipeline/simple/simple.cpp"; then
@@ -910,36 +1053,15 @@ echo ""
 # Step 8: Install
 cd "$BUILD_DIR/libcamera"
 
-# Determine install strategy:
-# - SRPM build: full install (distro source, matching signatures)
-# - /usr/local prefix: full install (built from source, no distro packages to preserve)
-# - Distro package paths (/usr/lib*): .so-only install (preserve distro IPA signatures)
-USE_FULL_INSTALL=false
-if [[ "$USE_SRPM" == "true" ]]; then
-    USE_FULL_INSTALL=true
-    info "Full install: built from distro source RPM."
-elif [[ "$LIBCAMERA_LIB_DIR" == /usr/local/* ]]; then
-    USE_FULL_INSTALL=true
-    info "Full install: library is in /usr/local (built from source, not distro package)."
-elif [[ "$DISTRO" == "arch" ]]; then
-    # Arch: must use full install. The .so-only approach leaves build-tree
-    # paths embedded in the library (IPA search path becomes //src/ipa)
-    # because meson install is what rewrites the rpath. Arch's IPA signature
-    # checking falls back to non-sandboxed mode when signatures don't match,
-    # so this is safe.
-    USE_FULL_INSTALL=true
-    info "Full install: Arch Linux (so-only install breaks IPA path resolution)."
-elif [[ "$DISTRO" == "debian" || "$DISTRO" == "ubuntu" ]]; then
-    # Ubuntu/Debian: IPA modules must match the patched library's build hash.
-    # The .so-only approach preserves distro IPA .sign files which were built
-    # against the original library — causing signature mismatch and camera failure.
-    USE_FULL_INSTALL=true
-    info "Full install: Ubuntu/Debian (IPA modules must match patched library)."
-fi
+# Install strategy (USE_FULL_INSTALL) was decided before step 4c.
+[[ -n "$INSTALL_MODE_MSG" ]] && info "$INSTALL_MODE_MSG"
 
 if [[ "$USE_FULL_INSTALL" == "true" ]]; then
     info "Installing patched libcamera (full install)..."
     ninja -C builddir install 2>&1 | tail -10
+    # Keep meson's list of installed files so --uninstall can remove the ones
+    # that weren't there before (see remove_unowned_installed_files).
+    cp builddir/meson-logs/install-log.txt "$BACKUP_DIR/install-log.txt" 2>/dev/null || true
     ldconfig 2>/dev/null || true
     ok "Patched libcamera installed (full install)."
 else
@@ -989,6 +1111,7 @@ else
     if [[ $INSTALLED_COUNT -eq 0 ]]; then
         warn "No .so files were replaced. Falling back to full install..."
         ninja -C builddir install 2>&1 | tail -10
+        cp builddir/meson-logs/install-log.txt "$BACKUP_DIR/install-log.txt" 2>/dev/null || true
     fi
 
     ldconfig 2>/dev/null || true

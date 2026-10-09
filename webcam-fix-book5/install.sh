@@ -870,6 +870,14 @@ if [[ -n "$TUNING_DIR" ]]; then
     if [[ -n "${LIBCAMERA_MINOR:-}" ]] && [[ "${LIBCAMERA_MINOR}" -lt 6 ]] 2>/dev/null; then
         TUNING_SRC="$SCRIPT_DIR/${TUNING_SENSOR}-0.5.2.yaml"
         TUNING_VER="v0.5.x (Lut)"
+    elif grep -qas exposureTarget /usr/lib64/libcamera/ipa/ipa_soft_simple.so \
+            /usr/lib/x86_64-linux-gnu/libcamera/ipa/ipa_soft_simple.so /usr/lib/libcamera/ipa/ipa_soft_simple.so \
+            /usr/local/lib*/libcamera/ipa/ipa_soft_simple.so /usr/local/lib/*/libcamera/ipa/ipa_soft_simple.so \
+         && [[ -f "$SCRIPT_DIR/${TUNING_SENSOR}-0.7.2.yaml" ]]; then
+        # libcamera 0.7.2 built with the SoftISP tuning patches (bayer-fix step 4c)
+        TUNING_SRC="$SCRIPT_DIR/${TUNING_SENSOR}-0.7.2.yaml"
+        TUNING_VER="v0.7.2 + SoftISP tuning patches"
+        TUNING_PATCHED=true
     else
         TUNING_SRC="$SCRIPT_DIR/${TUNING_SENSOR}.yaml"
         TUNING_VER="v0.6+ (Adjust)"
@@ -879,7 +887,13 @@ if [[ -n "$TUNING_DIR" ]]; then
         sudo cp "$TUNING_SRC" "$TUNING_DIR/$TUNING_FILE"
         echo "  ✓ Installed $TUNING_FILE → $TUNING_DIR/ ($TUNING_VER)"
         echo "    (CCM tuned by david-bartlett on Galaxy Book5 Pro)"
-        echo "    Use ./tune-ccm.sh to interactively find the best color preset"
+        if [[ "${TUNING_PATCHED:-false}" == "true" ]]; then
+            # tune-ccm.sh presets are measured on stock statistics and have no
+            # exposureTarget or 4096 black level, so don't suggest them here.
+            echo "    Matched to the SoftISP tuning patches: tune-ccm.sh presets don't apply"
+        else
+            echo "    Use ./tune-ccm.sh to interactively find the best color preset"
+        fi
     else
         echo "  ⚠ Tuning file $TUNING_SRC not found in installer directory"
     fi
