@@ -267,7 +267,7 @@ How I verified it:
   David also said he'll report the Fedora libraries-only install, where the camera
   didn't work. None of these are caused by this PR.
 
-### Draft merge comment (NOT posted)
+### Merge comment (posted 2026-10-09, unchanged from the draft)
 
 > Thanks David, this is great work. Thanks especially for testing on Ubuntu 26.04
 > and CachyOS as well as Fedora.
@@ -287,7 +287,7 @@ How I verified it:
 > issues you listed at the bottom (Secure Boot key enrollment, CachyOS headers)
 > are worth their own issues, and I'll follow up on those separately.
 
-### Draft release notes (NOT published)
+### Release notes (published as v0.3.76, unchanged from the draft)
 
 **Title:** `v0.3.76 — Book5 OV02E10: SoftISP tuning on libcamera 0.7.2, and the bayer-fix uninstall no longer breaks libcamera`
 
@@ -386,4 +386,26 @@ How I verified it:
 
 - The head was fetched into the temporary branch `pr-107-586c849` (never checked
   out over `main`), which was deleted after review. The working tree is on `main`.
-- Nothing was merged, posted, tagged or released.
+- At the time of the re-check, nothing was merged, posted, tagged or released.
+
+## Merged + released
+
+- **Head re-checked** just before approving: still `586c849`, `MERGEABLE` /
+  `CLEAN`, and no new comments after his 2026-10-09T14:40Z one.
+- **Review:** an APPROVE review, "All review points addressed at 586c849 —
+  approving."
+  ([#pullrequestreview-5472300288](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/pull/107#pullrequestreview-5472300288)).
+  `reviewDecision` went from `CHANGES_REQUESTED` to `APPROVED`.
+- **Merge:** `gh pr merge 107 --merge --match-head-commit 586c849…` →
+  merge commit `e406d05` (2026-10-09T15:48:15Z). The local docs commit was
+  rebased on top; nothing was force-pushed.
+- **On `main` after the merge:** the only difference from the PR tree is this
+  file (`git diff --stat 586c849 e406d05`). `build-patched-libcamera.sh` is
+  still `100755`, and `bash -n` passes on both changed scripts.
+- **Merge comment:** the draft above, posted verbatim
+  ([#issuecomment-6084303381](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/pull/107#issuecomment-6084303381)).
+- **Release:** [v0.3.76](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/releases/tag/v0.3.76),
+  tagged on the commit that adds this section, with the release notes above.
+- **Still open:** R1–R3 above. The merge comment says Andy will follow up
+  separately on the "Found while testing" installer issues, and David said he'll
+  report the Fedora libraries-only install himself.
