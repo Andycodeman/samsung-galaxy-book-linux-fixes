@@ -157,6 +157,15 @@ pkg-config --modversion libcamera               # version installed now — must
 ```
 After (re)building, restart PipeWire so apps pick up the new library: `systemctl --user restart pipewire wireplumber` (and `camera-relay.service` if you use the relay).
 
+**libcamera 0.7.2: SoftISP tuning patches.** When the libcamera being built is 0.7.2 and the build does a full install (Fedora source RPM, Arch, Debian/Ubuntu, or libcamera in `/usr/local`), the build script also applies the four SoftISP tuning patches from the NixOS module (`blc-channel-levels`, `agc-min-gain-step`, `awb-skip-saturated`, `agc-exposure-target`), and `install.sh` then installs `ov02e10-0.7.2.yaml` as the `ov02e10.yaml` tuning file. Other libcamera versions and libraries-only installs are unchanged.
+- **Already have the bayer fix on 0.7.2?** Re-running `./install.sh` won't add the patches: the libcamera version still matches the backup, so it reports the fix as already installed. Rebuild with:
+  ```bash
+  sudo ./libcamera-bayer-fix/build-patched-libcamera.sh --uninstall
+  ./install.sh
+  ```
+- **After a standalone `--uninstall`**, the 0.7.2 tuning file stays in place while libcamera goes back to stock, which gives a green tint. Re-run `./install.sh` to rebuild, or `./uninstall.sh` to remove everything.
+- **`tune-ccm.sh`** presets are measured on stock libcamera and don't include the patched file's `exposureTarget` or black level, so they're not meant for the 0.7.2 file. If you save one, re-run `./install.sh` to put the 0.7.2 file back.
+
 **`tune-ccm.sh` cannot fix this.** If you've tried the CCM presets and none of them removes the purple, that's expected — the tint is a bayer-pattern shift, not a colour-matrix error. Flipping the sensor folds the red and blue samples onto the same positions, so the information needed to separate them is gone; no 3×3 matrix can recover it. Only the patched libcamera above corrects it. Once the bayer fix is active, `tune-ccm.sh` is still useful for any remaining mild green/warm cast (and it now warns you up front on OV02E10 if the bayer fix doesn't look active).
 
 ### Concurrent camera access (only one app at a time)
