@@ -789,73 +789,113 @@ mkdir -p "$BUILD_DIR"
 
 USE_SRPM=false
 
-# On Fedora, use SRPM to get distro-patched source (vanilla source may
-# lack distro-specific patches for camera/pipeline support)
-if [[ "$DISTRO" == "fedora" ]]; then
-    info "Fedora detected — downloading source RPM for distro-patched source..."
-
+# Fedora must build from the distro source RPM. Never fall
+# back to a git clone here: with libcamera in /usr/lib64 a clone build takes
+# the libraries-only install in step 8, which leaves the build runpath in
+# libcamera.so. libcamera then thinks it is not installed, looks for the IPA
+# proxy worker in a build tree that no longer exists, and the soft ISP fails
+# (RAW only, no usable webcam). If the source RPM can't be prepared, stop now:
+# nothing has been backed up or replaced yet, so the stock libcamera keeps
+# working (with the purple tint) and install.sh can retry later.
+prepare_srpm_source() {
     SRPM_DIR="$BUILD_DIR/srpmbuild"
-    mkdir -p "$SRPM_DIR"
+    RPM_BUILD="$BUILD_DIR/rpmbuild"
+    mkdir -p "$SRPM_DIR" "$RPM_BUILD"/{SOURCES,SPECS}
 
-    # Download the source RPM
-    if dnf download --source libcamera --destdir "$SRPM_DIR" 2>&1; then
-        SRPM_FILE=$(ls "$SRPM_DIR"/*.src.rpm 2>/dev/null | head -1)
-        if [[ -n "$SRPM_FILE" ]]; then
-            ok "Downloaded: $(basename "$SRPM_FILE")"
-
-            # Extract SRPM
-            RPM_BUILD="$BUILD_DIR/rpmbuild"
-            mkdir -p "$RPM_BUILD"/{SOURCES,SPECS}
-            rpm -i --define "_topdir $RPM_BUILD" "$SRPM_FILE" 2>&1
-
-            # Find the spec file
-            SPEC_FILE=$(ls "$RPM_BUILD/SPECS/"*.spec 2>/dev/null | head -1)
-            if [[ -n "$SPEC_FILE" ]]; then
-                # Prep the source (extract + apply distro patches)
-                info "Preparing source with Fedora patches..."
-                rpmbuild -bp --define "_topdir $RPM_BUILD" "$SPEC_FILE" 2>&1 | tail -10
-
-                # Find the prepared source directory
-                # Try multiple strategies — Fedora may name the dir differently
-                PREPPED_SRC=""
-
-                # Strategy 1: Look for meson.build with project('libcamera')
-                while IFS= read -r meson_file; do
-                    if grep -q "project.*libcamera" "$meson_file" 2>/dev/null; then
-                        PREPPED_SRC="$(dirname "$meson_file")"
-                        break
-                    fi
-                done < <(find "$RPM_BUILD/BUILD" -maxdepth 3 -name "meson.build" 2>/dev/null)
-
-                # Strategy 2: Just grab the first directory in BUILD
-                if [[ -z "$PREPPED_SRC" ]]; then
-                    PREPPED_SRC=$(find "$RPM_BUILD/BUILD" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | head -1)
-                fi
-
-                # Debug: show what's in BUILD
-                if [[ -z "$PREPPED_SRC" || ! -d "$PREPPED_SRC" ]]; then
-                    warn "Could not find prepared source. Contents of BUILD dir:"
-                    ls -la "$RPM_BUILD/BUILD/" 2>/dev/null || true
-                    find "$RPM_BUILD/BUILD" -maxdepth 2 -name "meson.build" 2>/dev/null || true
-                    warn "Falling back to git clone."
-                else
-                    info "Found source at: $PREPPED_SRC"
-                    mv "$PREPPED_SRC" "$BUILD_DIR/libcamera"
-                    USE_SRPM=true
-                    ok "Source prepared with Fedora patches."
-                fi
-            else
-                warn "Could not find spec file. Falling back to git clone."
-            fi
-        else
-            warn "No SRPM downloaded. Falling back to git clone."
-        fi
-    else
-        warn "dnf download --source failed. Falling back to git clone."
+    # The exact package that is installed, so the build matches the
+    # libcamera-ipa and rpm database version (and install.sh's version check).
+    local pkg_nvr srpm_name pkg_ver pkg_rel
+    pkg_nvr=$(rpm -q --qf '%{NAME}-%{VERSION}-%{RELEASE}\n' libcamera 2>/dev/null | head -1 || true)
+    srpm_name=$(rpm -q --qf '%{SOURCERPM}\n' libcamera 2>/dev/null | head -1 || true)
+    pkg_ver=$(rpm -q --qf '%{VERSION}\n' libcamera 2>/dev/null | head -1 || true)
+    pkg_rel=$(rpm -q --qf '%{RELEASE}\n' libcamera 2>/dev/null | head -1 || true)
+    if [[ -z "$pkg_nvr" || "$pkg_nvr" == *"not installed"* || "$srpm_name" != *.src.rpm ]]; then
+        error "The libcamera package is not installed from an RPM."
+        return 1
     fi
+    info "Installed package: $pkg_nvr (source: $srpm_name)"
+
+    # 1. dnf from the distro's source repos. dnf5 (Fedora 41+) uses --srpm,
+    #    dnf4 uses --source; try both rather than guess the dnf version.
+    if dnf download --srpm "$pkg_nvr" --destdir "$SRPM_DIR" 2>&1 \
+       || dnf download --source "$pkg_nvr" --destdir "$SRPM_DIR" 2>&1; then
+        :
+    else
+        warn "dnf could not download $srpm_name."
+    fi
+
+    # 2. Fedora's build system keeps every build's source RPM, including
+    #    ones the mirrors have dropped. Only works for Fedora's own builds.
+    if [[ ! -f "$SRPM_DIR/$srpm_name" ]]; then
+        local koji_url="https://kojipkgs.fedoraproject.org/packages/libcamera/$pkg_ver/$pkg_rel/src/$srpm_name"
+        info "Trying Fedora Koji: $koji_url"
+        curl -fL --retry 3 -o "$SRPM_DIR/$srpm_name" "$koji_url" 2>&1 \
+            || { rm -f "$SRPM_DIR/$srpm_name"; warn "Koji download failed."; }
+    fi
+
+    # Only the exact source RPM of the installed package is accepted, never
+    # a different version that happened to be downloaded.
+    local srpm_file="$SRPM_DIR/$srpm_name"
+    if [[ ! -f "$srpm_file" ]]; then
+        error "Could not download the libcamera source RPM ($srpm_name)."
+        return 1
+    fi
+    ok "Downloaded: $(basename "$srpm_file")"
+
+    if ! rpm -i --define "_topdir $RPM_BUILD" "$srpm_file" 2>&1; then
+        error "Could not unpack $(basename "$srpm_file")."
+        return 1
+    fi
+
+    local spec_file
+    spec_file=$(ls "$RPM_BUILD/SPECS/"*.spec 2>/dev/null | head -1 || true)
+    if [[ -z "$spec_file" ]]; then
+        error "No spec file in $(basename "$srpm_file")."
+        return 1
+    fi
+
+    # Prep only (extract + apply distro patches). --nodeps: %prep doesn't need
+    # the BuildRequires; a missing one shows up clearly at meson setup instead.
+    info "Preparing source with Fedora patches..."
+    local prep_log="$BUILD_DIR/rpmbuild-prep.log"
+    if ! rpmbuild -bp --nodeps --define "_topdir $RPM_BUILD" "$spec_file" >"$prep_log" 2>&1; then
+        tail -20 "$prep_log"
+        error "rpmbuild -bp failed (log: $prep_log)."
+        return 1
+    fi
+
+    # Find the prepared tree: the meson.build that declares project('libcamera').
+    # rpm 4.20+ (Fedora 41+) nests it as BUILD/<name>-build/<name>-<ver>.
+    local prepped_src="" meson_file
+    while IFS= read -r meson_file; do
+        if grep -q "project.*libcamera" "$meson_file" 2>/dev/null; then
+            prepped_src="$(dirname "$meson_file")"
+            break
+        fi
+    done < <(find "$RPM_BUILD/BUILD" -maxdepth 3 -name "meson.build" 2>/dev/null)
+
+    if [[ -z "$prepped_src" || ! -d "$prepped_src" ]]; then
+        error "Could not find the prepared libcamera source. Contents of BUILD dir:"
+        ls -la "$RPM_BUILD/BUILD/" 2>/dev/null || true
+        return 1
+    fi
+
+    info "Found source at: $prepped_src"
+    mv "$prepped_src" "$BUILD_DIR/libcamera"
+    return 0
+}
+
+if [[ "$DISTRO" == "fedora" ]]; then
+    info "Fedora detected — using the source RPM for the installed libcamera..."
+    if ! prepare_srpm_source; then
+        rm -rf "$BUILD_DIR"
+        die "Could not prepare the Fedora libcamera source RPM. Nothing was changed: the stock libcamera is still installed. Check your network and re-run install.sh."
+    fi
+    USE_SRPM=true
+    ok "Source prepared with Fedora patches."
 fi
 
-# Fall back to git clone (for non-Fedora or if SRPM approach failed)
+# Non-Fedora distros: build from the upstream git tag
 if [[ "$USE_SRPM" != "true" ]]; then
     info "Cloning libcamera source (${LIBCAMERA_GIT_TAG})..."
 
