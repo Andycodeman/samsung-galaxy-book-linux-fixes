@@ -1080,6 +1080,51 @@ cmd_status() {
     fi
 }
 
+# Stream one `status --json` line on every state change, forever.
+# Intended for event-driven clients (bars, scripts, this package's own
+# tray): instead of re-running `status --json` on a timer, everything can
+# follow this watcher and react within the poll interval — cheap even at
+# half-second cadence because the loop re-checks only the pid, the
+# persistent flag and the cached state file. Camera and loopback detection
+# get pinned once: the same caches `status --json` reads, except that
+# watch never re-probes hardware each tick (the fallback probes in
+# cmd_status would defeat the point of event-driven when the cache is
+# cold, e.g. while the relay has never started).
+cmd_status_watch() {
+    local camera device
+    camera=$(detect_camera_name 2>/dev/null) || camera=""
+    [[ -z "$camera" ]] && camera="(not detected)"
+    device=$(detect_loopback_device 2>/dev/null) || device=""
+    [[ -z "$device" ]] && device="(not loaded)"
+
+    local last="" running=false persistent=false state="stopped"
+    while :; do
+        running=false
+        state="stopped"
+        if is_running; then
+            running=true
+            state=$(cat "$STATE_CACHE" 2>/dev/null) || state=""
+            case "$state" in
+                idle|streaming) ;;          # the two states the daemon tracks
+                *) state="running" ;;
+            esac
+        fi
+        persistent=false
+        is_persistent && persistent=true
+
+        local json_camera="${camera//\\/\\\\}" json_device="${device//\\/\\\\}"
+        local entry
+        entry=$(printf '{"running":%s,"persistent":%s,"camera":"%s","device":"%s","state":"%s"}' \
+            "$running" "$persistent" "$json_camera" "$json_device" "$state")
+
+        if [[ "$entry" != "$last" ]]; then
+            printf '%s\n' "$entry"
+            last=$entry
+        fi
+        sleep 0.5
+    done
+}
+
 # One-shot report covering every layer between the sensor and the browser.
 # Issue #65 took six round trips because "the relay starts but the browser sees
 # nothing" had no single command that could tell those layers apart: a working
@@ -1907,6 +1952,7 @@ Commands:
   stop                  Stop the camera relay
   status                Show relay status
   status --json         Show status as JSON
+  status-watch          Stream one `status --json` line per state change
   doctor                Full diagnostic report (paste this into a bug report)
   enable-persistent     Auto-start on-demand relay on login
   enable-persistent --yes  Skip confirmation prompt
@@ -1925,6 +1971,7 @@ case "${1:-}" in
     start)              cmd_start "${2:-}" ;;
     stop)               cmd_stop ;;
     status)             cmd_status "${2:-}" ;;
+    status-watch)       cmd_status_watch ;;
     doctor)             cmd_doctor ;;
     nudge-wireplumber)  cmd_nudge_wireplumber ;;
     enable-persistent)  cmd_enable_persistent "${2:-}" ;;
