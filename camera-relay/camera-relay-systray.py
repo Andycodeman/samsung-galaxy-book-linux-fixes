@@ -26,7 +26,7 @@ except OSError:
 import gi
 
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gtk, GLib
+from gi.repository import Gtk, GLib, Gio
 
 # Name shown by the tray/panel instead of the script filename
 GLib.set_prgname("camera-relay")
@@ -48,7 +48,18 @@ except (ValueError, ImportError):
         pass
 
 RELAY_CMD = "/usr/local/bin/camera-relay"
-POLL_INTERVAL = 5  # seconds
+
+# Runtime state files written by camera-relay in its cache dir (same paths as
+# STATE_CACHE / PID_FILE there). The daemon flips the state file between
+# "idle" and "streaming" on every transition and removes it (plus the pid
+# file) on stop — so watching them means the icon can react in milliseconds
+# instead of waiting for the next poll.
+RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR", "/tmp")
+WATCH_FILES = ("camera-relay-state", "camera-relay.pid")
+
+# Safety-net poll for anything the file watch could miss (e.g. a relay that
+# stopped long before this process started, or weird filesystem changes).
+FALLBACK_POLL_INTERVAL = 60  # seconds
 
 
 class CameraRelaySystray:
@@ -83,9 +94,50 @@ class CameraRelaySystray:
             self.status_icon.connect("popup-menu", self._on_status_icon_popup)
             self.status_icon.set_visible(True)
 
-        # Initial status check, then poll
+        # Watch the daemon's runtime files so state changes reach the icon
+        # immediately, then do an initial sync and set up the slow fallback.
+        self._install_runtime_watch()
         self._poll_status()
-        GLib.timeout_add_seconds(POLL_INTERVAL, self._poll_status)
+        GLib.timeout_add_seconds(FALLBACK_POLL_INTERVAL, self._poll_status)
+
+    def _install_runtime_watch(self):
+        """Monitor the runtime dir for changes to the relay's state files.
+
+        Uses one directory watcher (handles create/delete/attribution, and
+        the file does not have to exist yet — e.g. when the relay is stopped
+        at startup). Events are debounced: `cat > file` triggers
+        several inotify events in quick succession, and each of those would
+        otherwise spawn a status subprocess.
+        """
+        try:
+            gio_dir = Gio.File.new_for_path(RUNTIME_DIR)
+            self._runtime_monitor = gio_dir.monitor_directory(
+                Gio.FileMonitorFlags.NONE, None
+            )
+            self._runtime_monitor.connect("changed", self._on_runtime_event)
+        except Exception as e:  # watcher unavailable -> keep poll-only
+            self._runtime_monitor = None
+            print(
+                "camera-relay-systray: file watch unavailable (%s), "
+                "relying on the %ds fallback poll." % (e, FALLBACK_POLL_INTERVAL),
+                file=sys.stderr,
+            )
+
+    def _on_runtime_event(self, _monitor, file, _other_file, _event_type):
+        name = file.get_basename() if file else ""
+        if name in WATCH_FILES:
+            self._deferred_poll()
+
+    def _deferred_poll(self):
+        """Coalesce bursts of watch events into one poll shortly after."""
+        if getattr(self, "_pending_poll_source", None):
+            return
+        self._pending_poll_source = GLib.timeout_add(250, self._poll_returns_false)
+
+    def _poll_returns_false(self):
+        self._pending_poll_source = None
+        self._poll_status()
+        return False  # one-shot
 
     def _build_menu(self):
         menu = Gtk.Menu()
