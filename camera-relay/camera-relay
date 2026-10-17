@@ -45,6 +45,14 @@ build_launcher_args() {
         LAUNCHER_ARGS+=(--egl-vendor "$__EGL_VENDOR_LIBRARY_FILENAMES")
     [[ -n "${RELAY_COLOR_FILTER:-}" ]] && \
         LAUNCHER_ARGS+=(--color-filter "$RELAY_COLOR_FILTER")
+    # RELAY_PW_PUBLISH selects the launcher's optional PipeWire publish
+    # branch (--pw-publish), which tees the camera stream into a native
+    # Video/Source node alongside the loopback. Set it through the
+    # systemd unit (e.g. `systemctl --user edit camera-relay.service`
+    # + `Environment=RELAY_PW_PUBLISH=1`) to experiment with the native
+    # camera node without regenerating anything.
+    [[ "${RELAY_PW_PUBLISH:-}" == "1" ]] && \
+        LAUNCHER_ARGS+=(--pw-publish)
     return 0
 }
 

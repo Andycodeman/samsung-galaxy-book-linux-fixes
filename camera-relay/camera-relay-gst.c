@@ -55,18 +55,21 @@
 
 /*
  * Slots append_color_filter() must leave free. The longest tail emitted after
- * it is the --v4l2-sink path:
+ * it is the --pw-publish path, where the pipeline forks at a tee and both
+ * branches are appended (see main()):
  *
- *   "!"  caps  "!"  v4l2sink  device=…  io-mode=mmap  sync=false   → 7
- *   NULL terminator                                                → 8
+ *   "!"  caps  "!"  tee name=relayed  "!"  queue  "!"  v4l2sink  device=… \
+ *     io-mode=mmap  sync=false  relayed.  "!"  queue  "!"  pipewiresink \
+ *     mode=provide  stream-properties=…  sync=false                    → 20
+ *   NULL terminator                                                  → 21
  *
  * and one iteration of that loop can append two entries at once ("!" plus the
- * element name), so it has to stop while there is still room for both → 9.
- *
- * Keep this in step with the tail in main(): the --fd-sink path is one shorter,
- * which is exactly what hid an off-by-one here until it was caught under ASan.
+ * element name), so it has to stop while there is still room for both → 23.
+ * The --v4l2-sink path without --pw-publish is the old 7/8 tail; the
+ * --fd-sink path is shorter still, which is exactly what hid an
+ * off-by-one here until it was caught under ASan.
  */
-#define TAIL_SLOTS 9
+#define TAIL_SLOTS 23
 
 /* Directory arguments must live under one of these. All root-owned, so a
  * validated path cannot point at anything the caller controls. */
@@ -381,7 +384,8 @@ static void usage(void)
 {
 	fprintf(stderr,
 		"usage: camera-relay-gst --camera NAME (--v4l2-sink DEV | --fd-sink N)\n"
-		"                        [--width W --height H] [--color-filter SPEC]\n"
+		"                        [--pw-publish] [--width W --height H]\n"
+		"                        [--color-filter SPEC]\n"
 		"                        [--gst-plugin-path DIR] [--ipa-path DIR]\n"
 		"                        [--softisp-mode cpu|gpu] [--egl-vendor ICD[:ICD...]]\n"
 		"       camera-relay-gst --list-cameras\n");
@@ -394,7 +398,7 @@ int main(int argc, char *argv[])
 	const char *ipa_path = NULL, *softisp_mode = NULL, *egl_vendor = NULL;
 	char *color_filter = NULL;
 	long fd_sink = -1, width = 0, height = 0;
-	int list_cameras = 0;
+	int list_cameras = 0, pw_publish = 0;
 	char *gst_argv[MAX_ARGS];
 	char caps[128], camera_arg[300], sink_arg[64];
 	int n = 0, i;
@@ -409,6 +413,9 @@ int main(int argc, char *argv[])
 
 		if (!strcmp(a, "--list-cameras")) {
 			list_cameras = 1;
+		} else if (!strcmp(a, "--pw-publish")) {
+			/* No value: off by default, on only when asked. */
+			pw_publish = 1;
 		} else if (!strcmp(a, "--camera") && val) {
 			camera = val; i++;
 		} else if (!strcmp(a, "--v4l2-sink") && val) {
@@ -525,6 +532,34 @@ int main(int argc, char *argv[])
 	gst_argv[n++] = "!";
 	gst_argv[n++] = caps;
 
+	/*
+	 * Optional PipeWire publish branch: forks the pipeline at a tee and
+	 * copies every frame into a native PipeWire Video/Source node
+	 * alongside the loopback.
+	 *
+	 *   ... ! caps ! tee name=relayed ! queue ! v4l2sink|fdsink ... sync=false
+	 *       relayed. ! queue ! pipewiresink mode=provide \
+	 *         stream-properties=… sync=false
+	 *
+	 * mode=provide is what turns the sink into a producer other clients
+	 * can capture from; media.class=Video/Source is what makes it look
+	 * like a camera to consumers that enumerate by class (Chrome's
+	 * PipeWire camera path matches exactly that). The branch node name
+	 * stays sans spaces so the whole token remains a single gst-launch
+	 * argument — gst-launch re-parses the joined argv, and anything with
+	 * spaces would need quote/escape rules the charset checks here never
+	 * chose to enforce. No caller input shapes this branch, so it is
+	 * safe by construction like the rest of the tail. Without the flag,
+	 * the emitted pipeline is byte-for-byte the original one.
+	 */
+	if (pw_publish) {
+		gst_argv[n++] = "!";
+		gst_argv[n++] = "tee";
+		gst_argv[n++] = "name=relayed";
+		gst_argv[n++] = "!";
+		gst_argv[n++] = "queue";
+	}
+
 	gst_argv[n++] = "!";
 	if (v4l2_sink) {
 		snprintf(sink_arg, sizeof(sink_arg), "device=%s", v4l2_sink);
@@ -537,6 +572,17 @@ int main(int argc, char *argv[])
 		gst_argv[n++] = sink_arg;
 	}
 	gst_argv[n++] = "sync=false";
+
+	if (pw_publish) {
+		gst_argv[n++] = "relayed.";
+		gst_argv[n++] = "!";
+		gst_argv[n++] = "queue";
+		gst_argv[n++] = "!";
+		gst_argv[n++] = "pipewiresink";
+		gst_argv[n++] = "mode=provide";
+		gst_argv[n++] = "stream-properties=props,media.class=(string)Video/Source,node.name=(string)camera-relay";
+		gst_argv[n++] = "sync=false";
+	}
 	gst_argv[n] = NULL;
 
 	execve(gst, gst_argv,
