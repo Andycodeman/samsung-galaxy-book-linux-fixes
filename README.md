@@ -148,6 +148,14 @@ For Samsung Book5 models with the OV02E10 sensor, an additional [patched libcame
 
 > **Not recommended.** This is the older proprietary stack using Intel's camera HAL (`icamerasrc`) and `v4l2-relayd`. Use [webcam-fix-libcamera](webcam-fix-libcamera/) instead — it's open-source, supports more distros, and includes on-demand activation. This legacy fix is kept for users who already have it installed or as a fallback if the libcamera stack doesn't work on their hardware.
 
+### [Performance Modes & Power Limits](docs/performance-modes.md) — CPU PL1/PL2, DTT, and NVIDIA Dynamic Boost
+
+Hardware architecture documentation and diagnostics for Samsung platform profiles (`performance`, `balanced`, `power-saver`), thermald MMIO power limits, and enabling `nvidia-powerd` to unlock up to 80 W Dynamic Boost on discrete NVIDIA models (Galaxy Book4 Ultra).
+
+- Explains the DTT DataVault (GDDV) and why `thermald` enforces limits via MMIO RAPL rather than MSR
+- Covers the `nvidia-powerd` requirement that prevents discrete GPUs from remaining locked to their 55 W base TGP
+- Includes a non-intrusive diagnostic script: [`docs/check-performance.sh`](docs/check-performance.sh)
+
 ## Microphone Status
 
 The Galaxy Book4/5 laptops have built-in dual array digital microphones (DMIC). Whether they work on Linux **depends on your model and audio driver**:
