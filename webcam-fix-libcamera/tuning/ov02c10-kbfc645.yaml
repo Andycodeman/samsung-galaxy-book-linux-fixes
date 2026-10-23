@@ -1,0 +1,71 @@
+# SPDX-License-Identifier: CC0-1.0
+#
+# OPT-IN tuning for the OV02C10 + KBFC645 camera module (Galaxy Book4 Ultra
+# NP960XGL). Not installed by install.sh — see webcam-fix-libcamera/README.md,
+# "Factory colour calibration (KBFC645 module, opt-in)".
+#
+# Where the numbers come from
+# ---------------------------
+# The five CCMs are the "traditional" 3x3 matrices that Intel's factory tuning
+# file OV02C10_KBFC645_MTL.aiqb (shipped with the Windows camera driver) stores
+# for its five characterised light sources (record 25, 2669 K .. 5892 K). They
+# were extracted with tools/aiqb_to_libcamera.py; the .aiqb itself is not in
+# this repository.
+#
+# Why the matrices are softened and their rows don't sum to 1.0
+# --------------------------------------------------------------
+# On Windows those matrices sit behind Intel's AWB (which uses a factory
+# neutral locus) and lens-shading correction. The Simple IPA has neither: its
+# Awb is grey-world over the whole frame, and there is no LSC. Used raw
+# (rows summing to 1.0), the factory matrices turned that grey-world error into
+# a ~15% green cast on neutral surfaces (R/G 0.86, B/G 0.87 on a white wall).
+# So each matrix is blended with the identity and given a per-row trim:
+#
+#   ccm = diag(1.03, 0.89, 0.94) * (0.45 * M_factory + 0.55 * I)
+#
+#   python3 tools/aiqb_to_libcamera.py --ccm-strength 0.45 \
+#       --wb-gains 1.03,0.89,0.94 OV02C10_KBFC645_MTL.aiqb
+#
+# Higher strengths (0.80) gave more saturated skin but a pink/purple band
+# across shadow gradients on a plain wall, because without LSC the strong
+# off-diagonal terms amplify the spatial colour shading of the lens.
+#
+# Measured on one NP960XGL (libcamera 0.7.2, GPU debayer, indoor warm light):
+#   white wall   R/G 1.013  B/G 0.977   (bundled ov02c10.yaml: 0.962 / 0.985)
+#   white mic    R/G 1.003  B/G 0.990   (bundled:              0.976 / 0.976)
+#   skin         R/G 1.196              (bundled: 0.954, i.e. grey skin)
+# One room, one light. Daylight and other modules are untested.
+#
+# blackLevel 4096 matches the bundled file and the .aiqb (record 31: ~64 in
+# 10-bit for all 40 exposure/gain LUTs).
+%YAML 1.1
+---
+version: 1
+algorithms:
+  - BlackLevel:
+      blackLevel: 4096
+  - Awb:
+  - Ccm:
+      ccms:
+        - ct: 2669
+          ccm: [   1.2480,  -0.0973,  -0.1207,
+                  -0.0962,   1.1002,  -0.1140,
+                  -0.0808,  -0.5064,   1.5273 ]
+        - ct: 3556
+          ccm: [   1.3538,  -0.2690,  -0.0548,
+                  -0.1036,   1.1086,  -0.1150,
+                  -0.0408,  -0.3772,   1.3580 ]
+        - ct: 3816
+          ccm: [   1.4920,  -0.4185,  -0.0436,
+                  -0.1088,   1.0459,  -0.0471,
+                  -0.0287,  -0.3438,   1.3124 ]
+        - ct: 4503
+          ccm: [   1.3010,  -0.2059,  -0.0651,
+                  -0.0791,   1.1213,  -0.1522,
+                  -0.0292,  -0.3291,   1.2983 ]
+        - ct: 5892
+          ccm: [   1.3200,  -0.2323,  -0.0577,
+                  -0.0680,   1.1256,  -0.1675,
+                  -0.0239,  -0.2646,   1.2285 ]
+  - Agc:
+...

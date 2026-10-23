@@ -712,6 +712,29 @@ To do it by hand, edit the matrix in `ov02c10.yaml` (rows should each sum to
 ~1.0 so neutral greys stay neutral) — but see the next entry first, because hand
 edits often *look* like they do nothing.
 
+### Factory colour calibration (KBFC645 module, opt-in)
+
+For the **Galaxy Book4 Ultra (NP960XGL)** with the `KBFC645` camera module, an opt-in multi-illuminant tuning profile derived from Intel's Windows driver factory calibration (`.aiqb`) is provided in [`tuning/ov02c10-kbfc645.yaml`](tuning/ov02c10-kbfc645.yaml):
+
+- **5 characterised light sources** (2669 K to 5892 K) interpolated dynamically by libcamera's CCT estimator.
+- **Compensated for Simple IPA**: softened (`ccm-strength 0.45`) with white-balance row trim (`1.03, 0.89, 0.94`) to prevent naive Grey-World AWB and lens colour shading from producing green, pink, or purple tinting on neutral walls.
+
+To test this profile:
+```bash
+sudo cp tuning/ov02c10-kbfc645.yaml /usr/share/libcamera/ipa/simple/ov02c10.yaml
+[[ -d /usr/local/share/libcamera/ipa/simple ]] && sudo cp tuning/ov02c10-kbfc645.yaml /usr/local/share/libcamera/ipa/simple/ov02c10.yaml
+systemctl --user restart camera-relay.service pipewire.service wireplumber.service
+```
+
+To revert to the stock single-matrix tuning:
+```bash
+sudo cp ov02c10.yaml /usr/share/libcamera/ipa/simple/ov02c10.yaml
+[[ -d /usr/local/share/libcamera/ipa/simple ]] && sudo cp ov02c10.yaml /usr/local/share/libcamera/ipa/simple/ov02c10.yaml
+systemctl --user restart camera-relay.service pipewire.service wireplumber.service
+```
+
+The generator tool and container documentation are in [`tools/aiqb_to_libcamera.py`](tools/aiqb_to_libcamera.py) and [`tools/NOTES-aiqb-format.md`](tools/NOTES-aiqb-format.md).
+
 ### Editing `ov02c10.yaml` has no effect
 
 Two things bite people here:
