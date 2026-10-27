@@ -1,4 +1,4 @@
-# Issue #44 — draft reply (NOT posted)
+# Issue #44 — reply (POSTED)
 
 Thread state when drafted (2026-10-27): issue closed 2026-04-26 by @derwismtz.
 @rocoboy reported left-channel crackle on 2026-08-29 (940XFG, board
@@ -7,8 +7,10 @@ posted a Windows driver trace + replay fix on 2026-10-27 (same board as
 rocoboy). No earlier ask in the thread asked rocoboy to test anything, so
 this ask is new.
 
-The reply mentions the `0x239e` removal as done. Post it only once that
-change is released, or change the wording to "the next release".
+Posted 2026-10-27 after v0.3.97 shipped the `0x239e` removal, as
+https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/44#issuecomment-6453625880.
+The posted text is the draft below with paragraphs unwrapped and a v0.3.97
+link added after "`speaker-fix-940xfg`".
 
 ---
 

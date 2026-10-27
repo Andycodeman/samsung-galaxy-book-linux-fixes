@@ -289,3 +289,98 @@ Two consequences:
   machine.
 - No upstream (alsa-devel) report yet. A report with two models needs at least
   T1 back first.
+
+## Update 2026-10-27: a real Windows trace from the 14" sibling (@maticomba)
+
+@maticomba traced every CORB verb the Windows Realtek driver (`RTKVHD64.sys`
+6.0.9689.1) sends on a Book3 Pro 14" (940XFG, board `NP940XFG-KA1AR`,
+`144d:c882`). He ran his dual-boot Windows under QEMU with the HDA controller
+passed through via VFIO. He then replayed it on Linux: both channels play, and
+the crossover works (tweeters alone are silent at 200 Hz and play at 4 kHz).
+He posted on #44
+([6442754877](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/44#issuecomment-6442754877))
+and on this issue
+([6442802375](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/106#issuecomment-6442802375)).
+Repo (GPL-2.0), with the raw trace and a capture guide:
+https://github.com/maticomba/linux-galaxy-book3-pro-speakers
+
+This is a different model and board from the reporter's. It is not a trace of
+`0xc886`.
+
+### What the Windows init does on 940XFG
+
+398 amp writes in total: 128 × `0xb011` (16-bit) and 270 × `0xb017` (24-bit
+coefficients). Per amp:
+
+1. `0x2000 = 1`, a software reset. V2 never does this.
+2. The same base table as V2_4, except that **`0x23ba` on the mains is
+   `0x0098`**, where V2_4 writes `0x0094`. The tweeters' `0x008d` matches.
+3. **Biquad coefficients** in `0x2100`–`0x22dc`: 95 per main amp, 40 per
+   tweeter. On the tweeters they form two high-pass stages in cascade:
+   ≈ −16 dB at 800 Hz, −5.5 dB at 1.6 kHz, flat from 3.2 kHz. On the mains
+   they are a 100–200 Hz high-pass plus EQ. They match tables stored verbatim
+   in `RTKVHD64.sys`, which holds 64 of them and picks one inside the driver
+   (the INF maps `SUBSYS_144DC882` to a generic model).
+4. DSM/protection parameters `0x238e`–`0x239b`, `0x23a6`, `0x23a7`,
+   `0x23b9`, `0x23e0`, then **`0x23e1 = 1`** (DSP on).
+5. Enable/disable around playback is the same as V2: `0x203a` `0x81`/`0x80`,
+   `0x23ff` `1`/`0`.
+6. **`0x239e` is never written, only read.**
+
+### What it settles here
+
+- **"A probable read-back path", consequence 2: confirmed.** The `0xB00B`
+  row was a read. The `{0x239e, 0x0004}` write was removed from
+  `speaker-fix-940xfg` in
+  [v0.3.97](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/releases/tag/v0.3.97).
+  That also explains the reporter's "no change" when trying it.
+- **Facts 1 and 2 (DSM off, no reset) are now confirmed as real differences
+  from Windows.** Before, they were only differences from ASoC and the LG
+  fixup. On the sister model, Windows resets each amp and runs the DSM.
+- **The 940XFG trace also uses `0x26 = 0xb017` for 24-bit coefficient
+  writes.** So the COEF pack can load DSM coefficients. The "~5,500
+  `hda-verb` calls per amp" estimate under "Can we ship a fix now?" was based
+  on the Book4/5 blob. The Windows Book3 init is much smaller: 95 or 40
+  coefficient writes per amp, plus about 30 register writes.
+
+### What it changes for the hypotheses
+
+- **H1 is stronger.** Windows' tweeter crossover cuts exactly the band that
+  rattled on #61: about −16 dB at 800 Hz, flat only from about 3.2 kHz. #61's
+  sweep rattled below about 1.6 kHz and was clean above it. The V2 path sends
+  that band to the tweeters with the DSM off. This is still the 940XFG
+  table, not `0xc886`'s.
+- **H1's "against" column stands.** "Any volume" and "HP no change" are still
+  unexplained, and T1 is still the deciding test.
+- **H3 has a concrete counterpart.** Windows resets, Linux does not. T3 (cold
+  boot vs restart from Windows) still tests whether that matters here.
+- H2, H4 and H5 are unchanged.
+
+### What it changes for "Can we ship a fix now?"
+
+- **The main blocker ("we have no Book3 tuning") now has a route.** Capture
+  `0xc886`'s own sequence with his guide (`docs/capture-howto.md`). The
+  reporter dual-boots Windows, which is what the capture needs. It is a heavy
+  ask, though: VFIO passthrough of `00:1f.3`, whose IOMMU group includes
+  LPC/SMBus/SPI, a one-time GRUB boot, and a qcow2 overlay over the Windows
+  disk. His guide lists the pitfalls, including an `intel-spi` unbind hang.
+- **Do NOT apply the 940XFG table to `0xc886`.** He warns against it too. The
+  driver picks one of 64 tables per machine, so the 16" chassis very likely
+  gets a different crossover and different DSM values. A wrong DSM tuning can
+  remove protection rather than add it (see above).
+- **His raw trace (`capture/data/windows-2026-10-26/coef.log.xz`) should
+  contain the real COEF read command word.** It would replace the guessed
+  `0xB01B`-ish probe in "A probable read-back path" consequence 1. Not
+  extracted yet. Needed only if T1 points at H4.
+
+### Status
+
+- No reply posted on #106 this round. The reporter still owes T1–T3 and the
+  EasyEffects cutoff (asked 2026-10-06, no answer yet).
+- If a nudge goes out, it can mention his capture guide as an optional extra,
+  separate from T1.
+- On #44, @rocoboy (940XFG `KA1AR`, the same board as @maticomba, left-side
+  crackle) has been asked to try @maticomba's fix
+  ([6453625880](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/44#issuecomment-6453625880)).
+  If it clears the crackle there, that is the first result showing that
+  crossover + DSM fixes this family's crackle.
