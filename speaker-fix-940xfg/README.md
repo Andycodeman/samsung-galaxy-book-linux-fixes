@@ -36,11 +36,29 @@ Without that entry, the kernel never initializes the codec's four internal
 class-D amplifiers (NIDs 0x38, 0x39, 0x3C, 0x3D), so the speakers never get
 a usable signal.
 
-The 16" sibling (NP964XFG, SSID `0xc886`) has working upstream support via
-`ALC298_FIXUP_SAMSUNG_AMP_V2_4_AMPS`. The 14" needs the same V2_4 init
-sequence **plus a SKU-specific `{0x239e, 0x0004}` enable write** that
-mainline does not perform — that single missing write is what makes the
-existing V2_4 fixup silent on this board even when forced via `model=`.
+The 16" sibling (NP964XFG, SSID `0xc886`) has upstream support via
+`ALC298_FIXUP_SAMSUNG_AMP_V2_4_AMPS`. This fix applies the same V2_4 init
+sequence to the 14" from userspace.
+
+> **Correction (2026-10):** earlier versions also wrote `{0x239e, 0x0004}` on
+> enable and described it as the "SKU-specific missing piece". It came from
+> Windows `RtHDDump` snapshots, which can't tell a read from a write. A full
+> trace of the Windows driver on this board by
+> [@maticomba](https://github.com/maticomba/linux-galaxy-book3-pro-speakers)
+> shows Windows only ever **reads** `0x239e` (a coil-temperature read-back
+> register), so the write has been removed. Why forcing V2_4 with `model=`
+> stayed silent in #44 is not settled; the likely reason is that the option
+> went to `snd_hda_intel`, which doesn't drive the codec on these SOF laptops
+> (SOF takes `options snd_sof_intel_hda_generic hda_model=...`, see #106).
+
+> **Crackle or distortion?** This fix (like upstream V2_4) sets up the amps but
+> loads none of the crossover/EQ filters or speaker protection Windows uses.
+> [@maticomba](https://github.com/maticomba)'s
+> [linux-galaxy-book3-pro-speakers](https://github.com/maticomba/linux-galaxy-book3-pro-speakers)
+> replays the full Windows amp init captured on a 940XFG (board `NP940XFG-KA1AR`),
+> filters and protection included. It is a separate project, tested on one
+> machine so far; uninstall this fix first (`sudo ./uninstall.sh`), its
+> installer checks for it.
 
 ## What this does *not* do
 
@@ -104,9 +122,10 @@ left installed; remove it manually if you want.
 ## How it works (technical)
 
 The init script writes a Realtek COEF init sequence to four codec-internal
-amp NIDs via the `hda-verb` userspace tool. The sequence matches what the
-Realtek Windows driver does on the same hardware, derived from `RtHDDump`
-codec-state snapshots captured during issue #44 diagnosis.
+amp NIDs via the `hda-verb` userspace tool. The sequence is upstream's V2_4
+table. Windows writes the same base table plus an amp reset, filter
+coefficients and protection parameters this script does not load (see the
+crackle note above).
 
 Every amp is muted first, matching the order upstream's
 `alc298_samsung_v2_init_amps()` uses — the init writes retune the DSM excursion,
@@ -132,7 +151,6 @@ COEF[0x89] = 0x0000                # finalize
 # Then enable:
 write_pack(0x203a, 0x0081)         # V2 enable
 write_pack(0x23ff, 0x0001)         # V2 enable
-write_pack(0x239e, 0x0004)         # SKU-specific delta (the missing piece)
 ```
 
 `write_pack(idx, val)` writes `COEF[0x23]=idx, COEF[0x25]=val,

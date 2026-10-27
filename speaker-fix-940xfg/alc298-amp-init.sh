@@ -8,10 +8,15 @@
 # at NIDs 0x38, 0x39, 0x3C, 0x3D never get initialized at boot, leaving the
 # internal speakers silent.
 #
-# This script writes the same COEF init sequence that Windows performs,
-# matching upstream V2_4_AMPS layout (which the 16" Book3 Pro NP964XFG uses)
-# but with the SKU-specific {0x239e, 0x0004} enable extension that mainline
-# V2_4 omits — that is the missing piece for the 14" 940XFG variant.
+# This script writes the upstream V2_4_AMPS init sequence (the layout the 16"
+# Book3 Pro NP964XFG uses) from userspace, since no kernel fixup applies it
+# to this SSID.
+#
+# Earlier versions also wrote {0x239e, 0x0004} on enable, read off Windows
+# RtHDDump snapshots as an "SKU-specific delta". A full CORB trace of the
+# Windows driver on this board shows Windows only ever *reads* 0x239e
+# (THERMAL_COILTEMP_RD_BACK_BYTE1); it never writes it. The write is gone.
+# Trace: https://github.com/maticomba/linux-galaxy-book3-pro-speakers
 #
 # Run at boot via systemd; re-run on resume from sleep via the system-sleep
 # hook installed by this package.
@@ -124,12 +129,11 @@ init_sec_right() {
     write_coef 0x89 0x0000
 }
 
-# Enable: V2 enable_seq + the {0x239e, 0x0004} write that V2_4 upstream omits.
+# Enable: V2 enable_seq, identical to what the Windows driver writes.
 enable_amp() {
     select_amp "$1"
     write_pack 0x203a 0x0081
     write_pack 0x23ff 0x0001
-    write_pack 0x239e 0x0004
 }
 
 # Disable: the exact inverse, matching upstream alc298_samsung_v2_disable_amps().

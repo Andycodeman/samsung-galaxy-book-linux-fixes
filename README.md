@@ -100,7 +100,7 @@ The internal speakers use 4x Maxim MAX98390 I2C amplifiers that have no kernel d
 
 The **Samsung Galaxy Book3 Pro 14"** (NP940XFG-KC1*, DMI `940XFG`, ALC298 subsystem `0x144dc882`) is a different hardware design from the Book4/Book5 — there is **no MAX98390** and no I2C smart amp at all. The four speakers are driven directly from the ALC298 codec's built-in class-D amplifiers, controlled via Realtek COEF registers. The fix above (DKMS MAX98390 driver) doesn't apply and won't install on this board.
 
-This fix initializes the four codec-internal amps (NIDs `0x38`, `0x39`, `0x3C`, `0x3D`) using the same V2_4 layout the 16" sibling (NP964XFG) uses upstream, **plus a SKU-specific `{0x239e, 0x0004}` enable write** that mainline V2_4 omits — that single missing write is the reason the existing `model=alc298-samsung-amp-v2-4-amps` kernel parameter is silent on this board.
+This fix initializes the four codec-internal amps (NIDs `0x38`, `0x39`, `0x3C`, `0x3D`) using the same V2_4 layout the 16" sibling (NP964XFG) uses upstream. (Earlier versions also wrote `{0x239e, 0x0004}` as a "SKU-specific" enable step; a full Windows driver trace showed Windows only reads that register, so the write was removed.)
 
 - **Pure userspace** — uses `hda-verb` (from `alsa-tools`), no kernel module, no DKMS, no kernel rebuild
 - Survives every kernel update with zero impact
@@ -109,6 +109,8 @@ This fix initializes the four codec-internal amps (NIDs `0x38`, `0x39`, `0x3C`, 
 - Installer activates speakers immediately — no reboot required
 
 > **Tradeoff:** This fix keeps the codec-internal amps continuously enabled rather than toggling them on PCM open/close (which would require a kernel fixup). Continuous power impact is roughly 40–100 mW — measurable but small, a few percent of battery per day at idle. An upstream patch is planned for submission to alsa-devel; users on a kernel that includes it can uninstall this workaround and get proper on-demand power management.
+
+> **Crackle or distortion?** [@maticomba](https://github.com/maticomba)'s [linux-galaxy-book3-pro-speakers](https://github.com/maticomba/linux-galaxy-book3-pro-speakers) replays the full Windows amp init for the 940XFG, including the crossover/EQ filters and speaker protection this fix doesn't load. Separate project, tested on one machine so far; uninstall this fix first. Details in [`speaker-fix-940xfg/README.md`](speaker-fix-940xfg/README.md#what-this-fixes).
 
 > See issue [#44](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/44) for the full diagnostic trail (V2_2/V2_4 testing, RtHDDump captures, COEF sequence derivation). Same fix should drop in for [`joshuagrisham/samsung-galaxybook-extras#97`](https://github.com/joshuagrisham/samsung-galaxybook-extras/issues/97) (parallel report, identical SSID).
 
