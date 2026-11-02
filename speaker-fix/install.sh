@@ -38,7 +38,10 @@ if ! command -v dkms >/dev/null 2>&1; then
     if [ "$PKG_MGR" = "dnf" ]; then
         echo "ERROR: dkms not installed. Run: sudo dnf install dkms kernel-devel" >&2
     elif [ "$PKG_MGR" = "pacman" ]; then
-        echo "ERROR: dkms not installed. Run: sudo pacman -S dkms linux-headers i2c-tools" >&2
+        # The running kernel's own headers package (linux-cachyos-headers on
+        # CachyOS), not always stock Arch's linux-headers
+        kpkg=$(pacman -Qqo "/usr/lib/modules/$(uname -r)/vmlinuz" 2>/dev/null || true)
+        echo "ERROR: dkms not installed. Run: sudo pacman -S dkms ${kpkg:-linux}-headers i2c-tools" >&2
     else
         echo "ERROR: dkms not installed. Run: sudo apt install dkms" >&2
     fi
@@ -213,11 +216,33 @@ SIGNEOF
     fi
 fi
 
+# The module for every other installed kernel with headers: AUTOINSTALL only
+# covers future kernels, so one already there would boot without it until its
+# next update. Arch-based only: elsewhere the extra kernels are older fallbacks.
+# One DKMS can't build for is skipped with a warning.
+dkms_other_kernels() {
+    local kdir k
+    [ "$PKG_MGR" = "pacman" ] || return 0
+    for kdir in /lib/modules/*/build; do
+        [ -e "$kdir" ] || continue
+        k="${kdir%/build}"; k="${k##*/}"
+        [ "$k" = "$(uname -r)" ] && continue
+        # Headers can outlive their kernel (leftover linux-headers)
+        [ -e "/lib/modules/$k/vmlinuz" ] || continue
+        if dkms install "${DKMS_NAME}/${DKMS_VER}" -k "$k" >/dev/null 2>&1; then
+            echo "Also installed for kernel $k"
+        else
+            echo "WARNING: Not installed for kernel $k (DKMS couldn't build it there)"
+        fi
+    done
+}
+
 # Register, build, and install with DKMS
 echo "Building DKMS module..."
 dkms add "${DKMS_NAME}/${DKMS_VER}"
 dkms build "${DKMS_NAME}/${DKMS_VER}"
 dkms install "${DKMS_NAME}/${DKMS_VER}"
+dkms_other_kernels
 
 # Verify module signing AND key enrollment when Secure Boot is enabled.
 # Two failure modes need to be distinguished:
@@ -237,6 +262,7 @@ if mokutil --sb-state 2>/dev/null | grep -q "SecureBoot enabled"; then
             dkms add "${DKMS_NAME}/${DKMS_VER}"
             dkms build "${DKMS_NAME}/${DKMS_VER}"
             dkms install "${DKMS_NAME}/${DKMS_VER}"
+            dkms_other_kernels
 
             # Check again
             MOD_PATH=$(find /lib/modules/$(uname -r) -name "snd-hda-scodec-max98390.ko*" 2>/dev/null | head -1)

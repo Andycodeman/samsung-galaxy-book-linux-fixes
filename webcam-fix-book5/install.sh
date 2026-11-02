@@ -73,6 +73,29 @@ floor_libcamera_version() {
     fi
 }
 
+# Installs DKMS module $1 (NAME/VERSION) for every other installed kernel with
+# headers: AUTOINSTALL only covers future kernels, so one already there would
+# boot without it until its next update. Arch-based only: elsewhere the extra
+# kernels are older fallbacks. One DKMS can't build for is skipped with a note.
+OTHER_KERNELS=()
+dkms_other_kernels() {   # NAME/VERSION
+    local kdir k
+    [[ "$DISTRO" == "arch" ]] || return 0
+    for kdir in /lib/modules/*/build; do
+        [[ -e "$kdir" ]] || continue
+        k="${kdir%/build}"; k="${k##*/}"
+        [[ "$k" == "$KVER" ]] && continue
+        # Headers can outlive their kernel (leftover linux-headers)
+        [[ -e "/lib/modules/$k/vmlinuz" ]] || continue
+        if sudo dkms install "$1" -k "$k" >/dev/null 2>&1; then
+            echo "  ✓ $1 also installed for kernel $k"
+            [[ " ${OTHER_KERNELS[*]} " == *" $k "* ]] || OTHER_KERNELS+=("$k")
+        else
+            echo "  ⚠ $1 not installed for kernel $k (DKMS couldn't build it there)"
+        fi
+    done
+}
+
 FORCE=false
 [ "$1" = "--force" ] && FORCE=true
 
@@ -260,7 +283,11 @@ if [[ "$DISTRO" == "arch" ]]; then
     # Ensure DKMS prerequisites are available
     if ! command -v dkms >/dev/null 2>&1; then
         echo "  Installing DKMS prerequisites..."
-        sudo pacman -S --needed --noconfirm dkms linux-headers
+        # The running kernel's own headers (the package owning its vmlinuz,
+        # plus -headers: linux-cachyos-headers on CachyOS), not always stock
+        # Arch's linux-headers
+        kpkg=$(pacman -Qqo "/usr/lib/modules/$(uname -r)/vmlinuz" 2>/dev/null || true)
+        sudo pacman -S --needed --noconfirm dkms "${kpkg:-linux}-headers"
     fi
 
 elif [[ "$DISTRO" == "fedora" ]]; then
@@ -401,6 +428,7 @@ SIGNEOF
     sudo dkms add "vision-driver/${VISION_DRIVER_VER}" 2>/dev/null || true
     sudo dkms build "vision-driver/${VISION_DRIVER_VER}"
     sudo dkms install "vision-driver/${VISION_DRIVER_VER}"
+    dkms_other_kernels "vision-driver/${VISION_DRIVER_VER}"
 
     rm -rf "$TMPDIR"
     echo "  ✓ vision-driver/${VISION_DRIVER_VER} installed via DKMS"
@@ -418,6 +446,7 @@ SIGNEOF
                 sudo dkms add "vision-driver/${VISION_DRIVER_VER}" 2>/dev/null || true
                 sudo dkms build "vision-driver/${VISION_DRIVER_VER}"
                 sudo dkms install "vision-driver/${VISION_DRIVER_VER}"
+                dkms_other_kernels "vision-driver/${VISION_DRIVER_VER}"
 
                 MOD_PATH=$(find /lib/modules/$(uname -r) -name "intel_cvs.ko*" 2>/dev/null | head -1)
                 if [[ -n "$MOD_PATH" ]] && modinfo "$MOD_PATH" 2>/dev/null | grep -qi "^sig"; then
@@ -518,6 +547,7 @@ SIGNEOF
             sudo dkms build "ipu-bridge-fix/${IPU_BRIDGE_FIX_VER}"
             sudo dkms install "ipu-bridge-fix/${IPU_BRIDGE_FIX_VER}"
             echo "  ✓ ipu-bridge-fix/${IPU_BRIDGE_FIX_VER} installed via DKMS"
+            dkms_other_kernels "ipu-bridge-fix/${IPU_BRIDGE_FIX_VER}"
 
             # Update initramfs so the DKMS module is loaded at next boot
             # instead of the stock kernel module (which has rotation=0).
@@ -1435,8 +1465,13 @@ fi
 if [[ "$NEEDS_INITRAMFS" == "1" ]]; then
     echo ""
     echo "  Rebuilding initramfs (this may take a moment)..."
+    # The running kernel, and the other kernels the modules were installed
+    # for (dkms_other_kernels; mkinitcpio -P already does every kernel)
     if command -v dracut >/dev/null 2>&1; then
         sudo dracut --force 2>/dev/null && echo "  ✓ initramfs rebuilt" || true
+        for k in "${OTHER_KERNELS[@]}"; do
+            sudo dracut --force --kver "$k" 2>/dev/null && echo "  ✓ initramfs rebuilt for $k" || true
+        done
     elif command -v update-initramfs >/dev/null 2>&1; then
         sudo update-initramfs -u -k "$(uname -r)" 2>/dev/null && echo "  ✓ initramfs rebuilt" || true
     elif command -v mkinitcpio >/dev/null 2>&1; then
