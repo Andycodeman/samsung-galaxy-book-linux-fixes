@@ -96,11 +96,11 @@ sudo apt install dkms linux-headers-$(uname -r)
 # Fedora
 sudo dnf install dkms kernel-devel
 
-# Arch / CachyOS / Manjaro
-sudo pacman -S dkms linux-headers i2c-tools
+# Arch / CachyOS / Manjaro (installs your running kernel's own headers package)
+sudo pacman -S dkms "$(pacman -Qqo /usr/lib/modules/$(uname -r)/vmlinuz)-headers" i2c-tools
 ```
 
-> **Arch-based distros:** The install script auto-detects `pacman` and will auto-install `i2c-tools` if missing. However, `dkms` and `linux-headers` must be installed manually before running the script (the correct headers package depends on your kernel — e.g., `linux-headers` for the default kernel, `linux-lts-headers` for LTS, `linux-zen-headers` for Zen).
+> **Arch-based distros:** The install script auto-detects `pacman` and will auto-install `i2c-tools` if missing. However, `dkms` and your kernel's headers must be installed manually before running the script. The headers package depends on your kernel — e.g., `linux-headers` for the default kernel, `linux-lts-headers` for LTS, `linux-zen-headers` for Zen, `linux-cachyos-headers` on CachyOS — and the command above picks the right one. Don't install plain `linux-headers` without the stock `linux` kernel: it leaves headers for a kernel you don't have, and DKMS then prints `Missing … kernel modules tree` errors. The installer also builds the driver for your other installed kernels that have headers (e.g. an LTS kernel in the boot menu).
 
 ### Install
 

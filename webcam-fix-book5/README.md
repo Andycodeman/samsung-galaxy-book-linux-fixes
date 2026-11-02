@@ -129,7 +129,7 @@ This cycles through 10 CCM presets (from no correction to strong green boost) wi
 
 Some Samsung Galaxy Book5 models (940XHA, 960XHA) have the OV02E10 sensor mounted upside-down, but Samsung's BIOS incorrectly reports `camera_sensor_rotation=0`. The installer now includes a **DKMS patched `ipu-bridge.ko`** that adds Samsung DMI quirk entries to the kernel's upside-down sensor table, so libcamera sets the correct flip controls automatically.
 
-**This fix is installed automatically** on affected Samsung models (940XHA, 960XHA). It will **auto-remove itself** when a future kernel includes the Samsung entries upstream. On non-Samsung systems, this step is skipped.
+**This fix is installed automatically** on affected Samsung models (940XHA, 960XHA). It will **auto-remove itself** from each kernel that includes the Samsung entries upstream, and goes away completely once every installed kernel does (so an older LTS kernel in your boot menu keeps it until then). On non-Samsung systems, this step is skipped.
 
 If you still see a flipped image on a different model, the rotation metadata for that platform may be incorrect or missing.
 
@@ -600,7 +600,8 @@ by hand. (issue #65)
 ### DKMS build fails
 
 - Ensure kernel headers are installed:
-  - Arch: `sudo pacman -S linux-headers`
+  - Arch-based (CachyOS, Manjaro…): your kernel's own headers package, e.g. `linux-cachyos-headers` (stock `linux-headers` only fits the stock `linux` kernel). This installs the right one:
+    `sudo pacman -S "$(pacman -Qqo /usr/lib/modules/$(uname -r)/vmlinuz)-headers"`
   - Fedora: `sudo dnf install kernel-devel`
   - Ubuntu: `sudo apt install linux-headers-$(uname -r)`
 - Check DKMS build log: `cat /var/lib/dkms/vision-driver/1.0.0/build/make.log`

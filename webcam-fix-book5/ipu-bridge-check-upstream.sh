@@ -1,9 +1,10 @@
 #!/bin/bash
-# Check if the running kernel's in-tree ipu-bridge module already has the
-# Samsung camera rotation DMI quirk entries. When upstream merges the fix,
-# this script auto-removes the DKMS workaround.
+# Check which installed kernels' in-tree ipu-bridge module already has the
+# Samsung camera rotation DMI quirk entries. The DKMS workaround is removed
+# from each kernel that has them; once every installed kernel (the running one
+# included) has them, this script auto-removes the whole workaround.
 #
-# On the boot where upstream is first detected:
+# On the boot where upstream is first detected on every kernel:
 #   - Camera already works (our DKMS module loaded earlier in boot)
 #   - This script removes DKMS package, services, check script
 #   - Next reboot uses the native kernel module instead
@@ -20,14 +21,6 @@ DKMS_VER=$(dkms status 2>/dev/null \
     | head -1 || true)
 [ -n "$DKMS_VER" ] || { log "${DKMS_NAME} not installed via DKMS — nothing to check"; exit 0; }
 
-# Find the kernel's own ipu-bridge module (in kernel/ tree, NOT updates/)
-NATIVE_MODULE=$(find "/lib/modules/$(uname -r)/kernel" -name "ipu-bridge*" 2>/dev/null | head -1)
-
-if [ -z "$NATIVE_MODULE" ]; then
-    log "No in-tree ipu-bridge module found in $(uname -r) — DKMS still needed"
-    exit 0
-fi
-
 # Decompress and check for Samsung DMI string
 decompress_module() {
     local mod="$1"
@@ -40,13 +33,41 @@ decompress_module() {
 }
 
 DMI_PRODUCT=$(cat /sys/class/dmi/id/product_name 2>/dev/null || echo "940XHA")
-if ! decompress_module "$NATIVE_MODULE" | strings | grep -q "$DMI_PRODUCT"; then
-    log "In-tree ipu-bridge in $(uname -r) does not have Samsung rotation fix — DKMS still needed"
+
+# Check every kernel the DKMS module is installed for, not just the running
+# one: remove it only from kernels whose own (in-tree) ipu-bridge has the
+# Samsung quirk. Another installed kernel, such as an older LTS kernel in the
+# boot menu, keeps it until it gets the fix too. The running kernel is always
+# checked, so the whole workaround is never removed while it lacks the fix.
+STILL_NEEDED=""
+for kdir in /lib/modules/*/; do
+    k=$(basename "$kdir")
+    # A DKMS entry left behind by a removed kernel doesn't count
+    [ -d "/lib/modules/$k/kernel" ] || continue
+    INSTALLED=false
+    dkms status "${DKMS_NAME}/${DKMS_VER}" -k "$k" 2>/dev/null | grep -q ": installed" && INSTALLED=true
+    $INSTALLED || [ "$k" = "$(uname -r)" ] || continue
+
+    # The kernel's own ipu-bridge module (in kernel/ tree, NOT updates/)
+    NATIVE_MODULE=$(find "/lib/modules/$k/kernel" -name "ipu-bridge*" 2>/dev/null | head -1)
+    if [ -n "$NATIVE_MODULE" ] && decompress_module "$NATIVE_MODULE" | strings | grep -q "$DMI_PRODUCT"; then
+        if $INSTALLED; then
+            log "In-tree ipu-bridge in $k has the Samsung rotation fix — removing the DKMS copy for $k"
+            dkms remove "${DKMS_NAME}/${DKMS_VER}" -k "$k" 2>/dev/null || true
+        fi
+    else
+        log "In-tree ipu-bridge in $k does not have Samsung rotation fix — DKMS still needed there"
+        STILL_NEEDED="$STILL_NEEDED $k"
+    fi
+done
+
+if [ -n "$STILL_NEEDED" ]; then
+    log "Keeping the DKMS workaround for:$STILL_NEEDED"
     exit 0
 fi
 
-# --- Upstream has the fix: auto-remove DKMS workaround ---
-log "=== SAMSUNG ROTATION FIX DETECTED in native ipu-bridge ($(uname -r)) ==="
+# --- Every installed kernel has the fix: auto-remove DKMS workaround ---
+log "=== SAMSUNG ROTATION FIX DETECTED in native ipu-bridge of every installed kernel ==="
 log "Auto-removing DKMS workaround..."
 
 # Disable this check service (remove ourselves)

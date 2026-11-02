@@ -77,9 +77,12 @@ floor_libcamera_version() {
 # headers: AUTOINSTALL only covers future kernels, so one already there would
 # boot without it until its next update. Arch-based only: elsewhere the extra
 # kernels are older fallbacks. One DKMS can't build for is skipped with a note.
+# Kernels that already have it are skipped, so a re-run only fills in the gaps.
+# OTHER_ADDED counts the kernels this call installed it for.
 OTHER_KERNELS=()
 dkms_other_kernels() {   # NAME/VERSION
     local kdir k
+    OTHER_ADDED=0
     [[ "$DISTRO" == "arch" ]] || return 0
     for kdir in /lib/modules/*/build; do
         [[ -e "$kdir" ]] || continue
@@ -87,8 +90,10 @@ dkms_other_kernels() {   # NAME/VERSION
         [[ "$k" == "$KVER" ]] && continue
         # Headers can outlive their kernel (leftover linux-headers)
         [[ -e "/lib/modules/$k/vmlinuz" ]] || continue
+        dkms status "$1" -k "$k" 2>/dev/null | grep -q ": installed" && continue
         if sudo dkms install "$1" -k "$k" >/dev/null 2>&1; then
             echo "  ✓ $1 also installed for kernel $k"
+            OTHER_ADDED=$((OTHER_ADDED + 1))
             [[ " ${OTHER_KERNELS[*]} " == *" $k "* ]] || OTHER_KERNELS+=("$k")
         else
             echo "  ⚠ $1 not installed for kernel $k (DKMS couldn't build it there)"
@@ -340,13 +345,16 @@ fi
 echo ""
 echo "[6/15] Installing intel_cvs module via DKMS..."
 
-# Check if already installed and working
-if modinfo usb_ljca &>/dev/null 2>&1 && \
+# Check if already installed and working. The DKMS check comes first: once
+# our module is installed, modinfo finds intel_cvs too.
+if dkms status "vision-driver/${VISION_DRIVER_VER}" 2>/dev/null | grep -q "installed"; then
+    echo "  ✓ vision-driver/${VISION_DRIVER_VER} already installed via DKMS"
+    # A re-run still adds it to any other kernel that doesn't have it yet
+    dkms_other_kernels "vision-driver/${VISION_DRIVER_VER}"
+elif modinfo usb_ljca &>/dev/null 2>&1 && \
    modinfo gpio_ljca &>/dev/null 2>&1 && \
    modinfo intel_cvs &>/dev/null 2>&1; then
     echo "  ✓ usb_ljca, gpio_ljca and intel_cvs modules already available — skipping DKMS build"
-elif dkms status "vision-driver/${VISION_DRIVER_VER}" 2>/dev/null | grep -q "installed"; then
-    echo "  ✓ vision-driver/${VISION_DRIVER_VER} already installed via DKMS"
 else
     # Download tarball (no git dependency)
     TMPDIR=$(mktemp -d)
@@ -493,6 +501,12 @@ if $NEEDS_ROTATION_FIX; then
     # Check if already installed and working
     if dkms status "ipu-bridge-fix/${IPU_BRIDGE_FIX_VER}" 2>/dev/null | grep -q "installed"; then
         echo "  ✓ ipu-bridge-fix/${IPU_BRIDGE_FIX_VER} already installed via DKMS"
+        # A re-run still adds it to any other kernel that doesn't have it yet,
+        # and those kernels' initramfs then needs rebuilding
+        dkms_other_kernels "ipu-bridge-fix/${IPU_BRIDGE_FIX_VER}"
+        if (( OTHER_ADDED > 0 )); then
+            NEEDS_INITRAMFS=1
+        fi
     else
         # Check if the native kernel module already has the fix
         NATIVE_IPU_BRIDGE=$(find "/lib/modules/$(uname -r)/kernel" -name "ipu-bridge*" 2>/dev/null | head -1)
