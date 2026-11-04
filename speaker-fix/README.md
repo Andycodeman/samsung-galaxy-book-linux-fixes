@@ -30,7 +30,7 @@ Samsung Galaxy Book4 laptops using **MAX98390 speaker amplifiers** have no audio
 - Samsung Galaxy Book4 Ultra — Fedora 43, Kernel 6.18.9 (community-confirmed)
 - Samsung Galaxy Book5 Pro — Speaker fix works, mic continues to work (community-confirmed)
 - Samsung Galaxy Book4 Pro (NP940XGK, subsystem 0x144dca07) — Zorin OS 18.1, Kernel 6.17.0-23-generic (community-confirmed, [#53](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/53))
-- Samsung Galaxy Book2 Pro SE (NP950XGK-KA2FR, subsystem 0x144dc896) — Ubuntu 26.04, Kernel 7.0.0-42-generic, internal mic still works (community-confirmed, [#137](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/137))
+- Samsung Galaxy Book2 Pro SE (NP950XGK-KA2FR, subsystem 0x144dc896) — Ubuntu 26.04, Kernel 7.0.0-42-generic, internal mic still works (community-confirmed, [#137](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/137)). Headphone jack detection does not work on this unit, with or without this fix; under investigation in [#137](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/137)
 
 The upstream PR was also reported working on Galaxy Book4 Pro, Pro 360, and Pro 16-inch by other users — this fix should work on those models too.
 
