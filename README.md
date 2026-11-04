@@ -14,7 +14,7 @@ Each fix can be downloaded and installed in a single command — no git required
 
 > **Two variants — pick the one that matches your model:**
 >
-> - **Book4 / Book5 Pro & Ultra (MAX98390 amps)** — use [`speaker-fix/`](speaker-fix/) (DKMS)
+> - **Book4 / Book5 Pro & Ultra (MAX98390 amps)** — use [`speaker-fix/`](speaker-fix/) (DKMS). This also covers the **Book2 Pro SE (NP950XGK, Meteor Lake)**: despite the Book2 name it is wired like a Book4, not a Book3 ([#137](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/137))
 > - **Book3 Pro 14" (NP940XFG, ALC298 only, no I2C amp chip)** — use [`speaker-fix-940xfg/`](speaker-fix-940xfg/) (userspace, no DKMS)
 >
 > The two are not interchangeable. Each installer hardware-checks before running.
@@ -203,6 +203,7 @@ The Galaxy Book4/5 laptops have built-in dual array digital microphones (DMIC). 
 - **Samsung Galaxy Book3 Pro 360 (960QFG)** — Ubuntu 24.04, webcam rotation fix confirmed (community-confirmed, [#17](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/17))
 - **Samsung Galaxy Book3 Pro 14" (NP940XFG-KC1US)** — Ubuntu 26.04, kernel 7.0.0-14-generic, [`speaker-fix-940xfg/`](speaker-fix-940xfg/) confirmed full stereo from internal speakers (community-confirmed, [#44](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/44))
 - **Samsung Galaxy Book4 Pro (NP940XGK, subsystem 0x144dca07)** — Zorin OS 18.1, kernel 6.17.0-23-generic, speaker fix confirmed (community-confirmed, [#53](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/53))
+- **Samsung Galaxy Book2 Pro SE (NP950XGK-KA2FR, subsystem 0x144dc896)** — Ubuntu 26.04, kernel 7.0.0-42-generic, speaker fix confirmed, internal mic still works on the default SOF path (community-confirmed, [#137](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/137))
 
 The upstream speaker PR (#5616) was also confirmed working on Galaxy Book4 Pro, Pro 360, and Book4 Pro 16-inch by other users, so this fix should work on those models too. If you try it on another model or distro, please report back.
 
