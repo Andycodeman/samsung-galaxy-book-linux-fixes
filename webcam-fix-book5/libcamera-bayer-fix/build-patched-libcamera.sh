@@ -1094,15 +1094,22 @@ echo ""
 # build of a different version from the distro's (0.7.0 built as 0.7.2, #71)
 # stays on disk unowned after an update, still carrying the marker, while
 # ldconfig moves the link to a newer stock library.
+#
+# When we can't tell (no soname link found, or this build doesn't carry the
+# marker either), keep the backup: replacing it would back up the still-patched
+# library as the "original".
 SKIP_BACKUP=false
 if [[ -d "$BACKUP_DIR" ]]; then
     OLD_BACKUP_VERSION=$(cat "$BACKUP_DIR/version" 2>/dev/null || echo "unknown")
     ACTIVE_SONAME_LINK=$(find -H "$LIBCAMERA_LIB_DIR" -maxdepth 1 -type l -regextype posix-extended \
-        -regex '.*/libcamera\.so\.[0-9]+\.[0-9]+' 2>/dev/null | sort -V | tail -1 || true)
+        -regex '.*/libcamera\.so\.[0-9]+(\.[0-9]+)?' 2>/dev/null | sort -V | tail -1 || true)
     ACTIVE_LIB=""
     [[ -n "$ACTIVE_SONAME_LINK" ]] && ACTIVE_LIB=$(readlink -f "$ACTIVE_SONAME_LINK" 2>/dev/null || true)
     if [[ -n "$ACTIVE_LIB" ]] && grep -qs 'BAYER-FIX' "$ACTIVE_LIB"; then
         info "Patched libcamera still active ($ACTIVE_LIB) — keeping existing backup (version: $OLD_BACKUP_VERSION)."
+        SKIP_BACKUP=true
+    elif [[ -z "$ACTIVE_LIB" ]] || ! grep -qs 'BAYER-FIX' builddir/src/libcamera/libcamera.so.*; then
+        warn "Can't tell whether the patched libcamera is still active (${ACTIVE_LIB:-no soname link found}) — keeping existing backup (version: $OLD_BACKUP_VERSION)."
         SKIP_BACKUP=true
     else
         warn "Stock libcamera is back (${ACTIVE_LIB:-no soname link found}; system update?) — replacing stale backup (version: $OLD_BACKUP_VERSION)."
