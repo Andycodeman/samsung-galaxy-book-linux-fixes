@@ -1037,12 +1037,23 @@ elif [[ "$SWISP_SRC_VER" == "0.7.2" && "$USE_FULL_INSTALL" != "true" ]]; then
 elif [[ "$SWISP_SRC_VER" == "0.7.2" ]]; then
     info "libcamera 0.7.2 — applying SoftISP tuning patches..."
     cp -a "$BUILD_DIR/libcamera" "$BUILD_DIR/libcamera.orig"
-    if (cd "$BUILD_DIR/libcamera" && for p in blc-channel-levels agc-min-gain-step awb-skip-saturated agc-exposure-target; do
-            git apply "$SCRIPT_DIR/$p.patch" || exit 1; done); then
+    # agc-min-gain-step keeps againMinStep at one gain code or more. Fedora's
+    # 0.7.2-4+ source RPM already does that (0002-fix-ov01a10-flickering.patch:
+    # againMinStep = one gain-code step), so that patch can't apply there and
+    # isn't needed; skip it rather than dropping all four.
+    SWISP_PATCHES=(blc-channel-levels agc-min-gain-step awb-skip-saturated agc-exposure-target)
+    if grep -q 'camHelper_->gain(againMin + 1)' "$BUILD_DIR/libcamera/src/ipa/simple/soft_simple.cpp" 2>/dev/null; then
+        info "  Source already sets the AGC gain step from the gain codes (distro patch) — skipping agc-min-gain-step."
+        SWISP_PATCHES=(blc-channel-levels awb-skip-saturated agc-exposure-target)
+    fi
+    if (cd "$BUILD_DIR/libcamera" && for p in "${SWISP_PATCHES[@]}"; do
+            git apply "$SCRIPT_DIR/$p.patch" || { echo "  $p.patch did not apply" >&2; exit 1; }; done); then
         ok "SoftISP tuning patches applied."
         rm -rf "$BUILD_DIR/libcamera.orig"
     else
         warn "SoftISP tuning patches did not apply — building with the bayer fix only."
+        warn "If ov02e10-0.7.2.yaml is installed as the tuning file, re-run ./install.sh so it"
+        warn "installs the standard ov02e10.yaml instead (the 0.7.2 file needs these patches)."
         rm -rf "$BUILD_DIR/libcamera" && mv "$BUILD_DIR/libcamera.orig" "$BUILD_DIR/libcamera"
     fi
     echo ""
