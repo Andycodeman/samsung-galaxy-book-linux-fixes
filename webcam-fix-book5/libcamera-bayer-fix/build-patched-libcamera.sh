@@ -1071,6 +1071,39 @@ ok "Build completed."
 echo ""
 
 # Step 7: Backup originals
+# An existing backup is only valid while the patched library it belongs to is
+# still installed. If a system update has put stock libcamera back (version
+# change, same-version rebuild, or 0.7.0 -> 0.7.2), the backup is stale:
+# merging the new stock files into it would leave two libcamera versions for
+# --uninstall to restore. Judge by the [BAYER-FIX] marker in the installed
+# library rather than version numbers, which miss same-version rebuilds.
+#
+# Check the library the newest soname link (e.g. libcamera.so.0.7) resolves to,
+# i.e. the one apps actually load, not just any libcamera.so.X.Y.Z: a patched
+# build of a different version from the distro's (0.7.0 built as 0.7.2, #71)
+# stays on disk unowned after an update, still carrying the marker, while
+# ldconfig moves the link to a newer stock library.
+SKIP_BACKUP=false
+if [[ -d "$BACKUP_DIR" ]]; then
+    OLD_BACKUP_VERSION=$(cat "$BACKUP_DIR/version" 2>/dev/null || echo "unknown")
+    ACTIVE_SONAME_LINK=$(find -H "$LIBCAMERA_LIB_DIR" -maxdepth 1 -type l -regextype posix-extended \
+        -regex '.*/libcamera\.so\.[0-9]+\.[0-9]+' 2>/dev/null | sort -V | tail -1 || true)
+    ACTIVE_LIB=""
+    [[ -n "$ACTIVE_SONAME_LINK" ]] && ACTIVE_LIB=$(readlink -f "$ACTIVE_SONAME_LINK" 2>/dev/null || true)
+    if [[ -n "$ACTIVE_LIB" ]] && grep -qs 'BAYER-FIX' "$ACTIVE_LIB"; then
+        info "Patched libcamera still active ($ACTIVE_LIB) — keeping existing backup (version: $OLD_BACKUP_VERSION)."
+        SKIP_BACKUP=true
+    else
+        warn "Stock libcamera is back (${ACTIVE_LIB:-no soname link found}; system update?) — replacing stale backup (version: $OLD_BACKUP_VERSION)."
+        if libcamera_pkg_managed; then
+            info "Removing files left over from the previous patched build..."
+            remove_unowned_installed_files
+        fi
+        rm -rf "$BACKUP_DIR"
+    fi
+fi
+
+if [[ "$SKIP_BACKUP" != "true" ]]; then
 info "Backing up original libcamera files..."
 mkdir -p "$BACKUP_DIR/$LIBCAMERA_LIB_DIR"
 
@@ -1103,6 +1136,7 @@ done
 echo "${LIBCAMERA_VERSION_CLEAN:-$LIBCAMERA_VERSION}" > "$BACKUP_DIR/version"
 
 ok "Originals backed up to $BACKUP_DIR (version: ${LIBCAMERA_VERSION_CLEAN:-$LIBCAMERA_VERSION})"
+fi
 echo ""
 
 # Step 8: Install
