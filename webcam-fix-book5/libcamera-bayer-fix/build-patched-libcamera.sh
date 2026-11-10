@@ -1027,6 +1027,7 @@ fi
 # Not on a master clone either: master's meson.build can still read 0.7.2, but
 # the patches only apply to the v0.7.2 release.
 SWISP_SRC_VER=$(grep -m1 -oP "^\s*version\s*:\s*'\K[0-9.]+" "$BUILD_DIR/libcamera/meson.build" || true)
+SWISP_APPLIED=false
 if [[ "$SWISP_SRC_VER" == "0.7.2" && "$USE_SRPM" != "true" && "$LIBCAMERA_GIT_TAG" == "master" ]]; then
     info "Building libcamera master, not the v0.7.2 release — skipping SoftISP tuning patches."
     echo ""
@@ -1049,6 +1050,7 @@ elif [[ "$SWISP_SRC_VER" == "0.7.2" ]]; then
     if (cd "$BUILD_DIR/libcamera" && for p in "${SWISP_PATCHES[@]}"; do
             git apply "$SCRIPT_DIR/$p.patch" || { echo "  $p.patch did not apply" >&2; exit 1; }; done); then
         ok "SoftISP tuning patches applied."
+        SWISP_APPLIED=true
         rm -rf "$BUILD_DIR/libcamera.orig"
     else
         warn "SoftISP tuning patches did not apply — building with the bayer fix only."
@@ -1252,6 +1254,52 @@ if [[ -n "$INSTALLED_LIB" ]]; then
 else
     warn "Could not verify installation timestamp. Library may need ldconfig."
 fi
+
+# Step 10: Install the OV02E10 tuning file that matches this build
+# The tuning YAMLs are version-specific, and the wrong one can leave no working
+# camera. install.sh installs it (step 12), but running this script on its own
+# after a libcamera update used to keep the previous build's file (issue #142).
+# Same choice as install.sh: 0.7.2 with the SoftISP tuning patches gets
+# ov02e10-0.7.2.yaml, 0.5.x gets ov02e10-0.5.2.yaml (Lut), anything else
+# ov02e10.yaml (Adjust). Only replace a file we shipped (every version carries
+# our header line); a tune-ccm.sh preset or hand edit is kept, with a warning.
+info "Checking the OV02E10 tuning file..."
+TUNING_REPO_DIR="$(dirname "$SCRIPT_DIR")"
+BUILT_VER="${SWISP_SRC_VER:-${LIBCAMERA_VERSION_CLEAN:-}}"
+if [[ "$SWISP_APPLIED" == "true" ]]; then
+    TUNING_SRC="ov02e10-0.7.2.yaml"
+    TUNING_LABEL="v0.7.2 + SoftISP tuning patches"
+elif [[ "$BUILT_VER" =~ ^0\.[0-5]\. ]]; then
+    TUNING_SRC="ov02e10-0.5.2.yaml"
+    TUNING_LABEL="v0.5.x (Lut)"
+else
+    TUNING_SRC="ov02e10.yaml"
+    TUNING_LABEL="v0.6+ (Adjust)"
+fi
+TUNING_DIR=""
+for dir in /usr/local/share/libcamera/ipa/simple /usr/share/libcamera/ipa/simple; do
+    if [[ -d "$dir" ]]; then
+        TUNING_DIR="$dir"
+        break
+    fi
+done
+TUNING_DST="${TUNING_DIR:+$TUNING_DIR/ov02e10.yaml}"
+if [[ -z "$TUNING_DIR" ]]; then
+    warn "No libcamera IPA data directory found — tuning file not installed (run ../install.sh)."
+elif [[ ! -f "$TUNING_REPO_DIR/$TUNING_SRC" ]]; then
+    warn "$TUNING_SRC not found in $TUNING_REPO_DIR — tuning file not updated (run ../install.sh)."
+elif cmp -s "$TUNING_REPO_DIR/$TUNING_SRC" "$TUNING_DST"; then
+    ok "Tuning file already matches this build: $TUNING_DST ($TUNING_LABEL)."
+elif [[ -f "$TUNING_DST" ]] && ! grep -qs '^# Tuning file for OmniVision OV02E10' "$TUNING_DST"; then
+    warn "$TUNING_DST looks customised (tune-ccm.sh or a hand edit) — leaving it alone."
+    warn "  This build needs $TUNING_SRC ($TUNING_LABEL); a tuning file for another"
+    warn "  libcamera version can leave no working camera. To switch to it:"
+    warn "    sudo cp $TUNING_REPO_DIR/$TUNING_SRC $TUNING_DST"
+else
+    install -m 644 "$TUNING_REPO_DIR/$TUNING_SRC" "$TUNING_DST"
+    ok "Installed $TUNING_SRC as $TUNING_DST ($TUNING_LABEL)."
+fi
+echo ""
 
 # Cleanup build directory
 rm -rf "$BUILD_DIR"
