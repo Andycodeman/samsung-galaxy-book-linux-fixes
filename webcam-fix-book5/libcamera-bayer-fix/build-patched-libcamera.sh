@@ -156,6 +156,27 @@ reinstall_distro_libcamera() {
     return 0
 }
 
+# Stock libcamera ignores exposureTarget, so ov02e10-0.7.2.yaml left in place
+# after restoring it gives a green tint (issue #142). Swap our 0.7.2 file (our
+# header line + exposureTarget) for the standard ov02e10.yaml; leave anything
+# else, including no file (uninstall.sh removes it before calling us).
+restore_stock_tuning_file() {
+    local dir dst src
+    src="$(dirname "$SCRIPT_DIR")/ov02e10.yaml"
+    for dir in /usr/local/share/libcamera/ipa/simple /usr/share/libcamera/ipa/simple; do
+        dst="$dir/ov02e10.yaml"
+        if grep -qs '^# Tuning file for OmniVision OV02E10' "$dst" && grep -qs 'exposureTarget' "$dst"; then
+            if [[ -f "$src" ]]; then
+                install -m 644 "$src" "$dst"
+                ok "Replaced the 0.7.2 tuning file with the standard ov02e10.yaml: $dst"
+            else
+                warn "$dst is the 0.7.2 tuning file, which needs the patched libcamera,"
+                warn "  and ov02e10.yaml isn't next to this script to replace it. Re-run ../install.sh."
+            fi
+        fi
+    done
+}
+
 # ─── Uninstall mode ──────────────────────────────────────────────────
 if [[ "${1:-}" == "--uninstall" ]]; then
     echo ""
@@ -207,6 +228,7 @@ if [[ "${1:-}" == "--uninstall" ]]; then
 
         ldconfig 2>/dev/null || true
         rm -f /etc/profile.d/libcamera-ipa-path.sh
+        restore_stock_tuning_file
         ok "Stale backup removed. libcamera reinstalled from package manager."
         echo ""
         exit 0
@@ -243,6 +265,7 @@ if [[ "${1:-}" == "--uninstall" ]]; then
     rm -rf "$BACKUP_DIR"
     # Clean up IPA path env file
     rm -f /etc/profile.d/libcamera-ipa-path.sh
+    restore_stock_tuning_file
     ok "Original libcamera restored."
     echo ""
     exit 0
