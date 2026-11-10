@@ -77,6 +77,6 @@ static struct i2c_driver max98390_hda_i2c_driver = {
 module_i2c_driver(max98390_hda_i2c_driver);
 
 MODULE_DESCRIPTION("HDA MAX98390 I2C driver");
-MODULE_IMPORT_NS("SND_HDA_SCODEC_MAX98390");
+MODULE_IMPORT_NS(MAX98390_HDA_NS);
 MODULE_AUTHOR("Kevin Cuperus <cuperus.kevin@hotmail.com>");
 MODULE_LICENSE("GPL");

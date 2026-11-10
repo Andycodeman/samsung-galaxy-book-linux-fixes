@@ -7,7 +7,19 @@
 #define __MAX98390_HDA_H__
 
 #include <linux/regmap.h>
+#include <linux/version.h>
 #include <sound/hda_codec.h>
+
+/*
+ * Symbol namespaces became string literals in 6.13 (commit cdd30ebb1b9f).
+ * Older kernels (e.g. Debian 13's 6.12) stringify a bare identifier, so a
+ * quoted name ends up double-quoted and the .mod.c fails to build.
+ */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 13, 0)
+#define MAX98390_HDA_NS "SND_HDA_SCODEC_MAX98390"
+#else
+#define MAX98390_HDA_NS SND_HDA_SCODEC_MAX98390
+#endif
 
 struct firmware;
 
