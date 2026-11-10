@@ -1054,8 +1054,7 @@ elif [[ "$SWISP_SRC_VER" == "0.7.2" ]]; then
         rm -rf "$BUILD_DIR/libcamera.orig"
     else
         warn "SoftISP tuning patches did not apply — building with the bayer fix only."
-        warn "If ov02e10-0.7.2.yaml is installed as the tuning file, re-run ./install.sh so it"
-        warn "installs the standard ov02e10.yaml instead (the 0.7.2 file needs these patches)."
+        warn "Step 10 installs the standard ov02e10.yaml (the 0.7.2 tuning file needs these patches)."
         rm -rf "$BUILD_DIR/libcamera" && mv "$BUILD_DIR/libcamera.orig" "$BUILD_DIR/libcamera"
     fi
     echo ""
