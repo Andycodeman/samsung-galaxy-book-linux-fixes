@@ -190,7 +190,7 @@ err_release:
 	max98390_windows_release(priv);
 	return ret;
 }
-EXPORT_SYMBOL_NS_GPL(max98390_hda_probe, "SND_HDA_SCODEC_MAX98390");
+EXPORT_SYMBOL_NS_GPL(max98390_hda_probe, MAX98390_HDA_NS);
 
 void max98390_hda_remove(struct device *dev)
 {
@@ -206,7 +206,7 @@ void max98390_hda_remove(struct device *dev)
 	if (priv)
 		max98390_windows_release(priv);
 }
-EXPORT_SYMBOL_NS_GPL(max98390_hda_remove, "SND_HDA_SCODEC_MAX98390");
+EXPORT_SYMBOL_NS_GPL(max98390_hda_remove, MAX98390_HDA_NS);
 
 static int max98390_hda_runtime_suspend(struct device *dev)
 {
@@ -254,7 +254,7 @@ const struct dev_pm_ops max98390_hda_pm_ops = {
 	SYSTEM_SLEEP_PM_OPS(NULL, max98390_hda_resume)
 	RUNTIME_PM_OPS(max98390_hda_runtime_suspend, max98390_hda_runtime_resume, NULL)
 };
-EXPORT_SYMBOL_NS_GPL(max98390_hda_pm_ops, "SND_HDA_SCODEC_MAX98390");
+EXPORT_SYMBOL_NS_GPL(max98390_hda_pm_ops, MAX98390_HDA_NS);
 
 MODULE_DESCRIPTION("HDA MAX98390 side codec library");
 MODULE_AUTHOR("Kevin Cuperus <cuperus.kevin@hotmail.com>");
