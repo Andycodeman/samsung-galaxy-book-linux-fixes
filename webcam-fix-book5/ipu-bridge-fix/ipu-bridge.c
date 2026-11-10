@@ -13,9 +13,22 @@
 #include <linux/property.h>
 #include <linux/string.h>
 #include <linux/workqueue.h>
+#include <linux/version.h>
 
 #include <media/ipu-bridge.h>
 #include <media/v4l2-fwnode.h>
+
+/*
+ * Symbol namespaces became string literals in 6.13 (commit cdd30ebb1b9f).
+ * Older kernels stringify a bare identifier, so a quoted name ends up
+ * double-quoted and the .mod.c fails to build (e.g. 6.10-6.12 with
+ * webcam-fix-libcamera on IPU6).
+ */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 13, 0)
+#define IPU_BRIDGE_NS "INTEL_IPU_BRIDGE"
+#else
+#define IPU_BRIDGE_NS INTEL_IPU_BRIDGE
+#endif
 
 #define ADEV_DEV(adev) ACPI_PTR(&((adev)->dev))
 
@@ -442,7 +455,7 @@ int ipu_bridge_parse_ssdb(struct acpi_device *adev, struct ipu_sensor *sensor)
 
 	return 0;
 }
-EXPORT_SYMBOL_NS_GPL(ipu_bridge_parse_ssdb, "INTEL_IPU_BRIDGE");
+EXPORT_SYMBOL_NS_GPL(ipu_bridge_parse_ssdb, IPU_BRIDGE_NS);
 
 static void ipu_bridge_create_fwnode_properties(
 	struct ipu_sensor *sensor,
@@ -748,7 +761,7 @@ int ipu_bridge_instantiate_vcm(struct device *sensor)
 
 	return 0;
 }
-EXPORT_SYMBOL_NS_GPL(ipu_bridge_instantiate_vcm, "INTEL_IPU_BRIDGE");
+EXPORT_SYMBOL_NS_GPL(ipu_bridge_instantiate_vcm, IPU_BRIDGE_NS);
 
 static int ipu_bridge_instantiate_ivsc(struct ipu_sensor *sensor)
 {
@@ -991,7 +1004,7 @@ err_free_bridge:
 
 	return ret;
 }
-EXPORT_SYMBOL_NS_GPL(ipu_bridge_init, "INTEL_IPU_BRIDGE");
+EXPORT_SYMBOL_NS_GPL(ipu_bridge_init, IPU_BRIDGE_NS);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Intel IPU Sensors Bridge driver");
