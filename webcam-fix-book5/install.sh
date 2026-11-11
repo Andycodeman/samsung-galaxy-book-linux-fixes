@@ -1302,9 +1302,16 @@ EOF
     # already has them. camera-relay-gst handles egid == gid explicitly and runs
     # fine. Porting the full setgid + udev hardening across is issue #70 and
     # wants a Book5 tester, not a same-day patch.
+    #
+    # Built with -DCAMERA_RELAY_USER_CACHE, as the NixOS module does: the
+    # default build points GStreamer's registry and Mesa's shader cache at
+    # /var/cache/camera-relay, which only webcam-fix-libcamera creates. Without
+    # it GStreamer rescans every plugin on each relay start (about 3 s). This
+    # build uses the user's ~/.cache/camera-relay; the launcher only allows
+    # that for builds that are never setgid, which this one isn't.
     if [[ -f "$RELAY_DIR/camera-relay-gst.c" ]]; then
         echo "  Building pipeline launcher..."
-        if gcc -O2 -Wall -o /tmp/camera-relay-gst "$RELAY_DIR/camera-relay-gst.c"; then
+        if gcc -O2 -Wall -DCAMERA_RELAY_USER_CACHE -o /tmp/camera-relay-gst "$RELAY_DIR/camera-relay-gst.c"; then
             sudo install -m 755 /tmp/camera-relay-gst /usr/local/bin/camera-relay-gst
             rm -f /tmp/camera-relay-gst
             echo "  ✓ Installed /usr/local/bin/camera-relay-gst"
