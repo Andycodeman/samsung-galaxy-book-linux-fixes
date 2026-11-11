@@ -189,6 +189,10 @@ while IFS=: read -r user _ _ _ _ home _; do
         sudo -u "$user" systemctl --user disable camera-relay.service 2>/dev/null || true
         sudo -u "$user" rm -f "$service_file"
     fi
+    # The launcher's per-user GStreamer registry and Mesa shader cache
+    if [[ -d "$home/.cache/camera-relay" ]]; then
+        sudo -u "$user" rm -rf "$home/.cache/camera-relay"
+    fi
 done < <(getent passwd)
 sudo rm -f /usr/local/bin/camera-relay
 sudo rm -f /usr/local/bin/camera-relay-monitor
