@@ -1,0 +1,90 @@
+# SPDX-License-Identifier: CC0-1.0
+# Tuning file for OmniVision OV02E10 on Intel IPU7 (Lunar Lake)
+# Used by libcamera's Simple pipeline handler / Software ISP
+#
+# For libcamera 0.8 and later. install.sh and build-patched-libcamera.sh
+# install it as ov02e10.yaml in .../share/libcamera/ipa/softisp/: 0.8 renamed
+# the Software ISP IPA from "simple" to "softisp" and no longer reads
+# ipa/simple/. It needs no libcamera patches beyond the Bayer fix.
+#
+# Tested on the Galaxy Book5 Pro (OV02E10, IPU7) with libcamera 0.8.0 on
+# CachyOS, EndeavourOS, Ubuntu 26.04 and Debian 13: correct colour through
+# PipeWire and camera-relay.
+#
+# CCMs: start from the 0.7.2 matrices (measured with saturated pixels left
+# out of AWB, which 0.8 now does upstream), with each row scaled to sum to
+# exactly 1.0 so neutral greys stay neutral after AWB, then multiplied by a
+# saturation matrix S = 1.35*I - 0.35*(1 * w^T) (w = Rec. 709 luma weights;
+# every row of S sums to 1, so the row sums stay 1.0). Compared on CachyOS in
+# daylight against the 0.7.2 matrices, the same +20%, and the original
+# ov02e10.yaml matrices (rows 1.1-1.6): this gave a neutral white wall
+# (R/G 1.00), about 60% more saturation and unchanged skin tone, where the
+# original matrices turned the wall pink (R/G 1.12).
+#
+# Agc: with the OV02E10 sensor helper (build-patched-libcamera.sh step 4b),
+# 0.8 runs libipa's mean-luminance AGC, which reads this section. Without the
+# helper (stock 0.8) it runs the MSV AGC and ignores the section.
+# exposureTarget was a 0.7.2 patch key and is ignored by 0.8, so it is left
+# out (install.sh also uses it to recognise the 0.7.2 file).
+#
+# Based on the multi-temperature CCM tuning by @david-bartlett.
+# Anchors: 2700K, 3200K, 4500K, 5500K, 6000K, 6500K
+%YAML 1.1
+---
+version: 1
+algorithms:
+  - BlackLevel:
+      # The OV02E10 pedestal measures 64 codes at 10-bit (raw frame, lens
+      # covered, average 64.3), i.e. 4096 in 16-bit. 4352 (68, one 8-bit
+      # step higher) gave deeper blacks in daylight, but at night (gain
+      # 15.5x) it cut too much red from the darks: skin went mauve under warm
+      # light and black clothing turned blue or green-teal. The red pedestal
+      # is the lowest (61.6), so it loses most. 4096 keeps skin and blacks
+      # closer to neutral in both warm and cool night light.
+      blackLevel: 4096
+  - Awb:
+  - Ccm:
+      ccms:
+        - ct: 2700
+          ccm: [  1.516, -0.480, -0.036,
+                 -0.168,  1.596, -0.428,
+                 -0.056, -0.830,  1.886 ]
+        - ct: 3200
+          ccm: [  1.486, -0.453, -0.033,
+                 -0.221,  1.558, -0.337,
+                 -0.054, -0.694,  1.748 ]
+        - ct: 4500
+          ccm: [  1.451, -0.395, -0.056,
+                 -0.220,  1.364, -0.144,
+                 -0.041, -0.531,  1.572 ]
+        - ct: 5500
+          ccm: [  1.501, -0.392, -0.109,
+                 -0.147,  1.206, -0.059,
+                 -0.022, -0.515,  1.537 ]
+        - ct: 6000
+          ccm: [  1.471, -0.336, -0.135,
+                 -0.110,  1.086,  0.024,
+                  0.002, -0.499,  1.497 ]
+        - ct: 6500
+          ccm: [  1.454, -0.301, -0.153,
+                 -0.087,  1.037,  0.050,
+                  0.018, -0.504,  1.486 ]
+  - Adjust:
+  - Agc:
+      # Mean-luminance AGC target (libipa's default is 0.16). It replaces
+      # exposureTarget; lower is darker and less noisy. Indoors 0.12-0.20 was
+      # tried (0.20 is visibly grainier); with the backlight constraint below,
+      # 0.16 looked too bright in daylight, so 0.15.
+      relativeLuminanceTarget: 0.15
+      # Backlight: the AGC averages the whole frame, so a bright window in
+      # shot makes it cut exposure and leaves a face dark. This lower bound
+      # requires the 20-60% band of pixels (darkest to brightest: roughly the
+      # person and the room, not the window) to reach at least 0.15, and only
+      # raises exposure when they don't. Tested sitting next to a window.
+      AeConstraintMode:
+        Normal:
+          lower:
+            qLo: 0.2
+            qHi: 0.6
+            yTarget: 0.15
+...
