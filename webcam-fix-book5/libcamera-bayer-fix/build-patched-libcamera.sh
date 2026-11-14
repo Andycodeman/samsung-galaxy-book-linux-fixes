@@ -1088,6 +1088,23 @@ elif [[ "$SWISP_SRC_VER" == "0.7.2" ]]; then
     echo ""
 fi
 
+# Step 4d: libcamera 0.8.0 only — let the SoftISP lengthen the sensor frame in
+# low light (softisp-frame-length.patch). It does nothing unless the tuning file
+# sets Agc maxFrameDuration. Cut against the v0.8.0 release, and it changes the
+# IPA and the pipeline handler together, so full installs only.
+FRAMELEN_APPLIED=false
+if [[ "$SWISP_SRC_VER" == "0.8.0" && "$LIBCAMERA_GIT_TAG" != "master" && "$USE_FULL_INSTALL" == "true" \
+      && -f "$SCRIPT_DIR/softisp-frame-length.patch" ]]; then
+    info "libcamera 0.8.0 — applying SoftISP frame length patch..."
+    if (cd "$BUILD_DIR/libcamera" && git apply "$SCRIPT_DIR/softisp-frame-length.patch"); then
+        ok "SoftISP frame length patch applied."
+        FRAMELEN_APPLIED=true
+    else
+        warn "SoftISP frame length patch did not apply — building without it."
+    fi
+    echo ""
+fi
+
 # Step 5: Verify patch
 info "Verifying patch..."
 if grep -qE 'ispFormat|inputBayer\.order' "$BUILD_DIR/libcamera/src/libcamera/pipeline/simple/simple.cpp"; then

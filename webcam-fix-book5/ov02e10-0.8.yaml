@@ -76,6 +76,18 @@ algorithms:
       # tried (0.20 is visibly grainier); with the backlight constraint below,
       # 0.16 looked too bright in daylight, so 0.15.
       relativeLuminanceTarget: 0.15
+      # Low light: let the AGC lengthen the frame instead of only raising gain.
+      # Needs softisp-frame-length.patch (build-patched-libcamera.sh step
+      # 4d); ignored by an unpatched libcamera. Values are in libcamera's time
+      # units for this sensor, which run 1.35x long (the OV02E10 driver reports
+      # a 144 MHz pixel rate, but the sensor runs about 40.6 fps at the default
+      # frame length): 66666 is a real 48.8 ms frame, about 20 fps at worst.
+      # The stages keep the full frame rate until the gain reaches 12x.
+      maxFrameDuration: 66666
+      AeExposureMode:
+        Normal:
+          exposureTime: [ 33000, 66000 ]
+          gain: [ 12.0, 15.5 ]
       # Backlight: the AGC averages the whole frame, so a bright window in
       # shot makes it cut exposure and leaves a face dark. This lower bound
       # requires the 20-60% band of pixels (darkest to brightest: roughly the
