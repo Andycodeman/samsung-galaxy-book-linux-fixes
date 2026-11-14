@@ -518,7 +518,7 @@ if $NEEDS_ROTATION_FIX; then
                 *.gz)   DECOMPRESS="zcat" ;;
                 *)      DECOMPRESS="cat" ;;
             esac
-            if $DECOMPRESS "$NATIVE_IPU_BRIDGE" 2>/dev/null | strings | grep -q "940XHA"; then
+            if $DECOMPRESS "$NATIVE_IPU_BRIDGE" 2>/dev/null | strings | grep -q "$DMI_PRODUCT"; then
                 UPSTREAM_HAS_FIX=true
             fi
         fi
