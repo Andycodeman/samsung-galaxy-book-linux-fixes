@@ -132,7 +132,9 @@ echo "  ✓ WirePlumber rules removed"
 
 # [8/11] Remove sensor color tuning files
 echo "[8/11] Removing libcamera sensor tuning files..."
-for dir in /usr/local/share/libcamera/ipa/simple /usr/share/libcamera/ipa/simple; do
+# ipa/softisp/ is where libcamera 0.8+ reads them (the IPA was renamed).
+for dir in /usr/local/share/libcamera/ipa/simple /usr/share/libcamera/ipa/simple \
+           /usr/local/share/libcamera/ipa/softisp /usr/share/libcamera/ipa/softisp; do
     for sensor in ov02e10 ov02c10; do
         if [[ -f "$dir/${sensor}.yaml" ]]; then
             sudo rm -f "$dir/${sensor}.yaml"

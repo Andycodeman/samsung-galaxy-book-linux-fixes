@@ -949,10 +949,18 @@ echo "[12/15] Installing libcamera color tuning file..."
 TUNING_SENSOR="${SENSOR:-ov02e10}"
 TUNING_FILE="${TUNING_SENSOR}.yaml"
 
+# libcamera 0.8 renamed the Software ISP IPA from "simple" to "softisp" and
+# reads tuning files only from ipa/softisp/ (ipa/simple/ is ignored there).
+TUNING_LC_VER=$(libcamera_installed_version)
+TUNING_SUBDIR="simple"
+if [[ -n "$TUNING_LC_VER" ]] && [[ "$(printf '%s\n' 0.8 "$TUNING_LC_VER" | sort -V | head -1)" == "0.8" ]]; then
+    TUNING_SUBDIR="softisp"
+fi
+
 # Find where libcamera's IPA tuning files are installed
 TUNING_DIR=""
-for dir in /usr/local/share/libcamera/ipa/simple \
-           /usr/share/libcamera/ipa/simple; do
+for dir in "/usr/local/share/libcamera/ipa/$TUNING_SUBDIR" \
+           "/usr/share/libcamera/ipa/$TUNING_SUBDIR"; do
     if [[ -d "$dir" ]]; then
         TUNING_DIR="$dir"
         break
@@ -963,9 +971,13 @@ if [[ -n "$TUNING_DIR" ]]; then
     SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 
     # Select tuning file based on libcamera version:
+    #   ov02e10-0.8.yaml   — libcamera 0.8+ (softisp IPA, no SoftISP patches)
     #   ov02e10.yaml       — 6-anchor CCM for libcamera 0.6+ (uses Adjust)
     #   ov02e10-0.5.2.yaml — 3-anchor CCM for libcamera 0.5.x (uses Lut)
-    if [[ -n "${LIBCAMERA_MINOR:-}" ]] && [[ "${LIBCAMERA_MINOR}" -lt 6 ]] 2>/dev/null; then
+    if [[ "$TUNING_SUBDIR" == "softisp" ]] && [[ -f "$SCRIPT_DIR/${TUNING_SENSOR}-0.8.yaml" ]]; then
+        TUNING_SRC="$SCRIPT_DIR/${TUNING_SENSOR}-0.8.yaml"
+        TUNING_VER="v0.8+ (softisp)"
+    elif [[ -n "${LIBCAMERA_MINOR:-}" ]] && [[ "${LIBCAMERA_MINOR}" -lt 6 ]] 2>/dev/null; then
         TUNING_SRC="$SCRIPT_DIR/${TUNING_SENSOR}-0.5.2.yaml"
         TUNING_VER="v0.5.x (Lut)"
     elif grep -qas exposureTarget /usr/lib64/libcamera/ipa/ipa_soft_simple.so \

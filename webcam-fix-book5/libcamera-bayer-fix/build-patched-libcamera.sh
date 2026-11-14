@@ -1054,6 +1054,11 @@ SWISP_APPLIED=false
 if [[ "$SWISP_SRC_VER" == "0.7.2" && "$USE_SRPM" != "true" && "$LIBCAMERA_GIT_TAG" == "master" ]]; then
     info "Building libcamera master, not the v0.7.2 release — skipping SoftISP tuning patches."
     echo ""
+elif [[ -n "$SWISP_SRC_VER" ]] && [[ "$(printf '%s\n' 0.8 "$SWISP_SRC_VER" | sort -V | head -1)" == "0.8" ]]; then
+    # 0.8 excludes saturated pixels from AWB itself and moved AGC to libipa
+    # (exposure target is tuning data there), so none of the four is needed.
+    info "libcamera $SWISP_SRC_VER — SoftISP tuning patches not needed (0.7.2 only)."
+    echo ""
 elif [[ "$SWISP_SRC_VER" == "0.7.2" && "$USE_FULL_INSTALL" != "true" ]]; then
     info "libcamera 0.7.2, but this is a libraries-only install (distro IPA kept)."
     info "Skipping SoftISP tuning patches: they must be in libcamera.so and the IPA together."
@@ -1282,15 +1287,22 @@ fi
 # camera. install.sh installs it (step 12), but running this script on its own
 # after a libcamera update used to keep the previous build's file (issue #142).
 # Same choice as install.sh: 0.7.2 with the SoftISP tuning patches gets
-# ov02e10-0.7.2.yaml, 0.5.x gets ov02e10-0.5.2.yaml (Lut), anything else
-# ov02e10.yaml (Adjust). Only replace a file we shipped (every version carries
-# our header line); a tune-ccm.sh preset or hand edit is kept, with a warning.
+# ov02e10-0.7.2.yaml, 0.8+ gets ov02e10-0.8.yaml, 0.5.x gets ov02e10-0.5.2.yaml
+# (Lut), anything else ov02e10.yaml (Adjust). 0.8 renamed the Software ISP IPA
+# to "softisp" and reads tuning files only from ipa/softisp/, so that is where
+# its file goes. Only replace a file we shipped (every version carries our
+# header line); a tune-ccm.sh preset or hand edit is kept, with a warning.
 info "Checking the OV02E10 tuning file..."
 TUNING_REPO_DIR="$(dirname "$SCRIPT_DIR")"
 BUILT_VER="${SWISP_SRC_VER:-${LIBCAMERA_VERSION_CLEAN:-}}"
+TUNING_SUBDIR="simple"
 if [[ "$SWISP_APPLIED" == "true" ]]; then
     TUNING_SRC="ov02e10-0.7.2.yaml"
     TUNING_LABEL="v0.7.2 + SoftISP tuning patches"
+elif [[ -n "$BUILT_VER" ]] && [[ "$(printf '%s\n' 0.8 "$BUILT_VER" | sort -V | head -1)" == "0.8" ]]; then
+    TUNING_SRC="ov02e10-0.8.yaml"
+    TUNING_LABEL="v0.8+ (softisp)"
+    TUNING_SUBDIR="softisp"
 elif [[ "$BUILT_VER" =~ ^0\.[0-5]\. ]]; then
     TUNING_SRC="ov02e10-0.5.2.yaml"
     TUNING_LABEL="v0.5.x (Lut)"
@@ -1299,7 +1311,7 @@ else
     TUNING_LABEL="v0.6+ (Adjust)"
 fi
 TUNING_DIR=""
-for dir in /usr/local/share/libcamera/ipa/simple /usr/share/libcamera/ipa/simple; do
+for dir in "/usr/local/share/libcamera/ipa/$TUNING_SUBDIR" "/usr/share/libcamera/ipa/$TUNING_SUBDIR"; do
     if [[ -d "$dir" ]]; then
         TUNING_DIR="$dir"
         break

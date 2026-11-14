@@ -114,8 +114,9 @@ libcamera's Software ISP uses `uncalibrated.yaml` by default, which has **no col
 
 If your image still looks desaturated after installing, verify the tuning file is in place:
 ```bash
-ls /usr/share/libcamera/ipa/simple/ov02*.yaml /usr/local/share/libcamera/ipa/simple/ov02*.yaml 2>/dev/null
+ls /usr/share/libcamera/ipa/{simple,softisp}/ov02*.yaml /usr/local/share/libcamera/ipa/{simple,softisp}/ov02*.yaml 2>/dev/null
 ```
+libcamera 0.8 and later read it from `ipa/softisp/`; older versions from `ipa/simple/`.
 
 **Interactive tuning:** If the default colors aren't right, use the interactive tuning tool to find the best preset:
 ```bash
@@ -165,6 +166,8 @@ After (re)building, restart PipeWire so apps pick up the new library: `systemctl
   ```
 - **After a standalone `--uninstall`**, the 0.7.2 tuning file stays in place while libcamera goes back to stock, which gives a green tint. Re-run `./install.sh` to rebuild, or `./uninstall.sh` to remove everything.
 - **`tune-ccm.sh`** presets are measured on stock libcamera and don't include the patched file's `exposureTarget` or black level, so they're not meant for the 0.7.2 file. If you save one, re-run `./install.sh` to put the 0.7.2 file back.
+
+**libcamera 0.8 and later.** The four SoftISP patches aren't needed and aren't applied: 0.8 leaves saturated pixels out of AWB itself, and its AGC takes the exposure target from the tuning file (`relativeLuminanceTarget`). The Bayer fix and the OV02E10 sensor helper are still applied. 0.8 renamed the Software ISP IPA from `simple` to `softisp` and only reads tuning files from `ipa/softisp/`, so `install.sh` installs `ov02e10-0.8.yaml` there as `ov02e10.yaml`.
 
 **`tune-ccm.sh` cannot fix this.** If you've tried the CCM presets and none of them removes the purple, that's expected — the tint is a bayer-pattern shift, not a colour-matrix error. Flipping the sensor folds the red and blue samples onto the same positions, so the information needed to separate them is gone; no 3×3 matrix can recover it. Only the patched libcamera above corrects it. Once the bayer fix is active, `tune-ccm.sh` is still useful for any remaining mild green/warm cast (and it now warns you up front on OV02E10 if the bayer fix doesn't look active).
 
@@ -481,8 +484,8 @@ The install script creates these files:
 | `/etc/modprobe.d/intel-ipu7-camera.conf` | Softdep: LJCA -> intel_cvs -> sensor load order |
 | `/etc/wireplumber/wireplumber.conf.d/50-disable-ipu7-v4l2.conf` | Hide raw IPU7 V4L2 nodes from PipeWire (WirePlumber 0.5+) |
 | `/etc/wireplumber/main.lua.d/51-disable-ipu7-v4l2.lua` | Hide raw IPU7 V4L2 nodes from PipeWire (WirePlumber 0.4) |
-| `/usr/share/libcamera/ipa/simple/ov02e10.yaml` | Sensor color tuning file with CCM (OV02E10) |
-| `/usr/share/libcamera/ipa/simple/ov02c10.yaml` | Sensor color tuning file with CCM (OV02C10) |
+| `/usr/share/libcamera/ipa/simple/ov02e10.yaml` | Sensor color tuning file with CCM (OV02E10); `ipa/softisp/` on libcamera 0.8+ |
+| `/usr/share/libcamera/ipa/simple/ov02c10.yaml` | Sensor color tuning file with CCM (OV02C10); `ipa/softisp/` on libcamera 0.8+ |
 | `/etc/environment.d/libcamera-ipa.conf` | Set LIBCAMERA_IPA_MODULE_PATH + SPA_PLUGIN_DIR (systemd sessions) |
 | `/etc/profile.d/libcamera-ipa.sh` | Set LIBCAMERA_IPA_MODULE_PATH + SPA_PLUGIN_DIR (login shells) |
 | `/usr/src/vision-driver-1.0.0/` | DKMS source for intel_cvs module |

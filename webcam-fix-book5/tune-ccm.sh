@@ -65,10 +65,18 @@ if [[ "$SENSOR" == "ov02e10" ]]; then
     fi
 fi
 
-# Find the tuning file location
+# Find the tuning file location. libcamera 0.8+ reads it from ipa/softisp/
+# (the Software ISP IPA was renamed from "simple"), older versions ipa/simple/.
+TUNING_SUBDIR="simple"
+_lc_soname=$(ls -l /usr/local/lib/*/libcamera.so.* /usr/local/lib/libcamera.so.* \
+    /usr/lib64/libcamera.so.* /usr/lib/*/libcamera.so.* /usr/lib/libcamera.so.* 2>/dev/null \
+    | grep -oP 'libcamera\.so\.\K[0-9]+\.[0-9]+' | sort -V | tail -1 || true)
+if [[ -n "$_lc_soname" ]] && [[ "$(printf '%s\n' 0.8 "$_lc_soname" | sort -V | head -1)" == "0.8" ]]; then
+    TUNING_SUBDIR="softisp"
+fi
 TUNING_FILE=""
-for dir in /usr/local/share/libcamera/ipa/simple \
-           /usr/share/libcamera/ipa/simple; do
+for dir in "/usr/local/share/libcamera/ipa/$TUNING_SUBDIR" \
+           "/usr/share/libcamera/ipa/$TUNING_SUBDIR"; do
     if [[ -d "$dir" ]]; then
         TUNING_FILE="$dir/${SENSOR}.yaml"
         break
