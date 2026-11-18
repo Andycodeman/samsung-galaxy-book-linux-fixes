@@ -1,0 +1,68 @@
+ipa: libipa: awb: Converge without smoothing at start-up
+
+AWB smooths colour gain changes with a fixed speed of 0.2, and starts
+from neutral gains (1.0) when the tuning file has no colourGains curve
+(grey world). On the SoftISP the AWB result is only updated every few
+frames, so the picture starts with a strong green-yellow cast that takes
+2-3 seconds to clear (measured on the OV02E10: B/G 0.28-0.33 for the
+first frames, 0.77 after 19 frames).
+
+Use speed 1.0 for the first three updates after configure(), then the
+normal smoothing. Measured with this and ov02e10-sensor-delays.patch:
+the colour is final by frame 3 instead of about frame 20.
+
+For the OV02E10 on the Galaxy Book5 Pro (940XHA), against libcamera v0.8.0.
+build-patched-libcamera.sh applies it on 0.8.0 full installs (step 4e).
+
+diff --git a/src/ipa/libipa/awb.cpp b/src/ipa/libipa/awb.cpp
+index 3b95fec..f0ebeb3 100644
+--- a/src/ipa/libipa/awb.cpp
++++ b/src/ipa/libipa/awb.cpp
+@@ -17,6 +17,7 @@
+ constexpr int32_t kMinColourTemperature = 2500;
+ constexpr int32_t kMaxColourTemperature = 10000;
+ constexpr int32_t kDefaultColourTemperature = 5000;
++constexpr unsigned int kStartupUpdates = 3;
+ 
+ /**
+  * \file awb.h
+@@ -255,6 +256,9 @@ int AwbAlgorithmBase::configure(awb::ActiveState &state)
+ 	state.manual.colourTemperature = kDefaultColourTemperature;
+ 	state.automatic.colourTemperature = kDefaultColourTemperature;
+ 
++	/* Converge without smoothing for the first few updates after start. */
++	startupUpdates_ = kStartupUpdates;
++
+ 	return 0;
+ }
+ 
+@@ -379,8 +383,16 @@ void AwbAlgorithmBase::process(awb::ActiveState &state,
+ 	 */
+ 	awbResult.gains = awbResult.gains.clamp(gainMin_, gainMax_);
+ 
+-	/* Smooth color gains adjustments. */
++	/*
++	 * Smooth color gains adjustments, except for the first few updates
++	 * after start, which jump straight to the result so the picture
++	 * doesn't start with a long colour cast.
++	 */
+ 	double speed = 0.2;
++	if (startupUpdates_ > 0) {
++		speed = 1.0;
++		startupUpdates_--;
++	}
+ 	double ct = awbResult.colourTemperature;
+ 	ct = ct * speed + state.automatic.colourTemperature * (1 - speed);
+ 
+diff --git a/src/ipa/libipa/awb.h b/src/ipa/libipa/awb.h
+index 9952556..dcc3dbf 100644
+--- a/src/ipa/libipa/awb.h
++++ b/src/ipa/libipa/awb.h
+@@ -106,6 +106,7 @@ private:
+ 	std::map<controls::AwbModeEnum, AwbAlgorithmBase::ModeConfig> modes_;
+ 	const ModeConfig *currentMode_ = nullptr;
+ 	std::unique_ptr<AwbImplementation> impl_;
++	unsigned int startupUpdates_ = 0;
+ 	bool bayes_ = false;
+ };
+ 

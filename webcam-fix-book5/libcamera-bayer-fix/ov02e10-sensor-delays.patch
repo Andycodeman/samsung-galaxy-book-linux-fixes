@@ -1,0 +1,35 @@
+libcamera: sensor: Add OV02E10 static properties and sensor delays
+
+The OV02E10 has no entry in the sensor properties database, so libcamera
+warns "No sensor delays found in static properties" and assumes a gain
+delay of 1 frame. Intel's IPU7 camera HAL config for this sensor
+(ov02e10-uf.json) uses exposureLag 2 and gainLag 2. With the wrong gain
+delay, AGC misreads which gain each frame was taken with, which can make
+it overshoot at start-up. With the delays set, brightness settles by frame 3.
+
+Unit cell size: 1.12 um (OmniVision OV02E product brief).
+
+For the OV02E10 on the Galaxy Book5 Pro (940XHA), against libcamera v0.8.0.
+build-patched-libcamera.sh applies it on 0.8.0 full installs (step 4e).
+
+diff --git a/src/libcamera/sensor/camera_sensor_properties.cpp b/src/libcamera/sensor/camera_sensor_properties.cpp
+index 20cfd0b..c2d9b60 100644
+--- a/src/libcamera/sensor/camera_sensor_properties.cpp
++++ b/src/libcamera/sensor/camera_sensor_properties.cpp
+@@ -376,6 +376,16 @@ const CameraSensorProperties *CameraSensorProperties::get(const std::string &sen
+ 				.hblankDelay = 3
+ 			},
+ 		} },
++		{ "ov02e10", {
++			.unitCellSize = { 1120, 1120 },
++			.testPatternModes = {},
++			.sensorDelays = {
++				.exposureDelay = 2,
++				.gainDelay = 2,
++				.vblankDelay = 2,
++				.hblankDelay = 2
++			},
++		} },
+ 		{ "ov08d10", {
+ 			.unitCellSize = { 1120, 1120 },
+ 			.testPatternModes =  {
