@@ -1105,6 +1105,27 @@ if [[ "$SWISP_SRC_VER" == "0.8.0" && "$LIBCAMERA_GIT_TAG" != "master" && "$USE_F
     echo ""
 fi
 
+# Step 4e: libcamera 0.8.0 only — SoftISP start-up and steadiness fixes.
+# awb-fast-start.patch: libipa's AWB eases every change in at 20% per update,
+# so the picture starts with a colour cast that takes 2-3 seconds to clear;
+# this lets it converge without smoothing for its first 3 updates.
+# agc-hold-steady.patch: in a steady scene the AGC keeps making small
+# corrections, which flicker across the top of the picture; this holds
+# exposure and gain once settled. Needs softisp-frame-length.patch (4d).
+# Cut against the v0.8.0 release; full installs only, like 4d.
+if [[ "$SWISP_SRC_VER" == "0.8.0" && "$LIBCAMERA_GIT_TAG" != "master" && "$USE_FULL_INSTALL" == "true" ]]; then
+    for softisp_patch in awb-fast-start.patch agc-hold-steady.patch; do
+        [[ -f "$SCRIPT_DIR/$softisp_patch" ]] || continue
+        info "libcamera 0.8.0 — applying $softisp_patch..."
+        if (cd "$BUILD_DIR/libcamera" && git apply "$SCRIPT_DIR/$softisp_patch"); then
+            ok "$softisp_patch applied."
+        else
+            warn "$softisp_patch did not apply — building without it."
+        fi
+    done
+    echo ""
+fi
+
 # Step 5: Verify patch
 info "Verifying patch..."
 if grep -qE 'ispFormat|inputBayer\.order' "$BUILD_DIR/libcamera/src/libcamera/pipeline/simple/simple.cpp"; then
