@@ -1,0 +1,107 @@
+ipa: softisp: agc: Hold exposure and gain once settled
+
+In a steady scene the libipa AGC keeps making small corrections to
+exposure and gain (on the OV02E10 about 30 gain changes in 300 frames).
+Each one is a small brightness step, and as the sensor can apply a change
+part way through a frame, it shows as a flicker, mostly across the top of
+the picture. With exposure and gain fixed by hand there is no flicker at
+any brightness, and libcamera 0.7's Software ISP AGC, which settles and
+stops, doesn't show it either.
+
+Once an update changes exposure x gain by less than 3%, hold both until
+the AGC asks for a change of more than 6%, then follow it freely until it
+settles again. Start-up and real changes of light are unaffected.
+
+For the OV02E10 on the Galaxy Book5 Pro (940XHA), against libcamera v0.8.0
+with softisp-frame-length.patch. build-patched-libcamera.sh applies it on
+0.8.0 full installs (step 4e).
+
+diff --git a/src/ipa/softisp/algorithms/agc.cpp b/src/ipa/softisp/algorithms/agc.cpp
+index 77daf3e..1145fe9 100644
+--- a/src/ipa/softisp/algorithms/agc.cpp
++++ b/src/ipa/softisp/algorithms/agc.cpp
+@@ -8,6 +8,7 @@
+ #include "agc.h"
+ 
+ #include <algorithm>
++#include <cmath>
+ #include <chrono>
+ 
+ #include <linux/v4l2-controls.h>
+@@ -24,6 +25,14 @@ LOG_DEFINE_CATEGORY(IPASoftIspExposure)
+ 
+ namespace ipa::softisp::algorithms {
+ 
++/*
++ * Once the AGC has settled (an update changes exposure x gain by less than
++ * kSettleChange), hold exposure and gain until it asks for a change of more
++ * than kReleaseChange, then follow it freely until it settles again.
++ */
++static constexpr double kSettleChange = 0.03;
++static constexpr double kReleaseChange = 0.06;
++
+ namespace {
+ 
+ class AgcTraits : public AgcMeanLuminance::Traits
+@@ -82,6 +91,7 @@ int Agc::configure(IPAContext &context, [[maybe_unused]] const IPAConfigInfo &co
+ 		return ret;
+ 
+ 	context.configuration.vblank = {};
++	settled_ = false;
+ 
+ 	if (maxFrameDuration_ == utils::Duration(0))
+ 		return 0;
+@@ -165,6 +175,10 @@ void Agc::process(IPAContext &context,
+ 		  const SwIspStats *stats,
+ 		  ControlList &metadata)
+ {
++	agc::ActiveState &state = context.activeState.agc;
++	const uint32_t prevExposure = state.automatic.exposure;
++	const double prevGain = state.automatic.gain;
++
+ 	if (stats->valid) {
+ 		/* \todo The histogram should come already adjusted. */
+ 		auto histogram = stats->yHistogram;
+@@ -186,6 +200,30 @@ void Agc::process(IPAContext &context,
+ 		agc_.process(context.configuration.agc, context.activeState.agc, frameContext.agc, {}, metadata);
+ 	}
+ 
++	/*
++	 * In a steady scene the AGC keeps making small corrections to exposure
++	 * and gain. Each one is a small brightness step, and as the sensor can
++	 * apply a change part way through a frame it shows as a flicker,
++	 * mostly across the top of the picture. Hold the values once settled
++	 * and only let a clear change through, like the 0.7 Software ISP AGC.
++	 */
++	if (stats->valid && prevExposure && prevGain > 0.0) {
++		const double prevEv = prevExposure * prevGain;
++		const double newEv = state.automatic.exposure * state.automatic.gain;
++		const double change = std::abs(newEv / prevEv - 1.0);
++
++		if (settled_) {
++			if (change < kReleaseChange) {
++				state.automatic.exposure = prevExposure;
++				state.automatic.gain = prevGain;
++			} else {
++				settled_ = false;
++			}
++		} else if (change < kSettleChange) {
++			settled_ = true;
++		}
++	}
++
+ 	/*
+ 	 * With frame length control, report the frame length this frame had:
+ 	 * long enough for its exposure, and no shorter than the shortest
+diff --git a/src/ipa/softisp/algorithms/agc.h b/src/ipa/softisp/algorithms/agc.h
+index ffbcfcf..c619fcb 100644
+--- a/src/ipa/softisp/algorithms/agc.h
++++ b/src/ipa/softisp/algorithms/agc.h
+@@ -38,6 +38,7 @@ public:
+ private:
+ 	AgcAlgorithm agc_;
+ 	utils::Duration maxFrameDuration_;
++	bool settled_ = false;
+ };
+ 
+ } /* namespace ipa::softisp::algorithms */
