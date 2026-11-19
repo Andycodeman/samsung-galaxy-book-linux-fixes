@@ -1105,21 +1105,19 @@ if [[ "$SWISP_SRC_VER" == "0.8.0" && "$LIBCAMERA_GIT_TAG" != "master" && "$USE_F
     echo ""
 fi
 
-# Step 4e: libcamera 0.8.0 only — start-up fixes. ov02e10-sensor-delays.patch
-# gives the OV02E10 its sensor delays (gain applies 2 frames late, per Intel's
-# IPU7 HAL config), so AGC doesn't overshoot at start-up. awb-fast-start.patch
-# lets AWB converge without smoothing for its first 3 updates, which removes
-# the green start. Cut against the v0.8.0 release; full installs only, like 4d.
-if [[ "$SWISP_SRC_VER" == "0.8.0" && "$LIBCAMERA_GIT_TAG" != "master" && "$USE_FULL_INSTALL" == "true" ]]; then
-    for startup_patch in ov02e10-sensor-delays.patch awb-fast-start.patch; do
-        [[ -f "$SCRIPT_DIR/$startup_patch" ]] || continue
-        info "libcamera 0.8.0 — applying $startup_patch..."
-        if (cd "$BUILD_DIR/libcamera" && git apply "$SCRIPT_DIR/$startup_patch"); then
-            ok "$startup_patch applied."
-        else
-            warn "$startup_patch did not apply — building without it."
-        fi
-    done
+# Step 4e: libcamera 0.8.0 only — AWB fast start (awb-fast-start.patch). libipa's
+# AWB eases every change in at 20% per update, so the picture starts with a
+# colour cast that takes 2-3 seconds to clear; this lets it converge without
+# smoothing for its first 3 updates. Cut against the v0.8.0 release; full
+# installs only, like 4d.
+if [[ "$SWISP_SRC_VER" == "0.8.0" && "$LIBCAMERA_GIT_TAG" != "master" && "$USE_FULL_INSTALL" == "true" \
+      && -f "$SCRIPT_DIR/awb-fast-start.patch" ]]; then
+    info "libcamera 0.8.0 — applying AWB fast start patch..."
+    if (cd "$BUILD_DIR/libcamera" && git apply "$SCRIPT_DIR/awb-fast-start.patch"); then
+        ok "AWB fast start patch applied."
+    else
+        warn "AWB fast start patch did not apply — building without it."
+    fi
     echo ""
 fi
 

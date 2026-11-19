@@ -8,8 +8,9 @@ frames, so the picture starts with a strong green-yellow cast that takes
 first frames, 0.77 after 19 frames).
 
 Use speed 1.0 for the first three updates after configure(), then the
-normal smoothing. Measured with this and ov02e10-sensor-delays.patch:
-the colour is final by frame 3 instead of about frame 20.
+normal smoothing. Measured on the OV02E10: the colour is final by frame 3
+instead of about frame 20, and with a Bayesian tuning file the first AWB update
+already has the final gains.
 
 For the OV02E10 on the Galaxy Book5 Pro (940XHA), against libcamera v0.8.0.
 build-patched-libcamera.sh applies it on 0.8.0 full installs (step 4e).
