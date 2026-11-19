@@ -129,8 +129,12 @@ algorithms:
       # Mean-luminance AGC target (libipa's default is 0.16). It replaces
       # exposureTarget; lower is darker and less noisy. Indoors 0.12-0.20 was
       # tried (0.20 is visibly grainier); with the backlight constraint below,
-      # 0.16 looked too bright in daylight, so 0.15.
-      relativeLuminanceTarget: 0.15
+      # 0.16 looked too bright in daylight. 0.12 rather than 0.15: compared
+      # 0.10, 0.12, 0.13 and 0.15 on Fedora 45, 0.15 was noticeably brighter
+      # than libcamera 0.7.2 and pushed lamp-lit faces close to white; 0.12 is
+      # about 6% darker in daylight with the same relative grain, and in a dark
+      # room makes no difference (the AGC is already at maximum gain).
+      relativeLuminanceTarget: 0.12
       # Low light: let the AGC lengthen the frame instead of only raising gain.
       # Needs softisp-frame-length.patch (build-patched-libcamera.sh step
       # 4d); ignored by an unpatched libcamera. Values are in libcamera's time
@@ -146,12 +150,14 @@ algorithms:
       # Backlight: the AGC averages the whole frame, so a bright window in
       # shot makes it cut exposure and leaves a face dark. This lower bound
       # requires the 20-60% band of pixels (darkest to brightest: roughly the
-      # person and the room, not the window) to reach at least 0.15, and only
+      # person and the room, not the window) to reach at least 0.12, and only
       # raises exposure when they don't. Tested sitting next to a window.
       AeConstraintMode:
         Normal:
           lower:
             qLo: 0.2
             qHi: 0.6
-            yTarget: 0.15
+            # Kept equal to relativeLuminanceTarget: higher would pull ordinary
+            # scenes back up to it.
+            yTarget: 0.12
 ...
