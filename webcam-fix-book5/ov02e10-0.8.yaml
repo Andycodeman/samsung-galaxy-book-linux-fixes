@@ -21,6 +21,21 @@
 # (R/G 1.00), about 60% more saturation and unchanged skin tone, where the
 # original matrices turned the wall pink (R/G 1.12).
 #
+# On top of that, two changes for the Bayesian AWB below (tested on Fedora 45
+# with libcamera 0.8.0):
+#   - Saturation 1.3, baked in: each matrix multiplied by the matrix the
+#     SoftISP builds for the Saturation control (BT.601 YCbCr, chroma x1.3), so
+#     the picture is the same as setting Saturation=1.3, with no control
+#     needed. Rows still sum to 1.0. Compared at 1.0, 1.15, 1.3 and 1.5 on a
+#     ColorChecker in daylight and lamp light; 1.5 was too strong and lifted
+#     colour noise at night.
+#   - Warm light: the red row is raised x1.30 at 2700 K and x1.20 at 3200 K,
+#     4500 K and up unchanged (so those two red rows sum to 1.30 and 1.20, on
+#     purpose). AWB neutralises lamp light almost completely, which left
+#     white walls yellow-green under 2700 K lamps (red level with green);
+#     this keeps them cream, as a phone shows them. 4000 K lighting stays
+#     neutral.
+#
 # Agc: with the OV02E10 sensor helper (build-patched-libcamera.sh step 4b),
 # 0.8 runs libipa's mean-luminance AGC, which reads this section. Without the
 # helper (stock 0.8) it runs the MSV AGC and ignores the section.
@@ -43,32 +58,72 @@ algorithms:
       # closer to neutral in both warm and cool night light.
       blackLevel: 4096
   - Awb:
+      # Bayesian AWB (libipa, stock 0.8). Instead of assuming the whole frame
+      # averages to grey, it picks the light's colour temperature from a
+      # calibrated curve, so a room with one strong colour (blue walls, a
+      # blue headboard) doesn't throw the colour off as much.
+      # colourGains: white paper filling the frame at a fixed exposure, under
+      # a Hue bulb at 2200-5000 K and daylight at 6500-8000 K (temperatures
+      # read with a phone app).
+      # transverseNeg lets AWB step off the curve to remove a green cast:
+      # 0.05 left daylight walls slightly green, 0.10 also took the warmth
+      # out of lamp light; 0.07 is clean in daylight and keeps lamps warm.
+      algorithm: bayes
+      transversePos: 0.1
+      transverseNeg: 0.07
+      colourGains:
+        - ct: 2200
+          gains: [ 1.0235, 2.2015 ]
+        - ct: 2700
+          gains: [ 1.1101, 2.1630 ]
+        - ct: 3000
+          gains: [ 1.1863, 2.0492 ]
+        - ct: 4000
+          gains: [ 1.3978, 1.8363 ]
+        - ct: 5000
+          gains: [ 1.5057, 1.7593 ]
+        - ct: 6500
+          gains: [ 1.7981, 1.3245 ]
+        - ct: 7200
+          gains: [ 1.8257, 1.2597 ]
+        - ct: 8000
+          gains: [ 1.8632, 1.2038 ]
+      # A flat prior (every temperature equally likely). The SoftISP has no
+      # lux measurement and always passes 500, so one prior is all it uses.
+      priors:
+        - lux: 500
+          ct: [ 2200, 2300, 2400, 2500, 2600, 2700, 2800, 2900, 3000, 3100, 3200, 3300, 3400, 3500, 3600, 3700, 3800, 3900, 4000, 4100, 4200, 4300, 4400, 4500, 4600, 4700, 4800, 4900, 5000, 5100, 5200, 5300, 5400, 5500, 5600, 5700, 5800, 5900, 6000, 6100, 6200, 6300, 6400, 6500, 6600, 6700, 6800, 6900, 7000, 7100, 7200, 7300, 7400, 7500, 7600, 7700, 7800, 7900, 8000 ]
+          probability: [ 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000 ]
+      AwbMode:
+        Auto:
+          lo: 2200
+          hi: 8000
   - Ccm:
       ccms:
         - ct: 2700
-          ccm: [  1.516, -0.480, -0.036,
-                 -0.168,  1.596, -0.428,
-                 -0.056, -0.830,  1.886 ]
+          ccm: [  2.427, -1.084, -0.043,
+                 -0.323,  1.865, -0.542,
+                 -0.177, -1.289,  2.466 ]
         - ct: 3200
-          ccm: [  1.486, -0.453, -0.033,
-                 -0.221,  1.558, -0.337,
-                 -0.054, -0.694,  1.748 ]
+          ccm: [  2.207, -0.959, -0.048,
+                 -0.380,  1.816, -0.436,
+                 -0.163, -1.112,  2.275 ]
         - ct: 4500
-          ccm: [  1.451, -0.395, -0.056,
-                 -0.220,  1.364, -0.144,
-                 -0.041, -0.531,  1.572 ]
+          ccm: [  1.796, -0.700, -0.096,
+                 -0.376,  1.587, -0.211,
+                 -0.143, -0.877,  2.020 ]
         - ct: 5500
-          ccm: [  1.501, -0.392, -0.109,
-                 -0.147,  1.206, -0.059,
-                 -0.022, -0.515,  1.537 ]
+          ccm: [  1.843, -0.669, -0.174,
+                 -0.299,  1.408, -0.109,
+                 -0.137, -0.829,  1.966 ]
         - ct: 6000
-          ccm: [  1.471, -0.336, -0.135,
-                 -0.110,  1.086,  0.024,
-                  0.002, -0.499,  1.497 ]
+          ccm: [  1.800, -0.581, -0.219,
+                 -0.256,  1.268, -0.012,
+                 -0.110, -0.793,  1.903 ]
         - ct: 6500
-          ccm: [  1.454, -0.301, -0.153,
-                 -0.087,  1.037,  0.050,
-                  0.018, -0.504,  1.486 ]
+          ccm: [  1.775, -0.530, -0.245,
+                 -0.229,  1.210,  0.019,
+                 -0.092, -0.794,  1.886 ]
   - Adjust:
   - Agc:
       # Mean-luminance AGC target (libipa's default is 0.16). It replaces
