@@ -112,3 +112,15 @@ was about our relay, which a Book6 owner won't be running.
 > If you could put the camera package's `build.sh` + `src/` on GitHub (or anywhere public), that would help people who'd rather build from source than install a binary `.deb`. Comparing notes with Jabbslad and z4ziggy would probably help too: there are now three copies of an SC200PC driver, and one of them will need to go upstream eventually.
 >
 > On our side, the Book6 stays out of this repo's installers, as I said in #57. Different sensor and bridge, I don't have the hardware, and you all do. I'll add a README pointer to these projects, and have the Book5 installer send `8086:b05d` machines there instead of installing a bridge that can't see their sensor.
+
+## Follow-ups done 2026-11-27 (uncommitted)
+
+- #57 note to Marc about Jabbslad posted (7228790732).
+- README: new "Webcam — Galaxy Book6 (Panther Lake)" section listing the three
+  drivers; `webcam-fix-book5/README.md` points there next to `--force`.
+- `webcam-fix-book5/install.sh` step 3 refuses `8086:b05d` even with
+  `--force` and prints the three links + the uninstall hint. Nothing is
+  installed before step 3. Tested by sourcing the step-3 block with a stub
+  `lspci`: b05d exits 1 with and without `--force`; 645d continues; no IPU
+  exits 1 without `--force` and continues with it. Not changed: the NixOS
+  `webcam-fix-book5.nix` module (no PCI gate there).

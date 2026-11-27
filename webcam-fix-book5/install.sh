@@ -204,6 +204,25 @@ if ! $IPU7_FOUND; then
         exit 1
     fi
 
+    # Panther Lake (Galaxy Book6) — refused even with --force. Its sensor is a
+    # SmartSens SC200PC (ACPI SSLC2000), which our ipu-bridge-fix doesn't know,
+    # and the community drivers install their own ipu-bridge.ko that ours would
+    # compete with (#57, #68).
+    if lspci -d 8086:b05d 2>/dev/null | grep -q .; then
+        echo "ERROR: This system has Intel IPU7 Panther Lake (8086:b05d), e.g. Galaxy Book6."
+        echo ""
+        echo "       This fix does not support it, even with --force. The Book6 camera is a"
+        echo "       SmartSens SC200PC (SSLC2000), which needs a different sensor driver and"
+        echo "       ipu-bridge entry. Use one of the community drivers instead:"
+        echo "         https://github.com/z4ziggy/galaxybook6-camera"
+        echo "         https://github.com/Jabbslad/sc200pc-linux"
+        echo "         http://olle.bz.nu/galaxybook6pro/ (Ubuntu 26.04 packages)"
+        echo ""
+        echo "       If you installed this fix before with --force, run ./uninstall.sh"
+        echo "       and reboot first."
+        exit 1
+    fi
+
     if $FORCE; then
         echo "  ⚠ No IPU7 detected — installing anyway (--force)"
     else

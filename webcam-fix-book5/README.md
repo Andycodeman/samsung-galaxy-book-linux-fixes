@@ -93,6 +93,8 @@ sudo reboot
 ./install.sh --force
 ```
 
+> **Galaxy Book6 (Panther Lake, `8086:b05d`):** not supported, and `--force` won't override that. Its camera is a SmartSens SC200PC (`SSLC2000`), which needs a different sensor driver and `ipu-bridge` entry. See the [Book6 community drivers](../README.md#webcam--galaxy-book6-panther-lake-community-drivers-not-this-repo) in the main README.
+
 ---
 
 ## Uninstall

@@ -119,3 +119,17 @@ will fail to rebuild the bridge.
 > maintains the driver. Once a second Book6 owner confirms it works, I'll add
 > a pointer to the README and have the Book5 installer send Book6 owners
 > (`8086:b05d`) there instead of installing a bridge that can't see their sensor.
+
+## Follow-up note (posted 2026-11-27, comment 7228790732)
+
+Found while triaging #68: Marc's `ipu-bridge-sslc2000` DKMS module is a
+package from [Jabbslad/sc200pc-linux](https://github.com/Jabbslad/sc200pc-linux)
+(April 2026). We answered our own question:
+
+> @MarcM6909, one more thing, answering my own question from my last comment: the `ipu-bridge-sslc2000` module in your DKMS list comes from [Jabbslad/sc200pc-linux](https://github.com/Jabbslad/sc200pc-linux). That's an earlier SC200PC driver for the Book6 Pro, from April, and `ipu-bridge-sslc2000-dkms` is one of its packages. So it looks like you had already tried that driver. If you remember how it went, that's useful too.
+>
+> There are now three SC200PC drivers for the Book6. They're listed in #68.
+
+README pointer to the three community drivers and the `8086:b05d` refusal in
+`webcam-fix-book5/install.sh` (even with `--force`) were added the same day,
+uncommitted.
