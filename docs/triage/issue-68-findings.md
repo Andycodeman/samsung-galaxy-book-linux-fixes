@@ -1,6 +1,6 @@
 # Issue #68 — Galaxy Book6 Ultra webcam (Panther Lake IPU7)
 
-Status (2026-11-27): reply DRAFTED below, not posted. Covers @jpnayak (the
+Status (2026-11-27): reply below POSTED 2026-11-27 as comment 7228762369. Covers @jpnayak (the
 reporter, Book6 Ultra), @OlleHall (three unanswered posts from 2026-08-09) and
 @z4ziggy (new comment 7228055613). Companion to `issue-57-findings.md`.
 
@@ -74,7 +74,7 @@ machines that is exactly our README's "Known gap" (GPU debayer inside
 points at that section. Our July note about "the CPU-debayer path (see #66)"
 was about our relay, which a Book6 owner won't be running.
 
-## Reply draft (not posted)
+## Reply (posted 2026-11-27, comment 7228762369)
 
 > Hi @jpnayak, @OlleHall, and thanks @z4ziggy.
 >
