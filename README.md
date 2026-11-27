@@ -1,10 +1,8 @@
-<table align="center"><tr><td>
-
 <h3><a href="https://octoally.com"><img src="docs/octoally-logo.png" width="100" align="left" alt="OctoAlly logo"></a>This repo is built and managed with OctoAlly Pro</h3>
 
 <a href="https://octoally.com/download"><img src="https://img.shields.io/badge/%E2%AC%87%20Download_OctoAlly_Pro-C62828?style=for-the-badge" alt="Download OctoAlly Pro"></a>&nbsp;&nbsp;<a href="https://octoally.com"><img src="https://img.shields.io/badge/Visit_octoally.com-30363D?style=for-the-badge" alt="Visit octoally.com"></a>
 
-</td></tr></table>
+<br clear="left">
 
 # Samsung Galaxy Book 3/4/5 Linux Fixes
 
