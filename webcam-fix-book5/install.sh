@@ -214,6 +214,7 @@ if ! $IPU7_FOUND; then
         echo "       This fix does not support it, even with --force. The Book6 camera is a"
         echo "       SmartSens SC200PC (SSLC2000), which needs a different sensor driver and"
         echo "       ipu-bridge entry. Use one of the community drivers instead:"
+        echo "         https://github.com/MarcoGlauser/galaxybook6-ultra-camera (Book6 Ultra)"
         echo "         https://github.com/z4ziggy/galaxybook6-camera"
         echo "         https://github.com/Jabbslad/sc200pc-linux"
         echo "         http://olle.bz.nu/galaxybook6pro/ (Ubuntu 26.04 packages)"

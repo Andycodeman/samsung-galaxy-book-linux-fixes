@@ -124,3 +124,61 @@ was about our relay, which a Book6 owner won't be running.
   `lspci`: b05d exits 1 with and without `--force`; 645d continues; no IPU
   exits 1 without `--force` and continues with it. Not changed: the NixOS
   `webcam-fix-book5.nix` module (no PCI gate there).
+
+## Round 2 — z4ziggy 7229550737 (2026-11-27 22:42)
+
+Points to **MarcoGlauser/galaxybook6-ultra-camera** (GPL-2.0, created
+2026-08-11, last push 2026-09-29). Read its README:
+
+- Built and tested on a Book6 **Ultra**, model `PAMC-960UJH-PTLH-0`.
+  jpnayak's DMI is `Galaxy Book6 Ultra - PAMC`, so it's the same family. Ubuntu 26.04,
+  stock `7.0.0-34-generic`.
+- Same SC200PC driver (forked from Jabbslad), plus an `ipu-bridge-sslc2000`
+  DKMS override (bundled 7.0 `ipu-bridge.c`). The picture goes through the
+  **IPU7 hardware ISP**: Intel ipu7-camera-hal at e5172cc + icamerasrc,
+  built from Intel's GitHub. The graph settings and `.aiqb` are converted from
+  Samsung's Windows driver, which the installer downloads from Samsung's
+  download center. Output goes through `v4l2-relayd` → v4l2loopback "Virtual Camera",
+  720p30 (24 fps in dim light). No libcamera, so the NVIDIA GPU-debayer
+  black-image gap in our previous reply doesn't apply to it.
+- Caveats from its README: no uninstall script, Ubuntu 7.0 only for now
+  (z4ziggy has PRs #1–#3 open there: s_ctrl deadlock, other kernels, 1080p
+  NV12), and it needs a MOK for Secure Boot.
+
+Also learned:
+
+- **Jabbslad/sc200pc-linux issue #1** (dcippolito, Book6 Ultra NP960UJH,
+  Fedora 44, kernel 7.1.3): the original driver advertises a **195 MHz** link
+  frequency. On 7.1.x IPU7 ISYS programs D-PHY from it → probe OK, stream
+  starts, no frames, nothing logged. The fix is 416 MHz, and analogue gain was also
+  mis-encoded. Marco's fork has both fixes. z4ziggy's driver uses 390 MHz.
+  So "try any of the drivers" in our previous reply was too loose for an Ultra:
+  Marco's is the only one confirmed on Ultra hardware.
+- z4ziggy's repo since our replies: 4327aa8 makes `make install` install
+  deps with **dnf on Fedora** and **refuse if another DKMS package ships
+  `ipu-bridge`/`sc200pc`** (`FORCE=1` overrides). Its regex matches our
+  `ipu-bridge-fix/dkms.conf` (`BUILT_MODULE_NAME[0]="ipu-bridge"`), so it
+  catches a leftover Book5 install. e68722e adds a "which project" box
+  recommending Marco's for best picture. **Our #57 reply's "on Fedora, install
+  the dependencies yourself" is now out of date** (correct when posted
+  21:13, fixed by z4ziggy at 21:17).
+- Marc's `ipu-bridge-sslc2000` (#57, posted 2026-06-06) predates Marco's
+  repo (2026-08-11), so "it came from Jabbslad's" still stands, even though
+  both projects use that package name.
+
+Repo changes (uncommitted): README Book6 list now has Marco's first, says "pick
+one", adds per-project tested-on, and notes Fedora deps for z4ziggy's. The
+`install.sh` refusal message adds Marco's link. Stub-`lspci` retest: b05d still
+exits 1 with `--force`, 645d continues.
+
+### Reply draft (not posted)
+
+> Thanks @z4ziggy, that's the one to lead with.
+>
+> **@jpnayak, start with [MarcoGlauser/galaxybook6-ultra-camera](https://github.com/MarcoGlauser/galaxybook6-ultra-camera).** It's built and tested on a Book6 Ultra `PAMC-960UJH`, and your machine reports `Galaxy Book6 Ultra - PAMC`, so it's the closest match. Same Ubuntu kernel series too (7.0). Same `SSLC2000` check first. Things to know before you run it: it downloads Intel's camera software and Samsung's Windows camera driver during install, it needs a MOK enrolled if Secure Boot is on, and there's no uninstall script yet. Because it doesn't use libcamera, ignore my NVIDIA black-image note from my last comment. That only applies to the software-ISP drivers.
+>
+> I should also narrow what I said about the other drivers. On a Book6 Ultra, the original Jabbslad driver needed two fixes (link frequency and gain) before it delivered frames. Those are in [Jabbslad/sc200pc-linux#1](https://github.com/Jabbslad/sc200pc-linux/issues/1), and Marco's fork carries both. So for an Ultra, treat the software-ISP drivers as untested.
+>
+> Whichever you pick, install only one. They ship the same kernel modules.
+>
+> I've updated our README's Book6 section with Marco's project and which model each one was tested on.

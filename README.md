@@ -85,11 +85,12 @@ To uninstall: `./uninstall.sh && sudo reboot`
 
 ### Webcam — Galaxy Book6 (Panther Lake): community drivers, not this repo
 
-The Galaxy Book6 (Panther Lake IPU7, `8086:b05d`) camera is a **SmartSens SC200PC** (ACPI `SSLC2000`). Mainline Linux has no driver for it, and nothing in this repo supports it. Three community projects do, all tested on Book6 **Pro** units:
+The Galaxy Book6 (Panther Lake IPU7, `8086:b05d`) camera is a **SmartSens SC200PC** (ACPI `SSLC2000`). Mainline Linux has no driver for it, and nothing in this repo supports it. These community projects do. Pick **one** of them, because they install the same kernel modules:
 
-- [z4ziggy/galaxybook6-camera](https://github.com/z4ziggy/galaxybook6-camera): source + DKMS (`sudo make install`), installs its dependencies on Debian/Ubuntu
-- [Jabbslad/sc200pc-linux](https://github.com/Jabbslad/sc200pc-linux): the original driver, Arch/AUR packaging
-- [@OlleHall's Ubuntu 26.04 packages](http://olle.bz.nu/galaxybook6pro/): `.deb` builds based on Jabbslad's driver, plus keyboard backlight and fingerprint fixes
+- [MarcoGlauser/galaxybook6-ultra-camera](https://github.com/MarcoGlauser/galaxybook6-ultra-camera): uses the IPU7 hardware image processor with Samsung's tuning, for the cleanest picture. It is the only one tested on a Book6 **Ultra**. It currently targets Ubuntu 26.04 and its stock 7.0 kernel. It downloads Intel's camera software and Samsung's Windows driver files, and it has no uninstall script yet.
+- [z4ziggy/galaxybook6-camera](https://github.com/z4ziggy/galaxybook6-camera): open-source software processing (libcamera), lighter on CPU, any distro with DKMS (`sudo make install`, installs its dependencies on Debian/Ubuntu and Fedora). Tested on a Book6 Pro.
+- [Jabbslad/sc200pc-linux](https://github.com/Jabbslad/sc200pc-linux): the original driver, Arch/AUR packaging. Tested on a Book6 Pro.
+- [@OlleHall's Ubuntu 26.04 packages](http://olle.bz.nu/galaxybook6pro/): `.deb` builds based on Jabbslad's driver, plus keyboard backlight and fingerprint fixes. Tested on a Book6 Pro.
 
 Check your sensor first: `cat /sys/bus/acpi/devices/SSLC2000:00/status` should print `15`. **Don't run `webcam-fix-book5/` on a Book6.** The installer refuses Panther Lake, even with `--force`. If you installed it earlier, run `webcam-fix-book5/uninstall.sh` and reboot before trying one of the drivers above. Ours and theirs each install an `ipu-bridge.ko`, and ours lacks the `SSLC2000` entry. Background in [#57](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/57) and [#68](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/68).
 
