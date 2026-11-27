@@ -1,7 +1,3 @@
-# Samsung Galaxy Book 3/4/5 Linux Fixes
-
-Fixes for hardware that doesn't work out of the box on Linux on Samsung Galaxy Book 3, 4, and 5 laptops. Confirmed working on **Galaxy Book4 Ultra** (Ubuntu, Fedora), **Book4 Pro 360** (Ubuntu), **Book5 Pro 940XHA** (Fedora), **Book5 Pro 960XHA** (Ubuntu), and **Book5 Pro 360 960QHA** (Arch) — should also work on other models with the same hardware.
-
 <table align="center"><tr><td>
 
 <h3><a href="https://octoally.com"><img src="docs/octoally-logo.png" width="100" align="left" alt="OctoAlly logo"></a>This repo is built and managed with OctoAlly Pro</h3>
@@ -9,6 +5,10 @@ Fixes for hardware that doesn't work out of the box on Linux on Samsung Galaxy B
 <a href="https://octoally.com/download"><img src="https://img.shields.io/badge/%E2%AC%87%20Download_OctoAlly_Pro-C62828?style=for-the-badge" alt="Download OctoAlly Pro"></a>&nbsp;&nbsp;<a href="https://octoally.com"><img src="https://img.shields.io/badge/Visit_octoally.com-30363D?style=for-the-badge" alt="Visit octoally.com"></a>
 
 </td></tr></table>
+
+# Samsung Galaxy Book 3/4/5 Linux Fixes
+
+Fixes for hardware that doesn't work out of the box on Linux on Samsung Galaxy Book 3, 4, and 5 laptops. Confirmed working on **Galaxy Book4 Ultra** (Ubuntu, Fedora), **Book4 Pro 360** (Ubuntu), **Book5 Pro 940XHA** (Fedora), **Book5 Pro 960XHA** (Ubuntu), and **Book5 Pro 360 960QHA** (Arch) — should also work on other models with the same hardware.
 
 > **Distro support:** The **speaker fix** works on Ubuntu, Fedora, and Arch-based distros (CachyOS, Manjaro, etc. — `dkms` and `linux-headers` must be installed first, see [speaker-fix README](speaker-fix/)). The **webcam fix** supports **Ubuntu, Fedora, and Arch-based distros** — see [webcam-fix-libcamera](webcam-fix-libcamera/) for Book3/Book4 (Meteor Lake / Raptor Lake) and [webcam-fix-book5](webcam-fix-book5/) for Book5 (Lunar Lake). Both use open-source libcamera + PipeWire with an on-demand camera relay for non-PipeWire apps.
 
