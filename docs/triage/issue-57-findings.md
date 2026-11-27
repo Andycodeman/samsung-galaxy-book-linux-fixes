@@ -133,3 +133,10 @@ package from [Jabbslad/sc200pc-linux](https://github.com/Jabbslad/sc200pc-linux)
 README pointer to the three community drivers and the `8086:b05d` refusal in
 `webcam-fix-book5/install.sh` (even with `--force`) were added the same day,
 uncommitted.
+
+## Fedora note superseded (posted 2026-11-27, comment 7229704740)
+
+z4ziggy's 4327aa8 (21:17, four minutes after our 7228254743 reply) made `make
+install` install dependencies with dnf on Fedora. One-line update posted
+telling Marc he no longer needs to do it by hand. Round 2 of #68 (Marco's
+Ultra driver) is in `issue-68-findings.md`.

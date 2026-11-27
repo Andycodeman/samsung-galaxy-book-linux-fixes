@@ -166,12 +166,12 @@ Also learned:
   repo (2026-08-11), so "it came from Jabbslad's" still stands, even though
   both projects use that package name.
 
-Repo changes (uncommitted): README Book6 list now has Marco's first, says "pick
+Repo changes (released v0.3.113): README Book6 list now has Marco's first, says "pick
 one", adds per-project tested-on, and notes Fedora deps for z4ziggy's. The
 `install.sh` refusal message adds Marco's link. Stub-`lspci` retest: b05d still
 exits 1 with `--force`, 645d continues.
 
-### Reply draft (not posted)
+### Reply (posted 2026-11-27, comment 7229703430)
 
 > Thanks @z4ziggy, that's the one to lead with.
 >
@@ -182,3 +182,7 @@ exits 1 with `--force`, 645d continues.
 > Whichever you pick, install only one. They ship the same kernel modules.
 >
 > I've updated our README's Book6 section with Marco's project and which model each one was tested on.
+
+### #57 follow-up (posted 2026-11-27, comment 7229704740)
+
+> @MarcM6909, a quick update to my Fedora note above: z4ziggy's `make install` now installs the dependencies with `dnf` on Fedora too ([4327aa8](https://github.com/z4ziggy/galaxybook6-camera/commit/4327aa8)), so you don't need to install them yourself.
