@@ -1,7 +1,8 @@
 # Issue #57 — Galaxy Book6 Pro webcam (Panther Lake IPU7)
 
 Status (2026-11-27): new comment from @z4ziggy (7228055353) with a working
-community driver. Reply drafted below, **not posted**.
+community driver. Reply below POSTED 2026-11-27 as comment 7228254743
+(paragraphs unwrapped for GitHub); awaiting Marc's SSLC2000/OVTI08F4 status.
 
 ## What the new comment says
 
@@ -71,7 +72,7 @@ will fail to rebuild the bridge.
   that pointer, refusing even with `--force`, so Book6 owners don't install a
   conflicting `ipu-bridge`.
 
-## Draft reply (not posted)
+## Reply (posted 2026-11-27, comment 7228254743)
 
 > Thanks a lot @z4ziggy, this is a great find, and it corrects my July reply
 > here, so let me fix that properly:
