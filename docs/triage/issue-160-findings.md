@@ -356,6 +356,127 @@ The project ID is stored at device context +0xEC and indexes six pointer arrays 
 b24fa092: C1D8 only. Codec check picks the profile, refuses SSIDs with no profile. C892/CA07 (4-amp) are trivial to add later
 but untested. C896 (2-amp) needs a loader check first. Strict mode = small opt-in module param, Andy's call.
 
+## What was changed (round 3, uncommitted at time of posting)
+
+- `speaker-fix/extract_adi_tables.py`: `KNOWN` → `PROFILES[sha256][codec SSID]`. 95b7e636: C1D8 (group C) + C890 (group D);
+  b24fa092: C1D8. Codec detected from /proc/asound, `--subsystem` to override, `--force` = `--subsystem 0x144dc1d8`.
+  Tested with synthetic .sys files (distinct C/D tables): right group per SSID, detection via a faked /proc file,
+  refusal for an SSID the file has no profile for, multi-input selection, bad `--subsystem`.
+- Kernel: opt-in `windows_tuning_strict` (default N). No tables applied → amp off (`23FF=00`, `203A=80`), `strict_off`
+  blocks the playback hook, `dev_err` "amp left OFF". Re-evaluated on every init (probe + resume). Malformed-file
+  warning no longer says "using built-in DSM". Built with W=1 against 7.0.0-44: clean apart from the old
+  unused `max98390_regmap` warning.
+- README: per-model table + strict-mode section (opt-in banner, failure modes, how to disable).
+  `uninstall.sh` removes `/etc/modprobe.d/max98390-strict.conf`.
+
+## Round 3 reply (posted 2026-11-28, comment 7236839353)
+
+> Thank you, this is outstanding work. Decoding the selection function, the six pointer arrays and the project IDs, all statically and without touching the hardware, is exactly what was needed.
+>
+> ## I checked your findings independently
+>
+> Against your attachments:
+>
+> - **The pointer arrays.** `.data` RVA `0xB000` = file `0x8E00`. The arrays at RVA `0xD328`/`0xD358`/`0xD388`/`0xD3B8`/`0xD3E8`/`0xD418` resolve at index 3 to file `0xA110`/`0xA1F0`/`0xA1A0`/`0xA280`/`0xA2D0`/`0xA5D0`, your group D offsets. At index 2 they resolve to exactly the offsets the extractor already uses for C1D8. Index 5 has no pointers for the third and fourth amps or the tweeter DSM, so group F really is a 2-amp layout.
+> - **The string references.** The SUBSYS string RVAs from `adi_xrefs.py` (C890 variants at `0x11AA0`/`0x11AC0`/`0x11AE0`/`0x11B00`) are exactly the `lea rdx` targets in your objdump. Those lead to `jne 0x140010b13` → `mov edi,3`, and the C1D8 strings lead to `mov edi,2`.
+>
+> Your mapping also lines up with what other users have reported here. `C896` → group F (2 amps) is the Galaxy Book2 Pro SE from #137, whose reporter found exactly two amps. `C892` is the Book4 Pro 360 (#99), and `CA07` is the Book4 Pro 14" (#53).
+>
+> ## What I've changed
+>
+> **`extract_adi_tables.py` now has one profile per codec.** Each verified driver SHA-256 maps codec subsystem IDs to table offsets. Your `95b7e636…` has C890 → group D and C1D8 → group C, the Ultra's `b24fa092…` keeps C1D8, and the script picks the profile from `/proc/asound`. It still refuses unknown codecs and unknown driver files rather than guessing. `--subsystem 0x144dc890` builds for another machine, and the old `--force` still means C1D8. I left the other projects (C892, CA07, C896) out on purpose until someone with those laptops can test. C896 would also need a closer look at the 2-amp layout first.
+>
+> **New opt-in strict mode: `windows_tuning_strict=1`.** It's off by default, and nothing changes for anyone who doesn't set it. When it's on, an amp whose Windows tables aren't applied (file missing or corrupt, `windows_tuning=0`, or an I2C error while writing them at boot or resume) stays **off** instead of falling back to the Redrix tuning. The playback hook can't turn it back on either. It logs `windows_tuning_strict: Windows amp tables not applied (…), amp left OFF`.
+>
+> The README spells out the trade-off. Strict mode trades "generic sound" for "silence". It doesn't make the speakers safer, it only guarantees that what you hear is your model's tables. A failure on a single amp can leave you with, say, woofers but no tweeters until the next resume or reboot.
+>
+> The kernel loader itself needed no change for C890. Your group D has the same amp register tables as group C and the same 95/40 DSM word counts. Only the DSM calibration differs.
+>
+> I've verified that both modules build and that the extractor picks the right group. The extractor was tested against synthetic drivers with distinct C and D tables, including codec detection, refusals and multiple candidate files. I have no C890 hardware, so the real test is yours.
+>
+> **Timing:** the update is written and in final review. I'll post here as soon as it's on `main`. The steps below are for then.
+>
+> ## Test steps (once it's on `main`)
+>
+> Since you'd rather never run the generic tuning, this order sets up the tables, and optionally strict mode, **before** the first install. Your first boot is then either your Windows tables or silence.
+>
+> **1. Get the update and build your firmware file**
+>
+> ```bash
+> cd samsung-galaxy-book-linux-fixes && git pull
+> cd speaker-fix
+> python3 extract_adi_tables.py /mnt/windows/Windows/System32/DriverStore/FileRepository/adiampdriver.inf_amd64_*/ADIAmpDriver.sys
+> ```
+>
+> You should see `wrote max98390-galaxybook.bin (1522 bytes) for Galaxy Book4 Pro 16-inch (NP960XGK), codec 0x144dc890: amps=[35, 35, 17, 17] dsm=[95, 40] sha256=…`. Please post that line.
+>
+> ```bash
+> sudo install -m 644 max98390-galaxybook.bin /lib/firmware/
+> ```
+>
+> **2. (Optional) turn on strict mode**
+>
+> ```bash
+> echo "options snd-hda-scodec-max98390 windows_tuning_strict=1" | sudo tee /etc/modprobe.d/max98390-strict.conf
+> ```
+>
+> **3. Install and reboot**
+>
+> ```bash
+> sudo ./install.sh
+> sudo reboot
+> ```
+>
+> With Secure Boot on, enroll the MOK key at the blue screen if you're asked.
+>
+> **4. Check what loaded**
+>
+> ```bash
+> sudo dmesg | grep -i max98390
+> cat /sys/module/snd_hda_scodec_max98390/parameters/windows_tuning_strict
+> for d in /sys/kernel/debug/regmap/*; do sudo grep -qE '^23ff:' "$d/registers" 2>/dev/null || continue; echo "== $d"; sudo grep -E '^(201b|201d|201f|2021|23ba|23e0|23e1|203a|23ff):' "$d/registers"; done
+> ```
+>
+> Expected:
+> - four probes;
+> - `using Windows amp tables: 35 registers, 95 DSM words` on `0x38`/`0x39`, and `17 registers, 40 DSM words` on `0x3c`/`0x3d`;
+> - no `amp left OFF`.
+>
+> In the registers:
+> - `201b`/`201d`/`201f`/`2021` = `01`/`01`/`fe`/`00` on `0x38` and `0x3c`, and `02`/`02`/`fd`/`01` on `0x39` and `0x3d`;
+> - `23ba` = `94` on the woofers and `8d` on the tweeters;
+> - `23e1`/`203a`/`23ff` = `01`/`81`/`01` on all four. If `203a`/`23ff` read `80`/`00` after something has played and stopped, that's the playback hook's idle state, not a failure.
+>
+> **5. Listen**
+>
+> ```bash
+> speaker-test -c2 -t wav -l1
+> ```
+>
+> That checks left/right. Then play some music at normal and high volume. Please describe what you hear: balance, bass, any crackle or distortion.
+>
+> **6. Suspend/resume**
+>
+> `systemctl suspend`, wake it, and play again. Do the same with hibernate if you use it. `dmesg` should show `MAX98390 amp re-initialised on resume` with the tables still applied (`dmesg | grep -i max98390 | tail -8`).
+>
+> **7. (If you enabled strict mode) check that it really fails closed**
+>
+> ```bash
+> sudo mv /lib/firmware/max98390-galaxybook.bin /lib/firmware/max98390-galaxybook.bin.off
+> sudo reboot
+> # expect silence and four "amp left OFF" lines in dmesg, then restore:
+> sudo mv /lib/firmware/max98390-galaxybook.bin.off /lib/firmware/max98390-galaxybook.bin
+> sudo reboot
+> ```
+>
+> **8. (Optional) power**
+>
+> Your offer to look at power consumption is welcome. Comparing idle battery drain (`upower -i $(upower -e | grep BAT)`) over the same period with and without audio playing would be plenty.
+>
+> If anything looks off, `sudo ./uninstall.sh` removes the modules, the services and the strict-mode file. Headphones, HDMI and Bluetooth are never affected.
+>
+> Once you confirm, I'll add the Book4 Pro 16" to the supported list. Thanks again. Your analysis also gives us a ready path for the Pro 360, the Pro 14" and the Book2 Pro SE once owners can test.
+
 ## Status
 
-OPEN. Group D identified + verified. Awaiting Andy's decision: extractor C890 profile (+ optional strict mode), then reporter hardware test.
+OPEN. Change awaiting review/push. Then post an "it's on main" note on #160. Reporter tests steps 1–8.
