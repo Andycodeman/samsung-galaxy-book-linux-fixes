@@ -42,6 +42,7 @@ struct max98390_hda_priv {
 	u16 win_nregs;
 	const u8 *win_dsm;
 	u16 win_ndsm;
+	bool strict_off;	/* windows_tuning_strict and no tables: amp kept off */
 };
 
 int max98390_hda_probe(struct device *dev, const char *device_name,

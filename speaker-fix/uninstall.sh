@@ -36,6 +36,7 @@ echo "Removing installed files..."
 rm -f /etc/systemd/system/max98390-hda-i2c-setup.service
 rm -f /etc/systemd/system/max98390-hda-check-upstream.service
 rm -f /etc/modules-load.d/max98390-hda.conf
+rm -f /etc/modprobe.d/max98390-strict.conf
 rm -f /usr/local/sbin/max98390-hda-i2c-setup.sh
 rm -f /usr/local/sbin/max98390-hda-check-upstream.sh
 rm -rf "${SRC_DIR}"

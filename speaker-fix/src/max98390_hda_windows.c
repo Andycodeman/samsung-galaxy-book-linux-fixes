@@ -89,7 +89,7 @@ int max98390_windows_load(struct max98390_hda_priv *priv)
 
 	ret = m98w_parse(priv, fw);
 	if (ret) {
-		dev_warn(priv->dev, "%s is malformed (%d), using built-in DSM\n", M98W_FW_NAME, ret);
+		dev_warn(priv->dev, "%s is malformed (%d), ignoring it\n", M98W_FW_NAME, ret);
 		release_firmware(fw);
 		priv->win_regs = priv->win_dsm = NULL;
 		return ret;

@@ -21,6 +21,13 @@ module_param(windows_tuning, bool, 0444);
 MODULE_PARM_DESC(windows_tuning,
 		 "Use per-amp tables from max98390-galaxybook.bin when present (default: true)");
 
+/* Opt-in only (issue #160): never fall back to the built-in Redrix DSM */
+static bool windows_tuning_strict;
+module_param(windows_tuning_strict, bool, 0444);
+MODULE_PARM_DESC(windows_tuning_strict,
+		 "Keep the amp off instead of using the built-in DSM when the Windows tables "
+		 "are missing, malformed or fail to apply (default: false)");
+
 static void max98390_hda_playback_hook(struct device *dev, int action)
 {
 	struct max98390_hda_priv *priv = dev_get_drvdata(dev);
@@ -28,6 +35,8 @@ static void max98390_hda_playback_hook(struct device *dev, int action)
 
 	switch (action) {
 	case HDA_GEN_PCM_ACT_OPEN:
+		if (priv->strict_off)
+			break;
 
 		/* Enable speaker amp, then global (Windows "Run" order) */
 		ret = regmap_write(priv->regmap, MAX98390_R203A_AMP_EN, 0x81);
@@ -124,6 +133,8 @@ static int max98390_hda_init(struct max98390_hda_priv *priv)
 	regmap_write(priv->regmap, MAX98390_PCM_CLK_SETUP, 0x44);
 	regmap_write(priv->regmap, MAX98390_PCM_SR_SETUP, 0x08);
 
+	priv->strict_off = false;
+	ret = -ENOENT;
 	if (priv->win_fw) {
 		ret = max98390_windows_init(priv);
 		if (!ret) {
@@ -132,7 +143,19 @@ static int max98390_hda_init(struct max98390_hda_priv *priv)
 			regmap_write(priv->regmap, MAX98390_R23FF_GLOBAL_EN, 0x01);
 			return 0;
 		}
-		dev_warn(priv->dev, "Windows amp tables failed (%d), using built-in DSM\n", ret);
+		if (!windows_tuning_strict)
+			dev_warn(priv->dev, "Windows amp tables failed (%d), using built-in DSM\n", ret);
+	}
+
+	if (windows_tuning_strict) {
+		/* Opt-in: silent rather than the generic tuning */
+		priv->strict_off = true;
+		regmap_write(priv->regmap, MAX98390_R23FF_GLOBAL_EN, 0x00);
+		regmap_write(priv->regmap, MAX98390_R203A_AMP_EN, 0x80);
+		dev_err(priv->dev,
+			"windows_tuning_strict: Windows amp tables not applied (%d), amp left OFF\n",
+			ret);
+		return 0;
 	}
 
 	/* RESET EN - Write 0x00 to 0x23FF */

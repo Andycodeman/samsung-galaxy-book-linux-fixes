@@ -262,9 +262,18 @@ On Windows, Samsung's audio stack applies multiple layers of DSP (Digital Signal
 
 This fix provides the **raw hardware driver only** — it gets the speakers working, but none of the Windows audio processing exists on Linux. Additionally, the built-in DSM (Dynamic Speaker Management) firmware in this package was extracted from a **Google Redrix Chromebook** (which uses the same MAX98390 amps), not from Samsung's Windows driver, so the default tuning parameters are optimized for a different speaker enclosure.
 
-### Optional: Native per-amp tables (Galaxy Book4 Ultra `144d:c1d8`)
+### Optional: Native per-amp tables (Galaxy Book4 Ultra `144d:c1d8`, Book4 Pro 16" `144d:c890`)
 
-If you have a dual-boot setup or a copy of your Windows partition on a **Galaxy Book4 Ultra** (`NP960XGL`, codec subsystem `0x144dc1d8`, `ADIAmpDriver.sys` v1.0.0.44), you can build `/lib/firmware/max98390-galaxybook.bin` locally. The script verifies that your codec `Subsystem Id` is `0x144dc1d8` (pass `--force` if building on another machine) and checks each candidate `.sys` path against the known SHA-256. When the firmware file is present, the driver initializes each amplifier with the per-amp TDM slot routing (`0x201B`, `0x201D`, `0x201F`, `0x2021` for Left `0x38`/`0x3C` and Right `0x39`/`0x3D`), thermal/Rdc registers, and per-pair DSM coefficients (95 words for woofers `0x38`/`0x39`, 40 words for tweeters `0x3C`/`0x3D`):
+If you have a dual-boot setup or a copy of your Windows partition, you can build `/lib/firmware/max98390-galaxybook.bin` locally from your own Windows amp driver (`ADIAmpDriver.sys` v1.0.0.44). Nothing from the Windows driver is redistributed here. The Windows driver carries a table set per laptop and picks one from the codec's subsystem ID ([#160](https://github.com/Andycodeman/samsung-galaxy-book-linux-fixes/issues/160)), and so does the script. Supported so far:
+
+| Laptop | Codec `Subsystem Id` | Verified `ADIAmpDriver.sys` SHA-256 |
+|---|---|---|
+| Galaxy Book4 Ultra (`NP960XGL`) | `0x144dc1d8` | `b24fa092…`, `95b7e636…` |
+| Galaxy Book4 Pro 16" (`NP960XGK`) | `0x144dc890` | `95b7e636…` |
+
+The script reads your codec `Subsystem Id` from `/proc/asound` and refuses to run on any other codec. Pass `--subsystem 0x144dc890` (or `0x144dc1d8`) to build on another machine. The old `--force` still means `--subsystem 0x144dc1d8`. It also checks each candidate `.sys` against the SHA-256s verified for your codec and refuses unknown files instead of guessing offsets. The driver holds tables for other Samsung models too, but they stay unsupported until someone with that laptop tests them. If yours is refused, please open an issue with the script's output.
+
+When the firmware file is present, the driver initializes each amplifier with the per-amp TDM slot routing (`0x201B`, `0x201D`, `0x201F`, `0x2021` for Left `0x38`/`0x3C` and Right `0x39`/`0x3D`), thermal/Rdc registers, and per-pair DSM coefficients (95 words for woofers `0x38`/`0x39`, 40 words for tweeters `0x3C`/`0x3D`):
 
 ```bash
 # Mount the Windows partition read-only first (e.g. sudo mount -o ro /dev/nvme0n1p3 /mnt/windows)
@@ -278,6 +287,30 @@ sudo reboot
 > **NixOS users:** Place `max98390-galaxybook.bin` in a derivation under `hardware.firmware` (under `lib/firmware/max98390-galaxybook.bin`) rather than copying to `/lib/firmware/`.
 
 Check `dmesg | grep -i max98390` after rebooting — it should log `using Windows amp tables: 35 registers, 95 DSM words` on `0x38`/`0x39` and `17 registers, 40 DSM words` on `0x3c`/`0x3d`. If `/lib/firmware/max98390-galaxybook.bin` is not present (or if you pass `windows_tuning=0` to `snd-hda-scodec-max98390`), the driver falls back to the built-in Redrix DSM tables.
+
+#### Opt-in: strict mode (no fallback to the built-in tuning)
+
+> **Off by default, and most people should leave it off.** Normally, if the Windows tables can't be used, the driver quietly falls back to the built-in Redrix tuning that every other user runs, so the speakers still work. Strict mode replaces that fallback with **silence**. It does not make the speakers any safer. It only guarantees that if you hear the speakers, they are running your model's Windows tables.
+
+Turn it on only after the normal setup above works and `dmesg` shows `using Windows amp tables` on every amp:
+
+```bash
+echo "options snd-hda-scodec-max98390 windows_tuning_strict=1" | sudo tee /etc/modprobe.d/max98390-strict.conf
+sudo reboot
+```
+
+With strict mode on, an amp whose tables aren't applied stays **off** and logs `windows_tuning_strict: Windows amp tables not applied (…), amp left OFF`. Things that will leave your speakers silent:
+
+- `/lib/firmware/max98390-galaxybook.bin` is missing, moved, unreadable or corrupt. On NixOS it isn't in `hardware.firmware`. If your distro loads the module from the initramfs, the file must be in the initramfs too.
+- `windows_tuning=0` is set at the same time. Strict mode then keeps every amp off.
+- An I2C error while the tables are written, at boot or on resume. **Only that amp** goes silent, so you may hear, say, woofers without tweeters, or one side only. It stays that way until the next resume or reboot re-initializes it.
+
+Headphones, HDMI and Bluetooth are not affected. Check with `sudo dmesg | grep -i max98390`. To turn strict mode off, remove the file and reboot:
+
+```bash
+sudo rm /etc/modprobe.d/max98390-strict.conf
+sudo reboot
+```
 
 ### Improving sound quality with EasyEffects
 

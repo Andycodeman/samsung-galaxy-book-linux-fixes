@@ -2,13 +2,17 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Build max98390-galaxybook.bin from the user's own Windows amp driver.
 
-The Galaxy Book4 Ultra (codec SUBSYS 144D:C1D8) Windows driver ADIAmpDriver.sys
-(Analog Devices 1.0.0.44) initialises each MAX98390 with a per-amp register table
-and loads one DSM coefficient table per amp pair. This script reads those tables
-from the .sys on the user's Windows partition so no vendor binary is redistributed.
+The Windows amp driver ADIAmpDriver.sys (Analog Devices 1.0.0.44) initialises each
+MAX98390 with a per-amp register table and loads one DSM coefficient table per amp
+pair. It picks the table set from the Realtek codec's subsystem ID (issue #160).
+This script reads the set for the user's own codec from the .sys on their Windows
+partition, so no vendor binary is redistributed.
+
+Supported codecs (see PROFILES): 144D:C1D8 Galaxy Book4 Ultra, 144D:C890 Galaxy
+Book4 Pro 16".
 
 Usage:
-    python3 extract_adi_tables.py [-o max98390-galaxybook.bin] [--force] /mnt/windows/Windows/System32/DriverStore/FileRepository/adiampdriver.inf_amd64_*/ADIAmpDriver.sys
+    python3 extract_adi_tables.py [-o max98390-galaxybook.bin] [--subsystem 0x144dc890] /mnt/windows/Windows/System32/DriverStore/FileRepository/adiampdriver.inf_amd64_*/ADIAmpDriver.sys
     sudo install -m 644 max98390-galaxybook.bin /lib/firmware/
 
 Output format (little endian), parsed by max98390_hda_windows.c:
@@ -23,22 +27,39 @@ import glob
 import hashlib
 import struct
 
-TARGET_SUBSYS = "0x144dc1d8"
-
-KNOWN = {
-    # sha256 of ADIAmpDriver.sys 1.0.0.44 -> table offsets for project C1D8
+# Table offsets inside each verified ADIAmpDriver.sys, per codec subsystem ID.
+# The driver maps the codec SUBSYS to a project ID and indexes six pointer arrays
+# with it (project 2 = C1D8, project 3 = C890; decoded in issue #160). Every other
+# project in the driver is left out until someone with that laptop tests it.
+C1D8_ULTRA = {
+    "model": "Galaxy Book4 Ultra (NP960XGL)",
+    "amps": [(0x9B10, 35), (0x9BF0, 35), (0x9BA0, 17), (0x9C80, 17)],  # 0x38 0x39 0x3C 0x3D
+    "dsm": [(0x9CD0, 95), (0x9FD0, 40)],                                # pair A (0x38/0x39), pair B
+    "dsm_index": [0, 0, 1, 1],
+}
+C890_PRO16 = {
+    "model": "Galaxy Book4 Pro 16-inch (NP960XGK)",
+    "amps": [(0xA110, 35), (0xA1F0, 35), (0xA1A0, 17), (0xA280, 17)],
+    "dsm": [(0xA2D0, 95), (0xA5D0, 40)],
+    "dsm_index": [0, 0, 1, 1],
+}
+PROFILES = {
+    # sha256 of ADIAmpDriver.sys 1.0.0.44 -> {codec subsystem id: profile}
     "b24fa0920808d3aa846a5afd973663242fce81d84d13f4836aff95f23ddb8b8e": {
-        "amps": [(0x9B10, 35), (0x9BF0, 35), (0x9BA0, 17), (0x9C80, 17)],  # 0x38 0x39 0x3C 0x3D
-        "dsm": [(0x9CD0, 95), (0x9FD0, 40)],                                # pair A (0x38/0x39), pair B
-        "dsm_index": [0, 0, 1, 1],
+        "0x144dc1d8": C1D8_ULTRA,
+    },
+    "95b7e6367125bca34ba48e1d32ba3bcb8beebc2473ac7f9bd627cf88b4431f71": {
+        "0x144dc1d8": C1D8_ULTRA,
+        "0x144dc890": C890_PRO16,
     },
 }
+SUPPORTED = sorted({sub for p in PROFILES.values() for sub in p})
 
 # Registers that must differ between the left (slot 0) and right (slot 1) amp of a pair.
 SLOT_REGS = {0x201B: (0x01, 0x02), 0x201D: (0x01, 0x02), 0x201F: (0xFE, 0xFD), 0x2021: (0x00, 0x01)}
 
 
-def check_codec_subsystem():
+def detect_codec_subsystem():
     found = []
     for p in sorted(glob.glob("/proc/asound/card*/codec#*")):
         try:
@@ -46,15 +67,16 @@ def check_codec_subsystem():
                 for line in f:
                     if line.startswith("Subsystem Id:"):
                         sub = line.split(":", 1)[1].strip().lower()
-                        if sub == TARGET_SUBSYS:
-                            return
+                        if sub in SUPPORTED:
+                            return sub
                         found.append(sub)
         except OSError:
             pass
     det = ", ".join(found) if found else "none found in /proc/asound/card*/codec#*"
     raise SystemExit(
-        f"refusing to build: these tables are for Galaxy Book4 Ultra codec Subsystem Id "
-        f"{TARGET_SUBSYS} (detected: {det}). Pass --force to build on another machine."
+        f"refusing to build: no table profile for this machine's codec Subsystem Id "
+        f"(detected: {det}; supported: {', '.join(SUPPORTED)}). "
+        "Pass --subsystem to build for another machine."
     )
 
 
@@ -95,37 +117,48 @@ def main():
         help="Output firmware path (default: max98390-galaxybook.bin)",
     )
     ap.add_argument(
+        "--subsystem",
+        choices=SUPPORTED,
+        help="Build for this codec Subsystem Id instead of the one in /proc/asound "
+        "(for building on another machine)",
+    )
+    ap.add_argument(
         "--force",
         action="store_true",
-        help=f"Skip the /proc/asound codec Subsystem Id ({TARGET_SUBSYS}) check",
+        help="Old spelling of --subsystem 0x144dc1d8 (Galaxy Book4 Ultra)",
     )
     args = ap.parse_args()
 
-    if not args.force:
-        check_codec_subsystem()
+    if args.subsystem:
+        sub = args.subsystem
+    elif args.force:
+        sub = "0x144dc1d8"
+    else:
+        sub = detect_codec_subsystem()
 
     chosen_b = None
-    chosen_digest = None
-    unknown = []
+    k = None
+    rejected = []
     for path in args.inputs:
         with open(path, "rb") as f:
             b = f.read()
         digest = hashlib.sha256(b).hexdigest()
-        if digest in KNOWN:
+        if sub in PROFILES.get(digest, {}):
             chosen_b = b
-            chosen_digest = digest
+            k = PROFILES[digest][sub]
             break
-        unknown.append((path, digest))
+        rejected.append((path, digest))
 
     if chosen_b is None:
-        details = "; ".join(f"{p} (sha256 {d})" for p, d in unknown)
+        details = "; ".join(f"{p} (sha256 {d})" for p, d in rejected)
+        known = ", ".join(d[:8] + "…" for d, p in PROFILES.items() if sub in p)
         raise SystemExit(
-            f"unknown ADIAmpDriver.sys: {details}; offsets only verified for "
-            "1.0.0.44 / b24fa092…. Do not guess: report the version."
+            f"no verified tables for codec {sub} in: {details}. Offsets for {sub} are only "
+            f"verified in ADIAmpDriver.sys 1.0.0.44 with sha256 {known}. "
+            "Do not guess: report the version and sha256 in an issue."
         )
 
     b = chosen_b
-    k = KNOWN[chosen_digest]
     amps = [byte_table(b, o, n) for o, n in k["amps"]]
     dsms = [dsm_table(b, o, n) for o, n in k["dsm"]]
 
@@ -146,7 +179,8 @@ def main():
     blob += bytes(k["dsm_index"])
     with open(args.output, "wb") as f:
         f.write(blob)
-    print(f"wrote {args.output} ({len(blob)} bytes): amps={[len(t) for t in amps]} "
+    print(f"wrote {args.output} ({len(blob)} bytes) for {k['model']}, codec {sub}: "
+          f"amps={[len(t) for t in amps]} "
           f"dsm={[len(t) for t in dsms]} sha256={hashlib.sha256(blob).hexdigest()[:16]}…")
 
 
