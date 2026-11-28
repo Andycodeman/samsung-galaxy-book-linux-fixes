@@ -147,7 +147,7 @@ szvince62 comments 7236239012 + 7236280176:
 
 Reading: driver most likely maps the HDA codec SUBSYS (both byte orders in the binary) to a group in code. Next = xrefs to the 0x600-stride table array + SUBSYS strings (adi_xrefs.py), and a per-group register diff (adi_groups.py). Both tested on synthetic PE only. Fallback = Windows warm restart → read-only i2ctransfer reads.
 
-## Round 2 draft reply (NOT posted)
+## Round 2 reply (posted 2026-11-28, comment 7236438269)
 
 > Thank you, this is excellent work, and doing all of it from a read-only mount is exactly right.
 >
@@ -328,4 +328,4 @@ Reading: driver most likely maps the HDA codec SUBSYS (both byte orders in the b
 
 ## Status
 
-OPEN. Round 2 reply drafted, not posted. Awaiting Andy's OK; then reporter xrefs/group diff and @4nrry's hashes.
+OPEN. Round 2 reply posted (7236438269). Awaiting reporter xrefs + group diff, and @4nrry's hashes.
