@@ -326,6 +326,36 @@ Reading: driver most likely maps the HDA codec SUBSYS (both byte orders in the b
 >
 > Once we know C890's group, adding it to `extract_adi_tables.py` is a small change, and you'd be the first to test it.
 
+## Round 3 (2026-11-28) — C890 = project ID 3 = group D (comment 7236652567)
+
+Reporter decoded the selection function (VA 0x1400108D4): `wcsstr` of the codec ID string
+from `\Registry\Machine\System\CurrentControlSet\Enum\PCI` against the SUBSYS strings.
+The project ID is stored at device context +0xEC and indexes six pointer arrays (6 x u64 each).
+
+| SSID | Project | Group | Model (from our issues) |
+|---|---|---|---|
+| 144d:f02e | 0 | A | unknown |
+| 144d:c892 | 1 | B (= A byte for byte) | Book4 Pro 360 (#99) |
+| 144d:c1d8 | 2 | C | Book4 Ultra (#133, current extractor) |
+| 144d:c890 | 3 | D | Book4 Pro 16" (this issue) |
+| 144d:ca07 | 4 | E (woofer Rdc + 0x23BA differ) | Book4 Pro 14" (#53) |
+| 144d:c896 | 5 | F (2 amps; NULL 3rd/4th amp + tweeter DSM) | Book2 Pro SE (#137, 2 amps confirmed by BrunoGee) |
+
+**Independently checked** against his attachments (`adi_xrefs-results.txt`, `project-id-validation.txt`):
+- .data rva 0xB000 = file 0x8E00 (file = rva - 0x2200). Pointer arrays at rva 0xD328/0xD358/0xD388/0xD3B8/0xD3E8/0xD418
+  (amp 0x38/0x39/0x3C/0x3D, DSM woofer/tweeter). Index 3 → rva 0xC310/0xC3F0/0xC3A0/0xC480/0xC4D0/0xC7D0
+  = file **0xA110/0xA1F0/0xA1A0/0xA280/0xA2D0/0xA5D0**. Index 2 → exactly the extractor's current C1D8 offsets.
+  Index 5 has no 0x3C/0x3D/tweeter-DSM pointers, so F really is 2 amps.
+- My script's string RVAs (C890 variants at 0x11AA0/0x11AC0/0x11AE0/0x11B00, C1D8 at 0x11A20..0x11A80) are exactly
+  the `lea rdx` targets in his objdump. C890 hits → `jne 0x140010b13` → `mov edi,3`; C1D8 → `0x140010b1a` → `mov edi,2`.
+- Group D amp register tables = group C's. Only DSM differs (25 bytes each in woofer/tweeter). Same counts 35/35/17/17, 95/40,
+  so the kernel loader needs no change for C890.
+- Hash 95b7e636… applies to his binary only. We still don't know whether the Ultra's b24fa092… has the same arrays (4nrry hashes pending).
+
+**Next (recommendation):** extractor → per-SSID profiles under each known hash. 95b7e636: C890 (D) + C1D8 (C, pointer-verified).
+b24fa092: C1D8 only. Codec check picks the profile, refuses SSIDs with no profile. C892/CA07 (4-amp) are trivial to add later
+but untested. C896 (2-amp) needs a loader check first. Strict mode = small opt-in module param, Andy's call.
+
 ## Status
 
-OPEN. Round 2 reply posted (7236438269). Awaiting reporter xrefs + group diff, and @4nrry's hashes.
+OPEN. Group D identified + verified. Awaiting Andy's decision: extractor C890 profile (+ optional strict mode), then reporter hardware test.
