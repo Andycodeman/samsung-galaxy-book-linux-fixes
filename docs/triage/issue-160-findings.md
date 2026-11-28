@@ -136,6 +136,196 @@ Asks @4nrry for the same per-group hashes from the Ultra copy.
 >
 > Thanks again for the careful work and the offer to test. It's what makes adding a new model possible.
 
+
+## Round 2 (2026-11-28) — reporter results
+
+szvince62 comments 7236239012 + 7236280176:
+- INF generic (`ACPI\MAX98390` only, empty CoInstaller AddReg); no project ID in Enum\ACPI\MAX98390, Services\ADIAmpDriver or the MEDIA class key.
+- DSDT `\_SB.PC00.I2C2.AMPP` _CRS = 4 I2cSerialBus 0x38/0x39/0x3C/0x3D @400 kHz, _STA 0x0F → 4 amps; group F (2-amp) out.
+- Full sha 95b7e636… (DriverStore == System32\drivers). Group hashes: A=B f717fd9a3ecd985b (identical), C d9025b2839a27946, D 1a9f91d41f6555e8, E 85edc582868b292e, F d4c270337ad18857.
+- Still no 4nrry hashes.
+
+Reading: driver most likely maps the HDA codec SUBSYS (both byte orders in the binary) to a group in code. Next = xrefs to the 0x600-stride table array + SUBSYS strings (adi_xrefs.py), and a per-group register diff (adi_groups.py). Both tested on synthetic PE only. Fallback = Windows warm restart → read-only i2ctransfer reads.
+
+## Round 2 draft reply (NOT posted)
+
+> Thank you, this is excellent work, and doing all of it from a read-only mount is exactly right.
+>
+> Your results settle two things and rule out the easy route:
+>
+> - **Four amps, confirmed.** The DSDT's four I2C descriptors (`0x38`, `0x39`, `0x3C`, `0x3D` on `I2C2`) match the four registry connection resources. So your board has the same 2 woofers + 2 tweeters layout as the Ultra, and I agree group F is out.
+> - **There's no project ID in the INF or the device registry keys.** The INF is generic (`ACPI\MAX98390` only), so Windows doesn't hand the driver a project number. Since the binary carries the subsystem IDs in both orders (`SUBSYS_C890144D` and `SUBSYS_144DC890`), the driver most likely reads the Realtek codec's hardware ID itself and maps that to a group in code. You'll probably find `SUBSYS_144DC890` under `ControlSet001\Enum\HDAUDIO` in the same SYSTEM hive. That's likely the "registry_info".
+> - **Groups A and B being identical** fits a "default / unknown model" entry next to the per-model ones. That's a guess until we see the code.
+>
+> So the answer lives in the driver's selection code. Two read-only scripts should get us there quickly. I tested both on synthetic PE files, not on a real `ADIAmpDriver.sys` (I don't have one).
+>
+> ### 1. Where the code touches the tables and the SUBSYS strings
+>
+> This lists every pointer and every x64 RIP-relative reference (`lea`/`mov reg,[rip+X]`) into the table region (`0x8E00`–`0xB400`) and to each SUBSYS string (ASCII and UTF-16), with RVAs you can jump to in Ghidra or IDA:
+>
+> <details><summary><code>adi_xrefs.py</code></summary>
+>
+> ```python
+> #!/usr/bin/env python3
+> """List code/data references into ADIAmpDriver.sys's amp-table region and its SUBSYS strings.
+>
+> Read-only. Prints, for the table region (file 0x8E00-0xB400) and each SUBSYS string:
+>   - 8-byte absolute pointers (ImageBase+RVA) anywhere in the file (pointer tables)
+>   - x64 RIP-relative disp32 in executable sections (lea/mov reg,[rip+X])
+> so the selection code can be opened in Ghidra/IDA at the printed RVAs.
+> """
+> import struct
+> import sys
+>
+> b = open(sys.argv[1], "rb").read()
+> pe = struct.unpack_from("<I", b, 0x3C)[0]
+> assert b[pe:pe + 4] == b"PE\0\0", "not a PE file"
+> nsec, optsz = struct.unpack_from("<H", b, pe + 6)[0], struct.unpack_from("<H", b, pe + 20)[0]
+> opt = pe + 24
+> assert struct.unpack_from("<H", b, opt)[0] == 0x20B, "not PE32+"
+> base = struct.unpack_from("<Q", b, opt + 24)[0]
+> secs = []
+> for i in range(nsec):
+>     s = opt + optsz + 40 * i
+>     name = b[s:s + 8].rstrip(b"\0").decode(errors="replace")
+>     vsz, va, rawsz, raw = struct.unpack_from("<IIII", b, s + 8)
+>     flags = struct.unpack_from("<I", b, s + 36)[0]
+>     secs.append((name, va, vsz, raw, rawsz, bool(flags & 0x20000000)))
+>
+>
+> def rva_of(off):
+>     for name, va, vsz, raw, rawsz, x in secs:
+>         if raw <= off < raw + rawsz:
+>             return va + off - raw, name, x
+>     return None, None, False
+>
+>
+> def off_of(rva):
+>     for name, va, vsz, raw, rawsz, x in secs:
+>         if va <= rva < va + max(vsz, rawsz):
+>             return raw + rva - va
+>     return None
+>
+>
+> print(f"ImageBase {base:#x}")
+> for name, va, vsz, raw, rawsz, x in secs:
+>     print(f"  {name:8} rva {va:#07x}-{va + vsz:#07x} file {raw:#07x} {'exec' if x else ''}")
+>
+> targets = [("table region", 0x8E00, 0xB400)]
+> for s in (b"SUBSYS_C890144D", b"SUBSYS_C1D8144D", b"SUBSYS_144DC890", b"SUBSYS_144DC1D8",
+>           b"subsys_c890144d", b"subsys_c1d8144d", b"subsys_144dc890", b"subsys_144dc1d8",
+>           b"Project id"):
+>     for enc, pat in (("ascii", s), ("utf16", s.decode().encode("utf-16-le"))):
+>         i = b.find(pat)
+>         while i >= 0:
+>             targets.append((f"{s.decode()} ({enc})", i, i + len(pat)))
+>             i = b.find(pat, i + 1)
+>
+> for label, lo, hi in targets:
+>     rlo, sec, _ = rva_of(lo)
+>     if rlo is None:
+>         print(f"\n{label}: file {lo:#x} is outside every section")
+>         continue
+>     rhi = rlo + (hi - lo)
+>     print(f"\n{label}: file {lo:#x}-{hi:#x} = rva {rlo:#x}-{rhi:#x} in {sec}")
+>     for j in range(0, len(b) - 8):
+>         v = struct.unpack_from("<Q", b, j)[0]
+>         if base + rlo <= v < base + rhi:
+>             r, s2, _ = rva_of(j)
+>             print(f"  ptr  at file {j:#x} (rva {r and hex(r)}, {s2}) -> rva {v - base:#x}")
+>     for name, va, vsz, raw, rawsz, x in secs:
+>         if not x:
+>             continue
+>         for j in range(raw, raw + rawsz - 4):
+>             d = struct.unpack_from("<i", b, j)[0]
+>             t = va + (j - raw) + 4 + d
+>             if rlo <= t < rhi:
+>                 ctx = b[max(raw, j - 3):j].hex()
+>                 print(f"  rip  at rva {va + j - raw - 3:#x}..{va + j - raw + 4:#x} "
+>                       f"(bytes before disp: {ctx}) -> rva {t:#x}")
+> ```
+> </details>
+>
+> ```bash
+> python3 adi_xrefs.py /mnt/windows/Windows/System32/drivers/ADIAmpDriver.sys
+> ```
+>
+> What I'd expect: one or a few `lea` hits on group A's start (the base of a 0x600-stride array), with an index multiplied by `0x600` nearby. Then follow that index back to the code that compares the codec ID against the SUBSYS strings. Whatever value C890 sets is your group, and C1D8's should come out as group C. If C1D8 lands anywhere else, my reading is wrong and we stop there.
+>
+> ### 2. What actually differs between the groups
+>
+> This parses groups A–F with the same layout `extract_adi_tables.py` uses for group C. It prints only the registers whose values differ between groups, plus a short hash of each group's woofer and tweeter DSM blocks:
+>
+> <details><summary><code>adi_groups.py</code></summary>
+>
+> ```python
+> #!/usr/bin/env python3
+> """Compare the per-amp register tables of ADIAmpDriver.sys groups A-F. Read-only.
+>
+> Assumes each group uses group C's layout (as extract_adi_tables.py reads it for C1D8):
+> amp tables at +0x000 (0x38), +0x0E0 (0x39), +0x090 (0x3C), +0x170 (0x3D), each a
+> zero-terminated list of (u16 reg, u16 val). Prints only registers whose value differs
+> between groups, plus a short hash of each group's two DSM blocks.
+> """
+> import hashlib
+> import struct
+> import sys
+>
+> b = open(sys.argv[1], "rb").read()
+> AMPS = [("0x38", 0x000), ("0x39", 0x0E0), ("0x3C", 0x090), ("0x3D", 0x170)]
+> groups = {}
+> for gi, g in enumerate("ABCDEF"):
+>     base = 0x8F10 + 0x600 * gi
+>     amps = {}
+>     for amp, rel in AMPS:
+>         regs, off = {}, base + rel
+>         for _ in range(64):
+>             reg, val = struct.unpack_from("<HH", b, off)
+>             off += 4
+>             if (reg, val) == (0, 0):
+>                 break
+>             if not (0x2000 <= reg <= 0x24FF and val <= 0xFF):
+>                 regs = None
+>                 break
+>             regs[reg] = val
+>         else:
+>             regs = None
+>         amps[amp] = regs or None
+>     dsm = [hashlib.sha256(b[base + o:base + o + n * 8]).hexdigest()[:8] for o, n in ((0x1C0, 95), (0x4C0, 40))]
+>     groups[g] = (amps, dsm)
+>     bad = [a for a, r in amps.items() if r is None]
+>     print(f"group {g} @ {base:#x}: amp tables {'OK' if not bad else 'NOT this layout: ' + ','.join(bad)}"
+>           f"  sizes {[len(r) if r else '-' for r in amps.values()]}  dsm woofer {dsm[0]} tweeter {dsm[1]}")
+>
+> good = [g for g, (a, _) in groups.items() if all(r is not None for r in a.values())]
+> if len(good) < 2:
+>     sys.exit("\nfewer than two groups use this layout; nothing to compare")
+> print("\nregisters that differ between groups " + "/".join(good) + " (-- = not written):")
+> for amp, _ in AMPS:
+>     regs = sorted({r for g in good for r in groups[g][0][amp]})
+>     rows = []
+>     for r in regs:
+>         vals = [groups[g][0][amp].get(r) for g in good]
+>         if len(set(vals)) > 1:
+>             rows.append(f"  {amp} {r:#06x}  " + "  ".join(f"{g}={v:02x}" if v is not None else f"{g}=--" for g, v in zip(good, vals)))
+>     print("\n".join(rows) if rows else f"  {amp}: identical in all of them")
+> ```
+> </details>
+>
+> ```bash
+> python3 adi_groups.py /mnt/windows/Windows/System32/drivers/ADIAmpDriver.sys
+> ```
+>
+> It only prints register numbers and values, no DSM coefficients, so it's fine to paste here. If C, D and E differ only in a few speaker values (Rdc, thermal, `0x23BA` volume), they're the same amps with different speaker calibrations. If the slot registers differ, the channel routing is different.
+>
+> @4nrry, if you can run the fingerprint script from my last comment and `adi_groups.py` on your Ultra copy (`b24fa092…`), that tells us whether the two files carry identical tables. Matching groups C–E would mean your file and @szvince62's differ only in signing.
+>
+> ### If the code is hard to follow
+>
+> There's an empirical fallback, but it needs one Windows boot: play a sound in Windows, restart straight into Linux (a warm restart, not a power-off), and read a few amp registers with `i2ctransfer` before anything resets them. Reads don't change anything, and nothing binds the amps until `speaker-fix` is installed. Whether the values survive the restart isn't certain. If you want to try it, I'll post the exact read-only commands.
+>
+> Once we know C890's group, adding it to `extract_adi_tables.py` is a small change, and you'd be the first to test it.
+
 ## Status
 
-OPEN, awaiting reporter steps 1–4 and @4nrry's group hashes. No code change yet.
+OPEN. Round 2 reply drafted, not posted. Awaiting Andy's OK; then reporter xrefs/group diff and @4nrry's hashes.
