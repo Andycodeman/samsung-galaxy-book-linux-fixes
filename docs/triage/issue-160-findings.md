@@ -356,7 +356,7 @@ The project ID is stored at device context +0xEC and indexes six pointer arrays 
 b24fa092: C1D8 only. Codec check picks the profile, refuses SSIDs with no profile. C892/CA07 (4-amp) are trivial to add later
 but untested. C896 (2-amp) needs a loader check first. Strict mode = small opt-in module param, Andy's call.
 
-## What was changed (round 3, uncommitted at time of posting)
+## What was changed (round 3) — commit b07b3bd, released v0.3.114
 
 - `speaker-fix/extract_adi_tables.py`: `KNOWN` → `PROFILES[sha256][codec SSID]`. 95b7e636: C1D8 (group C) + C890 (group D);
   b24fa092: C1D8. Codec detected from /proc/asound, `--subsystem` to override, `--force` = `--subsystem 0x144dc1d8`.
@@ -479,4 +479,4 @@ but untested. C896 (2-amp) needs a loader check first. Strict mode = small opt-i
 
 ## Status
 
-OPEN. Change awaiting review/push. Then post an "it's on main" note on #160. Reporter tests steps 1–8.
+OPEN. Shipped in v0.3.114 (b07b3bd); "on main" note posted (7236911818). Awaiting reporter hardware test steps 1–8; on success add NP960XGK to README tested list.
